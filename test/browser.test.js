@@ -1905,3 +1905,222 @@ test('фокус уходит из попапа и помещения до aria-
     }
   }
 });
+
+test('фокус после панели и помещения возвращается к тому, кто открыл', { timeout: 90000 }, async () => {
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage();
+    const notes = ariaWarnings(page);
+    await page.setViewport({
+      width: viewport.width,
+      height: viewport.height,
+      isMobile: viewport.width <= 700,
+      hasTouch: viewport.width <= 700,
+      deviceScaleFactor: 1,
+    });
+    await page.evaluateOnNewDocument(() => {
+      localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+      localStorage.setItem('journal', 'collapsed');
+      localStorage.removeItem('agentBar');
+    });
+    try {
+      await page.goto(`${base}/?theme=day`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+      await page.$eval('#roster .chip[data-id="finance"]', (el) => el.scrollIntoView({ inline: 'center', block: 'nearest' }));
+      await page.click('#roster .chip[data-id="finance"]');
+      await page.waitForFunction(() => {
+        const btn = document.querySelector('#panel.open[data-agent="finance"] #pClose');
+        const panel = document.querySelector('#panel');
+        if (!btn || !panel || panel.inert || panel.getAttribute('aria-hidden') === 'true') return false;
+        const r = btn.getBoundingClientRect();
+        const x = r.left + r.width / 2;
+        const y = r.top + r.height / 2;
+        if (x < 1 || y < 1 || x > innerWidth - 1 || y > innerHeight - 1) return false;
+        const hit = document.elementFromPoint(x, y);
+        return !!(hit && (hit === btn || btn.contains(hit)));
+      }, { timeout: 4000 });
+      await page.click('#pClose');
+      await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'), { timeout: 4000 });
+      const panelBack = await page.evaluate(() => {
+        const panel = document.querySelector('#panel');
+        const active = document.activeElement;
+        return {
+          inert: panel.inert,
+          hidden: panel.getAttribute('aria-hidden'),
+          open: panel.classList.contains('open'),
+          focusId: active && active.dataset ? active.dataset.id : '',
+          focusTag: active && active.tagName,
+          inPanel: !!(active && panel.contains(active)),
+          body: active === document.body,
+        };
+      });
+      assert.equal(panelBack.inert, true, `${viewport.width} закрытая панель без inert`);
+      assert.equal(panelBack.hidden, 'true');
+      assert.equal(panelBack.open, false);
+      assert.equal(panelBack.inPanel, false);
+      assert.equal(panelBack.body, false);
+      assert.equal(panelBack.focusTag, 'BUTTON');
+      assert.equal(panelBack.focusId, 'finance', JSON.stringify(panelBack));
+      assert.equal(await focusHidden(page), '', `${viewport.width} фокус внутри скрытого блока после панели`);
+      assert.deepEqual(notes, [], `${viewport.width} panel: ${notes.join(' | ')}`);
+
+      await page.evaluate(() => document.querySelector('#overlay .tag[data-id="finance"]').click());
+      await page.waitForSelector('#room.open', { timeout: 4000 });
+      await page.click('#roomX');
+      await page.waitForFunction(() => !document.querySelector('#room').classList.contains('open'));
+      const roomBack = await page.evaluate(() => {
+        const active = document.activeElement;
+        return {
+          id: active && active.dataset ? active.dataset.id : '',
+          cls: active && active.className ? String(active.className) : '',
+          body: active === document.body,
+          inRoom: !!(active && document.querySelector('#room')?.contains(active)),
+        };
+      });
+      assert.equal(roomBack.body, false, `${viewport.width} фокус ушёл в body`);
+      assert.equal(roomBack.inRoom, false);
+      assert.equal(roomBack.id, 'finance', JSON.stringify(roomBack));
+      assert.match(roomBack.cls, /tag/);
+      assert.equal(await focusHidden(page), '');
+      assert.deepEqual(notes, [], `${viewport.width} room: ${notes.join(' | ')}`);
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+test('нижняя панель агентов сворачивается и помнит состояние', { timeout: 90000 }, async () => {
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage();
+    const errors = [];
+    page.on('pageerror', (err) => errors.push(String(err)));
+    page.on('console', (msg) => {
+      const text = msg.text();
+      if (msg.type() === 'error' && !/fonts\.(googleapis|gstatic)|favicon|ERR_FAILED/i.test(text)) errors.push(text);
+      if (/aria-hidden/i.test(text)) errors.push(text);
+    });
+    await page.setViewport({
+      width: viewport.width,
+      height: viewport.height,
+      isMobile: viewport.width <= 700,
+      hasTouch: viewport.width <= 700,
+      deviceScaleFactor: 1,
+    });
+    await page.evaluateOnNewDocument(() => {
+      localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+      localStorage.setItem('journal', 'collapsed');
+      if (!sessionStorage.getItem('agentBarReady')) {
+        localStorage.removeItem('agentBar');
+        sessionStorage.setItem('agentBarReady', '1');
+      }
+    });
+    try {
+      await page.goto(`${base}/?theme=day`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+      await page.waitForFunction(() => document.querySelector('#needsBadge')?.textContent !== '', { timeout: 8000 });
+      const toggle = '#agentBarToggle';
+      await page.waitForSelector(toggle);
+      const openMeta = await page.evaluate(() => {
+        const btn = document.querySelector('#agentBarToggle');
+        const bar = document.querySelector('#agentBar');
+        return {
+          tag: btn.tagName,
+          type: btn.getAttribute('type'),
+          expanded: btn.getAttribute('aria-expanded'),
+          controls: btn.getAttribute('aria-controls'),
+          label: btn.getAttribute('aria-label'),
+          collapsed: bar.classList.contains('collapsed'),
+          stored: localStorage.getItem('agentBar'),
+        };
+      });
+      assert.equal(openMeta.tag, 'BUTTON');
+      assert.equal(openMeta.type, 'button');
+      assert.equal(openMeta.expanded, 'true');
+      assert.equal(openMeta.controls, 'roster');
+      assert.equal(openMeta.label, 'Свернуть панель агентов');
+      assert.equal(openMeta.collapsed, false);
+      assert.notEqual(openMeta.stored, 'collapsed');
+      const tall = await page.$eval('#agentBar', (el) => el.getBoundingClientRect().height);
+
+      await page.focus(toggle);
+      const ring = await page.$eval(toggle, (el) => {
+        const style = getComputedStyle(el);
+        return { outline: style.outlineStyle, width: style.outlineWidth };
+      });
+      assert.notEqual(ring.outline, 'none', 'у шеврона не виден фокус');
+      assert.notEqual(ring.width, '0px');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction((limit) => {
+        const bar = document.querySelector('#agentBar');
+        return bar.classList.contains('collapsed') && bar.getBoundingClientRect().height < limit;
+      }, { timeout: 2000 }, tall - 16);
+      const folded = await page.evaluate(() => {
+        const btn = document.querySelector('#agentBarToggle');
+        const bar = document.querySelector('#agentBar');
+        const peek = document.querySelector('#agentBarPeek');
+        const roster = document.querySelector('#roster');
+        const mini = document.querySelector('#minimap').getBoundingClientRect();
+        const box = bar.getBoundingClientRect();
+        const active = document.activeElement;
+        let hidden = '';
+        let node = active;
+        while (node && node !== document.documentElement) {
+          if (node.hidden || node.getAttribute('aria-hidden') === 'true' || node.inert) {
+            hidden = node.id || node.getAttribute('class') || node.tagName;
+            break;
+          }
+          node = node.parentElement;
+        }
+        const overlap = box.left < mini.right && box.right > mini.left && box.top < mini.bottom && box.bottom > mini.top;
+        return {
+          expanded: btn.getAttribute('aria-expanded'),
+          label: btn.getAttribute('aria-label'),
+          stored: localStorage.getItem('agentBar'),
+          peek: peek && !peek.hidden,
+          text: (peek && peek.textContent || '').replace(/\s+/g, ' ').trim(),
+          count: document.querySelector('#agentBarAwait')?.textContent,
+          badge: document.querySelector('#needsBadge')?.textContent.trim(),
+          dots: document.querySelectorAll('#agentBarDots .agent-bar-dot').length,
+          chips: document.querySelectorAll('#roster .chip').length,
+          inert: roster.inert,
+          focusId: active && active.id,
+          hidden,
+          height: box.height,
+          overlap,
+          box: { l: Math.round(box.left), r: Math.round(box.right), t: Math.round(box.top), b: Math.round(box.bottom), w: Math.round(box.width) },
+          mini: { l: Math.round(mini.left), r: Math.round(mini.right), t: Math.round(mini.top), b: Math.round(mini.bottom) },
+        };
+      });
+      assert.equal(folded.expanded, 'false');
+      assert.equal(folded.label, 'Развернуть панель агентов');
+      assert.equal(folded.stored, 'collapsed');
+      assert.equal(folded.peek, true);
+      assert.match(folded.text, /ждёт вас/);
+      assert.equal(folded.count, folded.badge);
+      assert.equal(folded.dots, folded.chips);
+      assert.equal(folded.inert, true);
+      assert.equal(folded.focusId, 'agentBarToggle');
+      assert.equal(folded.hidden, '');
+      assert.ok(folded.height < tall - 16, `полоска не стала ниже: ${folded.height} против ${tall}`);
+      assert.equal(folded.overlap, false, `свёрнутая панель перекрыла мини-карту ${JSON.stringify({ box: folded.box, mini: folded.mini })}`);
+
+      await page.keyboard.press(' ');
+      await page.waitForFunction(() => !document.querySelector('#agentBar').classList.contains('collapsed'));
+      assert.equal(await page.$eval(toggle, (el) => el.getAttribute('aria-expanded')), 'true');
+
+      await page.click(toggle);
+      await page.waitForFunction(() => document.querySelector('#agentBar').classList.contains('collapsed'));
+      await page.click('#agentBarPeek');
+      await page.waitForFunction(() => !document.querySelector('#agentBar').classList.contains('collapsed'));
+      await page.click(toggle);
+      await page.waitForFunction(() => localStorage.getItem('agentBar') === 'collapsed');
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#agentBar.collapsed #agentBarAwait', { timeout: 8000 });
+      assert.equal(await page.evaluate(() => localStorage.getItem('agentBar')), 'collapsed');
+      assert.equal(await page.$eval(toggle, (el) => el.getAttribute('aria-expanded')), 'false');
+      assert.deepEqual(errors, [], `${viewport.width}: ${errors.join(' | ')}`);
+    } finally {
+      await page.close();
+    }
+  }
+});
