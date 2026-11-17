@@ -4,7 +4,8 @@
 
   // ── Настройки клиента ────────────────────────────────────────────────────
   // Сам ростер (имена, цвета, обязанности, место на карте) приходит с сервера:
-  // см. SEED_AGENTS в server.js. 8-е направление — Финансы, помощники 8.1 и 8.2.
+  // см. SEED_AGENTS в server.js. 7-е направление — Финансы, помощники 7.1 и 7.2.
+  // Архивные агенты приходят в /api/state с archived, но на карту не рисуются.
   const CONFIG = {
     pollMs: 4000,
     mainId: 'grok',
@@ -29,6 +30,7 @@
     needs: [],
     seenNeeds: new Set(),
     needsReady: false,
+    archivedIds: new Set(),
   };
   const drafts = new Map();
   const MAX_FILES = 5;
@@ -1422,8 +1424,12 @@
       new Notification('Нужно от вас', { body: `${item.what} · ${needFromLabel(item.fromAgentId)}`, tag: String(item.id) });
     } catch (_) { /* без уведомления */ }
   }
+  function needVisible(n) {
+    if (!n || !n.id || n.closedAt) return false;
+    return !(S.archivedIds && S.archivedIds.has(n.fromAgentId));
+  }
   function syncNeeds(raw) {
-    const list = (Array.isArray(raw) ? raw : []).filter((n) => n && n.id && !n.closedAt);
+    const list = (Array.isArray(raw) ? raw : []).filter(needVisible);
     S.needs = list;
     const first = !S.needsReady;
     const fresh = list.filter((n) => !S.seenNeeds.has(n.id));
@@ -1459,7 +1465,9 @@
     const res = await fetch('/api/state', { cache: 'no-store' });
     if (!res.ok) throw new Error('state ' + res.status);
     const data = await res.json();
-    const agents = (data.agents || []).filter((a) => a && a.id);
+    const incoming = (data.agents || []).filter((a) => a && a.id);
+    S.archivedIds = new Set(incoming.filter((a) => a.archived).map((a) => a.id));
+    const agents = incoming.filter((a) => !a.archived);
     for (const a of agents) {
       a.x = Number.isFinite(a.x) ? a.x : 800; a.y = Number.isFinite(a.y) ? a.y : 540;
       a.kind = a.kind || (a.id === CONFIG.mainId ? 'putin' : 'generic');

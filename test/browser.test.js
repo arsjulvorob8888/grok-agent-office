@@ -105,10 +105,11 @@ test('на ширине 390 иерархия не прячется под пан
       };
     });
     const treeText = await page.$eval('#hTree', (el) => el.textContent);
-    assert.match(treeText, /9\.\s*Тестировщик ПО/);
-    assert.match(treeText, /10\.\s*Technology Blog/);
-    assert.match(treeText, /11\.\s*Language Coach/);
-    assert.match(treeText, /12\.\s*Business Adviser/);
+    assert.match(treeText, /8\.\s*Тестировщик ПО/);
+    assert.match(treeText, /9\.\s*Technology Blog/);
+    assert.match(treeText, /10\.\s*Language Coach/);
+    assert.doesNotMatch(treeText, /Business Adviser/);
+    assert.doesNotMatch(treeText, /Трейдинг/);
     assert.equal(hit.panelOpen, false);
     assert.equal(hit.overlap, false);
     assert.ok(hit.cardH > 30, 'строка иерархии не видна');
@@ -660,6 +661,101 @@ test('без reduced-motion новый приказ запускает полё�
     });
     assert.equal(created.status, 201);
     await page.waitForFunction(() => document.querySelector('#fx')?.dataset.flight === 'play', { timeout: 10000 });
+  } finally {
+    await page.close();
+  }
+});
+
+test('на ширине 390 архивные агенты скрыты, история в state остаётся', { timeout: 30000 }, async () => {
+  const note = await api('/api/messages', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({ id: 'ui-archive-trading', agentId: 'trading', role: 'agent', text: 'История трейдинга на месте' }),
+  });
+  assert.equal(note.status, 201);
+  const need = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({
+      what: 'Архивный пункт трейдинга',
+      where: 'Москва-Сити',
+      fromAgentId: 'trading',
+      urgency: 'high',
+    }),
+  });
+  assert.equal(need.status, 201);
+
+  const page = await openPage({ width: 390, height: 844 }, { path: '/?agent=grok' });
+  try {
+    await page.waitForSelector('#roster .chip', { timeout: 8000 });
+    await page.waitForSelector('#taskTarget option', { timeout: 8000 });
+    const ui = await page.evaluate(() => {
+      const chips = [...document.querySelectorAll('#roster .chip')].map((el) => ({
+        id: el.dataset.id,
+        text: (el.querySelector('.cn') || el).textContent.replace(/\s+/g, ' ').trim(),
+      }));
+      const options = [...document.querySelectorAll('#taskTarget option')].map((el) => ({
+        value: el.value,
+        text: el.textContent.replace(/\s+/g, ' ').trim(),
+      }));
+      return {
+        vw: window.innerWidth,
+        chips,
+        mapIds: [...document.querySelectorAll('#agents .agent')].map((el) => el.dataset.id),
+        tagText: [...document.querySelectorAll('#overlay .tag')].map((el) => el.textContent).join('\n'),
+        options,
+      };
+    });
+    assert.equal(ui.vw, 390);
+    const chipIds = ui.chips.map((c) => c.id);
+    assert.equal(chipIds.includes('trading'), false);
+    assert.equal(chipIds.includes('biz'), false);
+    assert.equal(ui.mapIds.includes('trading'), false);
+    assert.equal(ui.mapIds.includes('biz'), false);
+    assert.ok(ui.mapIds.includes('devops') && ui.mapIds.includes('finance') && ui.mapIds.includes('lang'));
+    assert.doesNotMatch(ui.tagText, /Трейдинг|Business Adviser/);
+    const chip = (id) => ui.chips.find((c) => c.id === id).text;
+    assert.match(chip('grok'), /^1\./);
+    assert.match(chip('army'), /^2\./);
+    assert.match(chip('poker'), /^3\./);
+    assert.match(chip('devops'), /^4\./);
+    assert.match(chip('dev'), /^5\./);
+    assert.match(chip('temshik'), /^6\./);
+    assert.match(chip('finance'), /^7\./);
+    assert.match(chip('invest'), /^7\.1/);
+    assert.match(chip('analyst'), /^7\.2/);
+    assert.match(chip('qa'), /^8\./);
+    assert.match(chip('blog'), /^9\./);
+    assert.match(chip('lang'), /^10\./);
+    assert.equal(ui.options.some((o) => o.value === 'trading' || o.value === 'biz'), false);
+    assert.match(ui.options.find((o) => o.value === 'devops').text, /^4\./);
+    assert.match(ui.options.find((o) => o.value === 'invest').text, /7\.1/);
+    assert.match(ui.options.find((o) => o.value === 'lang').text, /10\./);
+
+    const needsUi = await page.evaluate(() => ({
+      text: document.querySelector('#needsList').textContent,
+      badge: document.querySelector('#needsBadge').textContent.trim(),
+    }));
+    assert.doesNotMatch(needsUi.text, /Архивный пункт трейдинга/);
+    assert.doesNotMatch(needsUi.text, /Трейдинг|Business Adviser/);
+    const apiNeeds = await api('/api/needs');
+    const visibleNeeds = apiNeeds.body.needs.filter((n) => n.fromAgentId !== 'trading' && n.fromAgentId !== 'biz');
+    assert.ok(apiNeeds.body.needs.some((n) => n.fromAgentId === 'trading'));
+    assert.equal(needsUi.badge, String(visibleNeeds.length));
+
+    await page.click('#btnHier');
+    await page.waitForSelector('#hier.open .org-card', { timeout: 4000 });
+    const treeText = await page.$eval('#hTree', (el) => el.textContent);
+    assert.match(treeText, /7\.1\s*Инвестиции/);
+    assert.match(treeText, /7\.2\s*Бизнес-аналитик/);
+    assert.match(treeText, /10\.\s*Language Coach/);
+    assert.doesNotMatch(treeText, /Трейдинг|Business Adviser/);
+
+    const state = await page.evaluate(() => fetch('/api/state').then((r) => r.json()));
+    assert.equal(state.agents.find((a) => a.id === 'trading').archived, true);
+    assert.equal(state.agents.find((a) => a.id === 'biz').archived, true);
+    assert.ok(state.messages.some((m) => m.id === 'ui-archive-trading' && m.text === 'История трейдинга на месте'));
+    assert.ok(state.needs.some((n) => n.fromAgentId === 'trading' && n.what === 'Архивный пункт трейдинга'));
   } finally {
     await page.close();
   }
