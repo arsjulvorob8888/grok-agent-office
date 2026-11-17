@@ -380,9 +380,56 @@ const state = {
   tasks: [],
   messages: [],
   files: new Map(),
+  needs: [],
   nextTaskId: 1,
   nextMessageId: 1,
+  nextNeedId: 1,
 };
+
+const NEED_URGENCY = new Set(['low', 'normal', 'high']);
+
+// Агент «Соцсети», если он уже есть в ростере. Иначе пункт остаётся у главного.
+function socialAgentId() {
+  const hit = state.agents.find((a) => /соцсет/i.test(`${a.name || ''} ${a.id || ''}`));
+  return hit ? hit.id : 'grok';
+}
+
+function seedOwnerNeeds() {
+  const createdAt = new Date().toISOString();
+  const seeds = [
+    {
+      id: 'need-render-api',
+      what: 'Ключ Render API — ввести через защищённую форму в чате DevOps',
+      fromAgentId: 'devops',
+      where: 'Защищённая форма в чате DevOps',
+      urgency: 'high',
+    },
+    {
+      id: 'need-academy',
+      what: 'Одобрить «Академию агентов»',
+      fromAgentId: 'grok',
+      where: 'Чат главного агента',
+      urgency: 'normal',
+    },
+    {
+      id: 'need-social',
+      what: 'Войти в Instagram и YouTube для агента Соцсети',
+      fromAgentId: socialAgentId(),
+      where: 'Instagram и YouTube',
+      urgency: 'normal',
+    },
+    {
+      id: 'need-finance',
+      what: 'Ответить на шесть финансовых вопросов',
+      fromAgentId: 'finance',
+      where: 'Чат Финансов',
+      urgency: 'normal',
+    },
+  ];
+  state.needs = seeds.map((item) => ({ ...item, createdAt, closedAt: null }));
+}
+
+seedOwnerNeeds();
 
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -421,7 +468,44 @@ function publicState() {
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
+    needs: openNeeds().map(publicNeed),
   };
+}
+
+function publicNeed(item) {
+  return {
+    id: item.id,
+    what: item.what,
+    fromAgentId: item.fromAgentId,
+    where: item.where,
+    urgency: item.urgency,
+    createdAt: item.createdAt,
+    closedAt: item.closedAt || null,
+  };
+}
+
+function openNeeds() {
+  return state.needs.filter((item) => !item.closedAt);
+}
+
+function needText(value, field, max) {
+  if (typeof value !== 'string') throw httpError(400, `${field} должен быть строкой`);
+  const text = value.trim();
+  if (!text) throw httpError(400, `Нужно поле ${field}`);
+  if (text.length > max) throw httpError(400, `${field} слишком длинное (максимум ${max} символов)`);
+  return text;
+}
+
+function parseNeed(body) {
+  body = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const what = needText(body.what, 'what', 500);
+  const where = needText(body.where, 'where', 300);
+  const fromAgentId = typeof body.fromAgentId === 'string' ? body.fromAgentId.trim() : '';
+  if (!fromAgentId) throw httpError(400, 'Нужен fromAgentId');
+  if (!findAgent(fromAgentId)) throw httpError(400, 'Неизвестный агент');
+  const urgency = typeof body.urgency === 'string' ? body.urgency.trim() : '';
+  if (!NEED_URGENCY.has(urgency)) throw httpError(400, 'urgency должен быть low, normal или high');
+  return { what, where, fromAgentId, urgency };
 }
 
 function cleanList(value) {
@@ -1013,6 +1097,35 @@ app.get('/healthz', (_req, res) => {
 
 app.get('/api/state', (_req, res) => {
   res.json(publicState());
+});
+
+app.get('/api/needs', (_req, res) => {
+  res.json({ needs: openNeeds().map(publicNeed) });
+});
+
+app.post('/api/needs', requireAgentToken, (req, res) => {
+  try {
+    const parsed = parseNeed(req.body);
+    const item = {
+      id: `n-${state.nextNeedId++}`,
+      ...parsed,
+      createdAt: new Date().toISOString(),
+      closedAt: null,
+    };
+    state.needs.unshift(item);
+    res.status(201).json(publicNeed(item));
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось записать пункт' });
+  }
+});
+
+app.post('/api/needs/:id/close', requireAgentToken, (req, res) => {
+  const item = state.needs.find((n) => n.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'Пункт не найден' });
+  if (!item.closedAt) item.closedAt = new Date().toISOString();
+  res.json(publicNeed(item));
 });
 
 app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {

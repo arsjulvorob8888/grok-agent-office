@@ -26,6 +26,9 @@
     sound: localStorage.getItem('soundOn') === '1',
     hierFold: new Set(),
     seenOrders: new Set(),
+    needs: [],
+    seenNeeds: new Set(),
+    needsReady: false,
   };
   const drafts = new Map();
   const MAX_FILES = 5;
@@ -437,7 +440,7 @@
     const compact = k < 0.6;
     const order = [...S.agents].sort((a, b) => prio(b) - prio(a));
     // Панели интерфейса — препятствия для табличек.
-    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
+    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open', '#needsPop.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
     const hit = (r) => placed.some((p) => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
     for (const a of order) {
       const e = S.els.get(a.id);
@@ -1295,6 +1298,102 @@
     $('#hClose').onclick = () => setHierarchy(false);
   }
 
+  // ── Нужно от вас ─────────────────────────────────────────────────────────
+  // Всплывающее окно само открывается при загрузке и при новом id.
+  // «Напомнить позже» прячет автопоказ на час. Браузерное уведомление —
+  // только после явной кнопки «Включить уведомления», не при загрузке.
+  function needsSnoozed() {
+    const until = Number(localStorage.getItem('needsSnoozeUntil') || 0);
+    return Number.isFinite(until) && until > Date.now();
+  }
+  function needsNotifyOn() {
+    return localStorage.getItem('needsNotify') === '1' && typeof Notification !== 'undefined' && Notification.permission === 'granted';
+  }
+  function paintNotifyButton() {
+    const b = $('#needsNotify');
+    if (!b) return;
+    const on = needsNotifyOn();
+    b.textContent = on ? 'Уведомления включены' : 'Включить уведомления';
+    b.disabled = on;
+  }
+  function needFromLabel(id) {
+    const a = S.byId.get(id);
+    return a ? titled(a) : (id || 'агент');
+  }
+  function setNeedsOpen(open) {
+    const pop = $('#needsPop');
+    if (!pop) return;
+    pop.classList.toggle('open', !!open);
+    pop.setAttribute('aria-hidden', open ? 'false' : 'true');
+    const btn = $('#btnNeeds');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    placeOverlay();
+  }
+  function renderNeeds() {
+    const list = S.needs || [];
+    const badge = $('#needsBadge');
+    const pill = $('#needsCount');
+    if (badge) {
+      badge.textContent = String(list.length);
+      badge.classList.toggle('zero', list.length === 0);
+    }
+    if (pill) pill.textContent = String(list.length);
+    const btn = $('#btnNeeds');
+    if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
+    const box = $('#needsList');
+    if (!box) return;
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency].join('\u0001')).join('\n');
+    if (box.dataset.sig === sig) return;
+    const top = box.scrollTop;
+    const urgLabel = { low: 'несрочно', normal: 'обычно', high: 'срочно' };
+    box.innerHTML = list.length ? list.map((n) => {
+      const urg = urgLabel[n.urgency] ? n.urgency : 'normal';
+      return `<article class="need-item urg-${urg}" data-id="${esc(n.id)}">
+        <div class="need-what">${esc(n.what)}</div>
+        <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${urgLabel[urg]}</span></div>
+      </article>`;
+    }).join('') : '<div class="empty"><b>Пусто</b>Сейчас от вас ничего не ждут.</div>';
+    box.dataset.sig = sig;
+    box.scrollTop = top;
+  }
+  function notifyNeed(item) {
+    if (needsSnoozed() || !needsNotifyOn()) return;
+    try {
+      new Notification('Нужно от вас', { body: `${item.what} · ${needFromLabel(item.fromAgentId)}`, tag: String(item.id) });
+    } catch (_) { /* без уведомления */ }
+  }
+  function syncNeeds(raw) {
+    const list = (Array.isArray(raw) ? raw : []).filter((n) => n && n.id && !n.closedAt);
+    S.needs = list;
+    const first = !S.needsReady;
+    const fresh = list.filter((n) => !S.seenNeeds.has(n.id));
+    renderNeeds();
+    if (fresh.length && !needsSnoozed()) setNeedsOpen(true);
+    if (!first) fresh.forEach(notifyNeed);
+    for (const n of list) S.seenNeeds.add(n.id);
+    S.needsReady = true;
+  }
+  function initNeeds() {
+    paintNotifyButton();
+    $('#btnNeeds').onclick = () => { blip(700); setNeedsOpen(!$('#needsPop').classList.contains('open')); };
+    $('#needsClose').onclick = () => setNeedsOpen(false);
+    $('#needsLater').onclick = () => {
+      localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+      setNeedsOpen(false);
+    };
+    $('#needsNotify').onclick = () => {
+      if (typeof Notification === 'undefined') {
+        toast('Уведомления недоступны', 'Этот браузер их не показывает', 'x', true);
+        return;
+      }
+      Promise.resolve(Notification.requestPermission()).then((perm) => {
+        if (perm === 'granted') localStorage.setItem('needsNotify', '1');
+        else localStorage.removeItem('needsNotify');
+        paintNotifyButton();
+      }).catch(() => {});
+    };
+  }
+
   // ── Загрузка состояния ───────────────────────────────────────────────────
   async function loadState() {
     const res = await fetch('/api/state', { cache: 'no-store' });
@@ -1309,6 +1408,7 @@
     const prevStatus = S.taskStatus;
     S.agents = agents; S.tasks = data.tasks || []; S.messages = data.messages || [];
     S.byId = new Map(agents.map((a) => [a.id, a]));
+    syncNeeds(data.needs);
     const sig = agentSig(agents);
     if (sig !== S.sig) { S.sig = sig; buildAgents(); }
     noteFreshOrders();
@@ -1352,7 +1452,7 @@
   }
 
   // ── Старт ────────────────────────────────────────────────────────────────
-  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initRoster();
+  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initNeeds(); initRoster();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeOverlay());
   addEventListener('resize', () => {
     if (innerWidth <= 900 && $('#hier').classList.contains('open') && $('#panel').classList.contains('open')) {

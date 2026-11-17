@@ -580,3 +580,90 @@ test('приказ: отправитель, цепочка и жизненный
   assert.equal(childState.fromAgentId, 'dev');
   assert.equal(childState.agentId, 'qa');
 });
+
+test('пункты «нужно от вас»: посев, токен, создание и закрытие', async () => {
+  const open = await json('/api/needs');
+  assert.equal(open.status, 200);
+  assert.equal(open.body.needs.length, 4);
+  const render = open.body.needs.find((n) => n.id === 'need-render-api');
+  const academy = open.body.needs.find((n) => n.id === 'need-academy');
+  const social = open.body.needs.find((n) => n.id === 'need-social');
+  const finance = open.body.needs.find((n) => n.id === 'need-finance');
+  assert.equal(render.fromAgentId, 'devops');
+  assert.equal(render.urgency, 'high');
+  assert.equal(render.closedAt, null);
+  assert.match(render.what, /Ключ Render API/);
+  assert.match(render.what, /защищённую форму в чате DevOps/);
+  assert.match(render.where, /Защищённая форма/);
+  assert.equal(academy.fromAgentId, 'grok');
+  assert.equal(academy.urgency, 'normal');
+  assert.match(academy.what, /Академию агентов/);
+  assert.match(social.what, /Instagram и YouTube/);
+  assert.equal(finance.fromAgentId, 'finance');
+  assert.equal(finance.urgency, 'normal');
+  assert.match(finance.what, /шесть финансовых вопросов/);
+
+  const st = await json('/api/state');
+  const socialAgent = st.body.agents.find((a) => /соцсет/i.test(`${a.name} ${a.id}`));
+  assert.equal(social.fromAgentId, socialAgent ? socialAgent.id : 'grok');
+  assert.ok(st.body.needs.some((n) => n.id === 'need-render-api' && !n.closedAt));
+  const raw = JSON.stringify(st.body);
+  assert.ok(!raw.includes('pw-test') && !raw.includes('tok-test') && !raw.includes('hook-key'));
+
+  assert.equal((await json('/api/needs', { method: 'POST', body: '{}' })).status, 401);
+  assert.equal((await json('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'wrong' },
+    body: '{}',
+  })).status, 401);
+  assert.equal((await json('/api/needs', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-test' },
+    body: JSON.stringify({ what: 'x', where: 'y', fromAgentId: 'grok', urgency: 'low' }),
+  })).status, 401);
+  assert.equal((await json('/api/needs/need-render-api/close', { method: 'POST', body: '{}' })).status, 401);
+
+  const h = { 'x-agent-token': 'tok-test' };
+  assert.equal((await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({ what: 'Проверить', where: 'Чат', fromAgentId: 'grok', urgency: 'urgent' }),
+  })).status, 400);
+  assert.equal((await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({ what: 'Проверить', where: 'Чат', fromAgentId: 'nobody', urgency: 'low' }),
+  })).status, 400);
+  assert.equal((await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({ what: '   ', where: 'Чат', fromAgentId: 'grok', urgency: 'low' }),
+  })).status, 400);
+  assert.equal((await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({ where: 'Чат', fromAgentId: 'grok', urgency: 'low' }),
+  })).status, 400);
+
+  const created = await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({ what: 'Подтвердить черновик', where: 'Чат Темщика', fromAgentId: 'temshik', urgency: 'low' }),
+  });
+  assert.equal(created.status, 201);
+  assert.match(created.body.id, /^n-\d+$/);
+  assert.equal(created.body.urgency, 'low');
+  assert.equal(created.body.fromAgentId, 'temshik');
+  assert.equal(created.body.closedAt, null);
+  assert.equal(created.body.where, 'Чат Темщика');
+
+  const listed = await json('/api/state');
+  assert.ok(listed.body.needs.some((n) => n.id === created.body.id));
+
+  const closed = await json(`/api/needs/${created.body.id}/close`, { method: 'POST', headers: h, body: '{}' });
+  assert.equal(closed.status, 200);
+  assert.ok(closed.body.closedAt);
+  const again = await json(`/api/needs/${created.body.id}/close`, { method: 'POST', headers: h, body: '{}' });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.closedAt, closed.body.closedAt);
+
+  const after = await json('/api/needs');
+  assert.equal(after.body.needs.length, 4);
+  assert.ok(!after.body.needs.some((n) => n.id === created.body.id));
+  assert.equal((await json('/api/needs/no-such/close', { method: 'POST', headers: h, body: '{}' })).status, 404);
+});
