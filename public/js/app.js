@@ -904,11 +904,13 @@
     if (t.orderStatus === 'in_progress') return ['work', 'В работе'];
     if (t.orderStatus === 'accepted') return ['work', 'Принял'];
     if (t.status === 'выполнена') return ['done', 'Выполнена'];
-    if (String(t.status).startsWith('не отправлена')) return ['fail', 'Не отправлена'];
-    if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) return ['fail', 'Ошибка связи'];
     const a = S.byId.get(t.agent);
     const latest = S.tasks.find((x) => x.agent === t.agent);
     if (a && a.status === 'working' && latest && latest.id === t.id) return ['work', 'В работе'];
+    if (t.status === 'в очереди агента') return ['sent', 'В очереди'];
+    if (t.status === 'отправлена Путину') return ['sent', 'Путину'];
+    if (String(t.status).startsWith('не отправлена')) return ['fail', 'Не отправлена'];
+    if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) return ['fail', 'Ошибка связи'];
     return ['sent', 'Отправлена'];
   }
   const ICONS = {
@@ -1264,7 +1266,6 @@
         } catch (err) {
           logClientError('анимация приказа', err);
         }
-        if (data.status && String(data.status).startsWith('не отправлена')) lastErr = 'Задача записана, но вебхук Grok не настроен (GROK_WEBHOOK_URL).';
       } catch (err) {
         lastErr = messageForClientException(err);
       }
@@ -1922,8 +1923,9 @@
       if (!box) return;
       box.innerHTML = answerEntries(data).map((entry) => {
         const text = esc(entry && entry.text ? entry.text : '');
+        const note = entry && entry.note ? `<span class="note">${esc(entry.note)}</span>` : '';
         const time = esc(moscowClock(entry && entry.at));
-        return `<article class="need-answer"><p>${text}</p>${time ? `<time>${time}</time>` : ''}</article>`;
+        return `<article class="need-answer"><p>${text}</p>${note}${time ? `<time>${time}</time>` : ''}</article>`;
       }).join('');
     }
     function needAnswerMode(data) {

@@ -11,9 +11,9 @@ services:
         sync: false
       - key: AGENT_TOKEN
         generateValue: true
-      - key: GROK_WEBHOOK_URL
+      - key: KREMLIN_WEBHOOK_URL
         sync: false
-      - key: GROK_WEBHOOK_KEY
+      - key: KREMLIN_WEBHOOK_KEY
         sync: false
       - key: PUBLIC_URL
         sync: false

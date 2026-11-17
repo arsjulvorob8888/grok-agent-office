@@ -610,7 +610,7 @@ test('задача из панели уходит на сервер и без ф
     await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
     await page.$eval('#taskText', (el) => { el.value = 'Текстовая задача без файла'; });
     await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
-    await page.waitForFunction(() => /Готово|вебхук Grok не настроен/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 15000 });
+    await page.waitForFunction(() => /Готово/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 15000 });
     assert.ok(posts.includes('/api/task'), `без файла POST не ушёл: ${posts.join(',')}`);
     assert.equal(posts.includes('/api/upload'), false);
     const plain = await page.$eval('#panel', (el) => el.textContent);
@@ -622,7 +622,7 @@ test('задача из панели уходит на сервер и без ф
     await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
     await page.waitForFunction(() => {
       const msg = document.querySelector('#formMsg');
-      return msg && /Готово|вебхук Grok не настроен/.test(msg.textContent);
+      return msg && /Готово/.test(msg.textContent);
     }, { timeout: 15000 });
     await page.waitForFunction(() => {
       const link = document.querySelector('#panel .file-link, #panel .thumb');
@@ -636,10 +636,10 @@ test('задача из панели уходит на сервер и без ф
     await attachOnPage(page, mid);
     await page.$eval('#taskText', (el) => { el.value = 'И большой скриншот на три мегабайта'; });
     await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
-    await page.waitForFunction(() => /Готово|вебхук Grok не настроен/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 20000 });
+    await page.waitForFunction(() => /Готово/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 20000 });
     await page.waitForFunction(() => /image-3mb\.png/.test(document.querySelector('#panel').textContent || ''), { timeout: 8000 });
     const msg = await page.$eval('#formMsg', (el) => el.textContent);
-    assert.match(msg, /Готово|вебхук Grok не настроен/);
+    assert.match(msg, /Готово/);
     assert.doesNotMatch(msg, /Нет связи/);
     assert.ok(posts.includes('/api/upload') && posts.includes('/api/task'));
   } finally {
