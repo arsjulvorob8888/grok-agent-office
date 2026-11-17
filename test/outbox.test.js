@@ -274,6 +274,8 @@ test('GET /api/health/delivery требует авторизацию и не о�
   assert.equal(bearer.status, 200);
   assert.equal(bearer.body.webhookUrlSet, true);
   assert.equal(bearer.body.webhookKeySet, true);
+  assert.equal(bearer.body.agentWebhooks, 0);
+  assert.equal(bearer.body.putinWebhookSet, false);
   assert.equal(typeof bearer.body.queued, 'number');
   assert.equal(typeof bearer.body.delivered, 'number');
   assert.ok(bearer.body.lastDelivery);
