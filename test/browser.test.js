@@ -2110,10 +2110,22 @@ test('нижняя панель агентов сворачивается и п�
       await page.waitForFunction(() => !document.querySelector('#agentBar').classList.contains('collapsed'));
       assert.equal(await page.$eval(toggle, (el) => el.getAttribute('aria-expanded')), 'true');
 
+      // Полоса раскрывается 280 мс. Клик по шеврону в это время попадает мимо кнопки.
+      const waitBarStill = () => page.waitForFunction(() => {
+        const bar = document.querySelector('#agentBar');
+        const h = Math.round(bar.getBoundingClientRect().height);
+        const prev = Number(bar.dataset.barH);
+        bar.dataset.barH = String(h);
+        return prev === h;
+      }, { timeout: 3000 });
+
+      await waitBarStill();
       await page.click(toggle);
       await page.waitForFunction(() => document.querySelector('#agentBar').classList.contains('collapsed'));
+      await waitBarStill();
       await page.click('#agentBarPeek');
       await page.waitForFunction(() => !document.querySelector('#agentBar').classList.contains('collapsed'));
+      await waitBarStill();
       await page.click(toggle);
       await page.waitForFunction(() => localStorage.getItem('agentBar') === 'collapsed');
 
