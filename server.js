@@ -33,7 +33,7 @@ const STATUS_LABELS = {
 // ─────────────────────────────────────────────────────────────────────────────
 // РОСТЕР АГЕНТОВ. Это единственное место, где задаются агенты на карте Москвы.
 // x / y — координаты на карте (холст 1600×1100, север сверху, Кремль ≈ 800×540).
-// kind — тип фигурки на клиенте: putin, army, poker, trading, devops, dev,
+// kind — тип фигурки на клиенте: putin, army, poker, trading, devops, dev, qa,
 //        temshik, blog, finance, invest, analyst, lang, biz, vacant, generic.
 // tier — main (главный), dept (направление), sub (помощник, parentId), extra (союзник).
 // Номер на карте стабилен: сверху вниз по этому списку, помощники — 8.1, 8.2.
@@ -50,7 +50,7 @@ const SEED_AGENTS = [
     tier: 'main',
     x: 800,
     y: 540,
-    links: ['army', 'poker', 'trading', 'devops', 'dev', 'temshik', 'blog', 'finance', 'lang', 'biz'],
+    links: ['army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'lang', 'biz'],
     responsibilities: [
       'Принимает задачи и распределяет их по направлениям',
       'Следит за сроками и качеством результатов',
@@ -177,7 +177,7 @@ const SEED_AGENTS = [
     district: 'Останкино',
     kind: 'blog',
     tier: 'dept',
-    order: 9,
+    order: 10,
     x: 845,
     y: 150,
     links: [],
@@ -245,6 +245,28 @@ const SEED_AGENTS = [
       'Проверяет, сходятся ли цифры в планах',
     ],
   },
+  // ── 9-е направление по приказу главного агента.
+  // Technology Blog был 9 и стал 10, Language Coach 10→11, Business Adviser 11→12.
+  // Id не менялись: старые реле и сохранённые ссылки на агентов продолжают работать.
+  {
+    id: 'qa',
+    name: 'Тестировщик ПО',
+    color: '#0284c7',
+    accent: '#e0f2fe',
+    role: 'Проверка программ и регрессии',
+    district: 'Лефортово',
+    kind: 'qa',
+    tier: 'dept',
+    order: 9,
+    x: 1304,
+    y: 512,
+    links: [],
+    responsibilities: [
+      'Проверяет, что новые правки не ломают старое',
+      'Гоняет сценарии и смотрит краевые случаи',
+      'Коротко сообщает, что сломалось и что уже проверено',
+    ],
+  },
   // ── Союзники (необязательные): уже существующие боты пользователя.
   {
     id: 'lang',
@@ -255,6 +277,7 @@ const SEED_AGENTS = [
     district: 'МГУ · Воробьёвы горы',
     kind: 'lang',
     tier: 'extra',
+    order: 11,
     x: 420,
     y: 905,
     links: [],
@@ -269,6 +292,7 @@ const SEED_AGENTS = [
     district: 'Сколково',
     kind: 'biz',
     tier: 'extra',
+    order: 12,
     x: 150,
     y: 640,
     links: [],
@@ -466,18 +490,194 @@ function publicAttachment(rec) {
   };
 }
 
+// Приказ поверх старой задачи. Поле status (отправлена / выполнена / …) не трогаем:
+// его уже читают вебхук, опыт и старые клиенты. Жизнь приказа живёт в orderStatus.
+// Цепочка: sent → accepted → in_progress (шаг можно пропустить) → done, либо failed.
+const ORDER_NEXT = {
+  sent: new Set(['accepted', 'failed']),
+  accepted: new Set(['accepted', 'in_progress', 'done', 'failed']),
+  in_progress: new Set(['in_progress', 'done', 'failed']),
+};
+
+function publicHistoryEntry(h) {
+  return {
+    status: h.status,
+    at: h.at,
+    progress: h.progress ?? null,
+    note: h.note || '',
+    result: h.result || null,
+  };
+}
+
 function publicTask(t) {
   return {
     id: t.id,
     agent: t.agent,
+    agentId: t.agentId || t.agent,
+    fromAgentId: t.fromAgentId || null,
+    parentOrderId: t.parentOrderId || null,
     text: t.text,
     status: t.status,
+    orderStatus: t.orderStatus || 'sent',
+    progress: t.progress ?? null,
+    note: t.note || '',
     createdAt: t.createdAt,
     forwardStatus: t.forwardStatus,
     result: t.result ?? null,
     messageId: t.messageId || null,
+    history: (t.history || []).map(publicHistoryEntry),
     attachments: (t.attachments || []).map(publicAttachment),
   };
+}
+
+function agentLabel(id) {
+  if (!id || id === 'owner') return 'Владелец';
+  const agent = findAgent(id);
+  return agent ? agent.name : id;
+}
+
+function orderEventText(task, entry) {
+  if (entry.status === 'sent') return `Приказ: ${agentLabel(task.fromAgentId)} → ${agentLabel(task.agentId || task.agent)}`;
+  if (entry.status === 'accepted') return entry.note ? `Принял заказ · ${entry.note}` : 'Принял заказ';
+  if (entry.status === 'in_progress') {
+    const bits = ['В работе'];
+    if (entry.progress != null) bits.push(`${entry.progress}%`);
+    if (entry.note) bits.push(entry.note);
+    return bits.join(' · ');
+  }
+  if (entry.status === 'done') return entry.result ? `Выполнено: ${entry.result}` : 'Выполнено';
+  if (entry.status === 'failed') return entry.note ? `Не выполнено: ${entry.note}` : 'Не выполнено';
+  return entry.status;
+}
+
+function pushOrderHistory(task, entry) {
+  if (!Array.isArray(task.history)) task.history = [];
+  task.history.push(entry);
+  const index = task.history.length - 1;
+  addMessage({
+    id: `order:${task.id}:${index}`,
+    agentId: task.agent,
+    role: 'system',
+    text: orderEventText(task, entry),
+    attachments: [],
+    createdAt: entry.at,
+    source: 'order',
+    taskId: task.id,
+  });
+}
+
+function orderSnapshot(task, status, progress, note, result) {
+  return {
+    status,
+    progress: status === 'in_progress' ? (progress ?? null) : null,
+    note: note || '',
+    result: status === 'done' ? (result || '') : '',
+  };
+}
+
+function sameOrderSnapshot(task, next) {
+  const cur = orderSnapshot(task, task.orderStatus || 'sent', task.progress, task.note, task.result);
+  return cur.status === next.status
+    && cur.progress === next.progress
+    && cur.note === next.note
+    && cur.result === next.result;
+}
+
+// Повтор того же снимка ничего не дописывает. force нужен старому POST /api/status:
+// он по-прежнему может закрыть задачу сразу, без шага «принял».
+function applyOrderUpdate(task, input, opts = {}) {
+  const status = input.status;
+  let progress = input.progress ?? null;
+  const note = input.note || '';
+  const result = input.result || '';
+  if (status === 'in_progress' && progress == null) progress = task.progress ?? null;
+  const next = orderSnapshot(task, status, progress, note, result);
+  if (sameOrderSnapshot(task, next)) return { changed: false };
+
+  const current = task.orderStatus || 'sent';
+  if ((current === 'done' || current === 'failed') && !opts.force) {
+    throw httpError(400, 'Приказ уже закрыт');
+  }
+  if (current === 'done' && status === 'done') {
+    task.result = result;
+    const last = task.history && task.history[task.history.length - 1];
+    if (last && last.status === 'done') last.result = result;
+    const msg = state.messages.find((m) => m.id === `order:${task.id}:${(task.history || []).length - 1}`);
+    if (msg && last) msg.text = orderEventText(task, last);
+    return { changed: false };
+  }
+  if (!opts.force && !(ORDER_NEXT[current] && ORDER_NEXT[current].has(status))) {
+    throw httpError(400, 'Недопустимый переход статуса');
+  }
+
+  const entry = {
+    status,
+    at: new Date().toISOString(),
+    progress: next.progress,
+    note,
+    result: status === 'done' ? result : null,
+  };
+  task.orderStatus = status;
+  task.progress = next.progress;
+  task.note = note;
+  if (status === 'done') {
+    const firstDone = task.status !== 'выполнена';
+    task.result = result;
+    task.status = 'выполнена';
+    if (firstDone) {
+      const owner = findAgent(task.agent) || opts.creditAgent || null;
+      if (owner) owner.completed = (owner.completed || 0) + 1;
+    }
+  }
+  pushOrderHistory(task, entry);
+  return { changed: true };
+}
+
+function parseOrderUpdate(body) {
+  body = body || {};
+  const status = typeof body.status === 'string' ? body.status.trim() : '';
+  if (!['accepted', 'in_progress', 'done', 'failed'].includes(status)) {
+    throw httpError(400, 'status должен быть accepted, in_progress, done или failed');
+  }
+  let progress = null;
+  if (body.progress != null && body.progress !== '') {
+    if (status !== 'in_progress') throw httpError(400, 'progress допустим только для in_progress');
+    if (typeof body.progress !== 'number' || !Number.isInteger(body.progress) || body.progress < 0 || body.progress > 100) {
+      throw httpError(400, 'progress — целое число от 0 до 100');
+    }
+    progress = body.progress;
+  }
+  let note = '';
+  if (body.note != null && body.note !== '') {
+    if (typeof body.note !== 'string') throw httpError(400, 'note должен быть строкой');
+    note = body.note.trim();
+    if (note.length > 200) throw httpError(400, 'Слишком длинная заметка (максимум 200 символов)');
+  }
+  let result = '';
+  if (status === 'done') {
+    if (typeof body.result !== 'string' || !body.result.trim()) throw httpError(400, 'Для done нужен result');
+    result = body.result.trim();
+    if (result.length > 8000) throw httpError(400, 'Слишком длинный результат');
+  } else if (body.result != null && String(body.result).trim() !== '') {
+    throw httpError(400, 'result допустим только для done');
+  }
+  return { status, progress, note, result };
+}
+
+function resolveFromAgent(raw, agentId) {
+  const id = typeof raw === 'string' ? raw.trim() : '';
+  const fromAgentId = id || (agentId === 'grok' ? 'owner' : 'grok');
+  if (fromAgentId !== 'owner' && !findAgent(fromAgentId)) throw httpError(400, 'Неизвестный отправитель');
+  return fromAgentId;
+}
+
+function resolveParentOrder(raw) {
+  if (raw == null || raw === '') return null;
+  const id = String(raw).trim();
+  if (!id) return null;
+  const parent = state.tasks.find((t) => t.id === id);
+  if (!parent) throw httpError(400, 'Неизвестный родительский приказ');
+  return parent.id;
 }
 
 function cmpMsg(a, b) {
@@ -836,6 +1036,16 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
     return res.status(400).json({ error: 'Слишком длинная задача (максимум 4000 символов)' });
   }
 
+  let fromAgentId;
+  let parentOrderId;
+  try {
+    fromAgentId = resolveFromAgent(req.body?.fromAgentId, agentId);
+    parentOrderId = resolveParentOrder(req.body?.parentOrderId);
+  } catch (err) {
+    discardUploads(req.files);
+    return res.status(err.status || 400).json({ error: err.expose || 'Некорректный приказ' });
+  }
+
   let attachments;
   try {
     attachments = collectTaskAttachments(req);
@@ -849,11 +1059,18 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
   const task = {
     id: `t-${state.nextTaskId++}`,
     agent: agentId,
+    agentId,
+    fromAgentId,
+    parentOrderId,
     text,
     status: GROK_WEBHOOK_URL ? 'отправлена' : 'не отправлена: вебхук не настроен',
+    orderStatus: 'sent',
+    progress: null,
+    note: '',
     createdAt: new Date().toISOString(),
     forwardStatus: null,
     result: null,
+    history: [],
     attachments,
     messageId: '',
   };
@@ -868,6 +1085,13 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
     createdAt: task.createdAt,
     source: 'app',
     taskId: task.id,
+  });
+  pushOrderHistory(task, {
+    status: 'sent',
+    at: new Date(Date.parse(task.createdAt) + 1).toISOString(),
+    progress: null,
+    note: '',
+    result: null,
   });
 
   agent.status = 'working';
@@ -1075,13 +1299,16 @@ app.post('/api/status', requireAgentToken, (req, res) => {
   if (body.taskId && typeof body.result === 'string') {
     const task = state.tasks.find((t) => t.id === body.taskId);
     if (task) {
-      if (task.status !== 'выполнена') {
-        const owner = findAgent(task.agent) || agent;
-        owner.completed = (owner.completed || 0) + 1;
-        countedCompletion = true;
-      }
+      const before = task.status;
+      applyOrderUpdate(task, {
+        status: 'done',
+        progress: null,
+        note: '',
+        result: body.result,
+      }, { force: true, creditAgent: agent });
       task.result = body.result;
       task.status = 'выполнена';
+      if (before !== 'выполнена') countedCompletion = true;
       if (body.result.trim()) {
         addMessage({
           id: `result:${task.id}`,
@@ -1114,6 +1341,20 @@ app.post('/api/status', requireAgentToken, (req, res) => {
       number: agentNumber(agent),
     },
   });
+});
+
+app.post('/api/orders/:id', requireAgentToken, (req, res) => {
+  const task = state.tasks.find((t) => t.id === req.params.id);
+  if (!task) return res.status(404).json({ error: 'Приказ не найден' });
+  try {
+    const input = parseOrderUpdate(req.body);
+    const result = applyOrderUpdate(task, input);
+    return res.json({ ok: true, unchanged: !result.changed, task: publicTask(task) });
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    return res.status(status).json({ error: err.expose || 'Не удалось обновить приказ' });
+  }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));

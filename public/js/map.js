@@ -351,7 +351,7 @@
 
   // ── Здания направлений ─────────────────────────────────────────────────
   // Высота «шапки» здания над точкой агента (для расстановки облачков).
-  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, generic: 110 };
+  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, qa: 108, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, generic: 110 };
 
   function building(kind, color) {
     const R = rng(color.length * 97 + kind.length * 13);
@@ -394,6 +394,14 @@
         for (const x of [-42, -10, 22]) s += `<circle cx="${x + 10}" cy="-52" r="8" fill="#9ca3af"/><g class="fan" style="transform-origin:${x + 10}px -52px"><path d="M${x + 10},-52l0,-7M${x + 10},-52l6,4M${x + 10},-52l-6,4" stroke="#374151" stroke-width="2.2"/></g>`;
         s += `<path d="M48,-58v-34" stroke="#9ca3af" stroke-width="2"/><circle class="blink" cx="48" cy="-94" r="3" fill="#ef4444"/><path d="M40,-80l8-6 8,6" stroke="#9ca3af" fill="none"/>`;
         s += `<rect x="-60" y="-2" width="120" height="3" fill="${c}"/>`;
+        return s;
+      }
+      case 'qa': {
+        let s = box(-52, -24, 104, 22, 46, '#d7e7f2', { top: '#eef6fb', front: '#c5d7e6', windows: true, rand: R });
+        s += `<rect x="-30" y="-84" width="60" height="26" rx="4" fill="#082033" stroke="#38bdf8" stroke-width="1.6"/>`;
+        s += `<path d="M-16,-71 l8,8 16,-16" fill="none" stroke="#4ade80" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+        s += `<circle class="led" cx="42" cy="-36" r="3.2" fill="#22c55e"/>`;
+        s += `<rect x="-52" y="-2" width="104" height="3" fill="${c}"/>`;
         return s;
       }
       case 'dev': {

@@ -143,6 +143,11 @@
       hair: HAIR.short('#5a3b22') + `<path d="M-23,-76q0-21 23-21t23,21z" fill="#ffc21a"/><rect x="-26" y="-78" width="52" height="5" rx="2.5" fill="#e6a700"/><rect x="-3" y="-97" width="6" height="19" rx="2" fill="#ffd34d"/>`,
       extra: `<rect x="-18" y="-35" width="36" height="4" fill="#ffd34d" opacity=".9"/><g transform="translate(24,-28) rotate(30)"><rect x="-2" y="0" width="4" height="18" rx="1.5" fill="#9aa4b2"/><path d="M-6,-2a6,6 0 1 1 12,0h-3v3h-6v-3z" fill="#9aa4b2"/></g>`,
     }),
+    qa: () => generic({
+      top: '#0369a1', shirt: '#e0f2fe', pants: '#0c4a6e', glasses: true,
+      hair: HAIR.short('#2c241c'),
+      extra: `<g transform="translate(14,-38) rotate(8)"><rect x="0" y="0" width="16" height="20" rx="2" fill="#f8fafc" stroke="#0284c7" stroke-width="1"/><path d="M3,7.5 l2.4,2.4 5,-5.2" fill="none" stroke="#16a34a" stroke-width="1.6" stroke-linecap="round"/><path d="M3,13h10M3,16.2h7" stroke="#94a3b8" stroke-width="1"/></g>`,
+    }),
     dev: () => generic({
       top: '#6a3fe0', pants: '#22253a',
       hair: HAIR.messy('#2c2119') + `<path d="M-25,-70a25,25 0 0 1 50,0" stroke="#1a1a2e" stroke-width="3.5" fill="none"/><rect x="-28" y="-74" width="7" height="12" rx="3" fill="#1a1a2e"/><rect x="21" y="-74" width="7" height="12" rx="3" fill="#7c4dff"/>`,
