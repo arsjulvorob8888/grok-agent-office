@@ -105,10 +105,11 @@ test('на ширине 390 иерархия не прячется под пан
       };
     });
     const treeText = await page.$eval('#hTree', (el) => el.textContent);
-    assert.match(treeText, /9\.\s*Тестировщик ПО/);
-    assert.match(treeText, /10\.\s*Technology Blog/);
-    assert.match(treeText, /11\.\s*Language Coach/);
-    assert.match(treeText, /12\.\s*Business Adviser/);
+    assert.match(treeText, /8\.\s*Тестировщик ПО/);
+    assert.match(treeText, /9\.\s*Technology Blog/);
+    assert.match(treeText, /10\.\s*Language Coach/);
+    assert.doesNotMatch(treeText, /Business Adviser/);
+    assert.doesNotMatch(treeText, /Трейдинг/);
     assert.equal(hit.panelOpen, false);
     assert.equal(hit.overlap, false);
     assert.ok(hit.cardH > 30, 'строка иерархии не видна');
@@ -378,6 +379,277 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
   }
 });
 
+const zlib = require('zlib');
+
+function pngCrc(buf) {
+  let c = ~0;
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i];
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([Buffer.from(type), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(pngCrc(body), 0);
+  return Buffer.concat([len, body, crc]);
+}
+
+function makePng(width, height) {
+  const rowLen = 1 + width * 3;
+  const raw = Buffer.alloc(rowLen * height);
+  for (let y = 0; y < height; y++) {
+    const off = y * rowLen;
+    raw[off] = 0;
+    for (let x = 0; x < width; x++) {
+      const i = off + 1 + x * 3;
+      raw[i] = (x * 17 + y * 3) & 255;
+      raw[i + 1] = (y * 13 + x) & 255;
+      raw[i + 2] = (x * 9 + y * 5) & 255;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw, { level: 0 })),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+async function taskPage() {
+  const page = await openPage({ width: 1280, height: 800 }, { path: '/?theme=day&agent=dev' });
+  await page.waitForSelector('#taskForm', { timeout: 8000 });
+  return page;
+}
+
+async function attachOnPage(page, filePath) {
+  const input = await page.$('#fileInput');
+  await input.uploadFile(filePath);
+  await page.evaluate(() => {
+    const el = document.querySelector('#fileInput');
+    if (el.files && el.files.length) el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+test('задача из панели уходит на сервер и без файла, и с PNG', { timeout: 60000 }, async () => {
+  const small = path.join(os.tmpdir(), 'image-100k.png');
+  const mid = path.join(os.tmpdir(), 'image-3mb.png');
+  const smallPng = makePng(256, 128);
+  const midPng = makePng(1300, 768);
+  assert.ok(smallPng.length > 80 * 1024 && smallPng.length < 1024 * 1024, `png ${smallPng.length}`);
+  assert.ok(midPng.length > 2.5 * 1024 * 1024 && midPng.length < 8 * 1024 * 1024, `png ${midPng.length}`);
+  fs.writeFileSync(small, smallPng);
+  fs.writeFileSync(mid, midPng);
+  const page = await taskPage();
+  const posts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST') posts.push(new URL(req.url()).pathname);
+  });
+  const logs = [];
+  page.on('console', (msg) => logs.push(`${msg.type()}: ${msg.text()}`));
+  try {
+    await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
+    await page.$eval('#taskText', (el) => { el.value = 'Текстовая задача без файла'; });
+    await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
+    await page.waitForFunction(() => /Готово|вебхук Grok не настроен/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 15000 });
+    assert.ok(posts.includes('/api/task'), `без файла POST не ушёл: ${posts.join(',')}`);
+    assert.equal(posts.includes('/api/upload'), false);
+    const plain = await page.$eval('#panel', (el) => el.textContent);
+    assert.match(plain, /Текстовая задача без файла/);
+
+    posts.length = 0;
+    await attachOnPage(page, small);
+    await page.$eval('#taskText', (el) => { el.value = 'Посмотри image.png на сто килобайт'; });
+    await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
+    await page.waitForFunction(() => {
+      const msg = document.querySelector('#formMsg');
+      return msg && /Готово|вебхук Grok не настроен/.test(msg.textContent);
+    }, { timeout: 15000 });
+    await page.waitForFunction(() => {
+      const link = document.querySelector('#panel .file-link, #panel .thumb');
+      return link && /image-100k\.png/.test(document.querySelector('#panel').textContent);
+    }, { timeout: 8000 });
+    assert.ok(posts.includes('/api/upload'));
+    assert.ok(posts.includes('/api/task'));
+    assert.equal(logs.some((line) => /ReferenceError|Нет связи/.test(line)), false);
+
+    posts.length = 0;
+    await attachOnPage(page, mid);
+    await page.$eval('#taskText', (el) => { el.value = 'И большой скриншот на три мегабайта'; });
+    await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
+    await page.waitForFunction(() => /Готово|вебхук Grok не настроен/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 20000 });
+    await page.waitForFunction(() => /image-3mb\.png/.test(document.querySelector('#panel').textContent || ''), { timeout: 8000 });
+    const msg = await page.$eval('#formMsg', (el) => el.textContent);
+    assert.match(msg, /Готово|вебхук Grok не настроен/);
+    assert.doesNotMatch(msg, /Нет связи/);
+    assert.ok(posts.includes('/api/upload') && posts.includes('/api/task'));
+  } finally {
+    await page.close();
+    fs.rmSync(small, { force: true });
+    fs.rmSync(mid, { force: true });
+  }
+});
+
+test('файл больше 10 МБ не уходит на сервер', { timeout: 30000 }, async () => {
+  const big = path.join(os.tmpdir(), 'image-over.png');
+  fs.writeFileSync(big, Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    Buffer.alloc(10 * 1024 * 1024 + 1 - 8, 0),
+  ]));
+  const page = await taskPage();
+  const posts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST') posts.push(new URL(req.url()).pathname);
+  });
+  try {
+    await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
+    await attachOnPage(page, big);
+    const onAttach = await page.$eval('#formMsg', (el) => el.textContent);
+    assert.equal(onAttach, 'Файл слишком большой (макс. 10 МБ)');
+    await page.click('#taskForm button[type=submit]');
+    const after = await page.$eval('#formMsg', (el) => el.textContent);
+    assert.equal(after, 'Файл слишком большой (макс. 10 МБ)');
+    assert.equal(posts.some((p) => p === '/api/upload' || p === '/api/task'), false);
+  } finally {
+    await page.close();
+    fs.rmSync(big, { force: true });
+  }
+});
+
+test('неверный пароль показывает «Неверный пароль», а не обрыв связи', { timeout: 30000 }, async () => {
+  const page = await taskPage();
+  const posts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST') posts.push(new URL(req.url()).pathname);
+  });
+  try {
+    await page.evaluate(() => localStorage.setItem('appPassword', 'wrong-password'));
+    await page.$eval('#taskText', (el) => { el.value = 'Это не должно сохраниться'; });
+    await page.click('#taskForm button[type=submit]');
+    await page.waitForFunction(() => document.querySelector('#formMsg')?.textContent === 'Неверный пароль', { timeout: 8000 });
+    assert.ok(posts.includes('/api/task'));
+    assert.equal(await page.$eval('#modal', (el) => el.classList.contains('show')), true);
+  } finally {
+    await page.close();
+  }
+});
+
+async function installFetchModes(page) {
+  await page.evaluate(() => {
+    if (window.__taskFetchOrig) return;
+    window.__taskFetchOrig = window.fetch.bind(window);
+    window.fetch = (url, opts) => {
+      const mode = window.__taskFailMode;
+      const u = String(url);
+      const hit = u.includes('/api/task') || u.includes('/api/upload');
+      if (!mode || !hit) return window.__taskFetchOrig(url, opts);
+      if (mode === 'net') return Promise.reject(new TypeError('Failed to fetch'));
+      if (mode === 'js') throw new ReferenceError('tier is not defined');
+      const table = {
+        413: { status: 413, error: 'entity.too.large' },
+        401: { status: 401, error: 'Неверный пароль доступа' },
+        403: { status: 403, error: 'forbidden' },
+        502: { status: 502, error: 'bad gateway' },
+        503: { status: 503, error: '' },
+        504: { status: 504, error: 'gateway timeout' },
+        400: { status: 400, error: 'Неизвестный агент' },
+        500: { status: 500, error: 'Внутренняя ошибка хранилища' },
+      };
+      const spec = table[mode];
+      const body = spec.error ? JSON.stringify({ error: spec.error }) : '';
+      return Promise.resolve(new Response(body, {
+        status: spec.status,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+      }));
+    };
+  });
+}
+
+test('сообщение формы совпадает с кодом ответа и типом сбоя', { timeout: 40000 }, async () => {
+  const page = await taskPage();
+  const logs = [];
+  page.on('console', (msg) => logs.push(`${msg.type()}: ${msg.text()}`));
+  const cases = [
+    ['413', 'Файл слишком большой (макс. 10 МБ)'],
+    ['401', 'Неверный пароль'],
+    ['403', 'Неверный пароль'],
+    ['502', 'Сервер перезапускается, попробуйте через минуту'],
+    ['503', 'Сервер перезапускается, попробуйте через минуту'],
+    ['504', 'Сервер перезапускается, попробуйте через минуту'],
+    ['400', 'Неизвестный агент'],
+    ['500', 'Внутренняя ошибка хранилища'],
+    ['js', 'tier is not defined'],
+    ['net', 'Нет связи с сервером'],
+  ];
+  try {
+    await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
+    await installFetchModes(page);
+    for (const [mode, expected] of cases) {
+      await page.evaluate((m) => {
+        localStorage.setItem('appPassword', 'pw-ui');
+        window.__taskFailMode = m;
+        document.querySelector('#modal').classList.remove('show');
+        const box = document.querySelector('#formMsg');
+        box.className = 'msg';
+        box.textContent = '';
+      }, mode);
+      await page.$eval('#taskText', (el, value) => { el.value = value; }, `случай ${mode}`);
+      await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
+      await page.waitForFunction((text) => document.querySelector('#formMsg')?.textContent === text, { timeout: 8000 }, expected);
+    }
+    assert.ok(logs.some((line) => line.includes('tier is not defined')));
+    assert.ok(logs.some((line) => /Failed to fetch|исключение в браузере/.test(line)));
+  } finally {
+    await page.close();
+  }
+});
+
+test('остановленный сервер — это обрыв связи, а не ошибка скрипта', { timeout: 30000 }, async () => {
+  const stopped = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const origin = `http://127.0.0.1:${stopped.address().port}`;
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1280, height: 800 });
+  try {
+    await page.goto(`${origin}/?theme=day&agent=dev`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#taskForm', { timeout: 8000 });
+    await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
+    await page.$eval('#taskText', (el) => { el.value = 'Сервер уже ляжет'; });
+    await new Promise((resolve, reject) => stopped.close((err) => (err ? reject(err) : resolve())));
+    await page.click('#taskForm button[type=submit]');
+    await page.waitForFunction(() => document.querySelector('#formMsg')?.textContent === 'Нет связи с сервером', { timeout: 8000 });
+  } finally {
+    await page.close();
+  }
+});
+
+test('офлайн-браузер показывает «Нет связи с сервером»', { timeout: 30000 }, async () => {
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1280, height: 800 });
+  try {
+    await page.goto(`${base}/?theme=day&agent=dev`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#taskForm', { timeout: 8000 });
+    await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
+    await page.$eval('#taskText', (el) => { el.value = 'Сети нет'; });
+    await page.setOfflineMode(true);
+    await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
+    await page.waitForFunction(() => document.querySelector('#formMsg')?.textContent === 'Нет связи с сервером', { timeout: 8000 });
+  } finally {
+    await page.setOfflineMode(false).catch(() => {});
+    await page.close();
+  }
+});
+
 test('без reduced-motion новый приказ запускает полёт конверта', { timeout: 30000 }, async () => {
   const page = await openPage({ width: 390, height: 844 }, { path: '/' });
   try {
@@ -389,6 +661,101 @@ test('без reduced-motion новый приказ запускает полё�
     });
     assert.equal(created.status, 201);
     await page.waitForFunction(() => document.querySelector('#fx')?.dataset.flight === 'play', { timeout: 10000 });
+  } finally {
+    await page.close();
+  }
+});
+
+test('на ширине 390 архивные агенты скрыты, история в state остаётся', { timeout: 30000 }, async () => {
+  const note = await api('/api/messages', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({ id: 'ui-archive-trading', agentId: 'trading', role: 'agent', text: 'История трейдинга на месте' }),
+  });
+  assert.equal(note.status, 201);
+  const need = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({
+      what: 'Архивный пункт трейдинга',
+      where: 'Москва-Сити',
+      fromAgentId: 'trading',
+      urgency: 'high',
+    }),
+  });
+  assert.equal(need.status, 201);
+
+  const page = await openPage({ width: 390, height: 844 }, { path: '/?agent=grok' });
+  try {
+    await page.waitForSelector('#roster .chip', { timeout: 8000 });
+    await page.waitForSelector('#taskTarget option', { timeout: 8000 });
+    const ui = await page.evaluate(() => {
+      const chips = [...document.querySelectorAll('#roster .chip')].map((el) => ({
+        id: el.dataset.id,
+        text: (el.querySelector('.cn') || el).textContent.replace(/\s+/g, ' ').trim(),
+      }));
+      const options = [...document.querySelectorAll('#taskTarget option')].map((el) => ({
+        value: el.value,
+        text: el.textContent.replace(/\s+/g, ' ').trim(),
+      }));
+      return {
+        vw: window.innerWidth,
+        chips,
+        mapIds: [...document.querySelectorAll('#agents .agent')].map((el) => el.dataset.id),
+        tagText: [...document.querySelectorAll('#overlay .tag')].map((el) => el.textContent).join('\n'),
+        options,
+      };
+    });
+    assert.equal(ui.vw, 390);
+    const chipIds = ui.chips.map((c) => c.id);
+    assert.equal(chipIds.includes('trading'), false);
+    assert.equal(chipIds.includes('biz'), false);
+    assert.equal(ui.mapIds.includes('trading'), false);
+    assert.equal(ui.mapIds.includes('biz'), false);
+    assert.ok(ui.mapIds.includes('devops') && ui.mapIds.includes('finance') && ui.mapIds.includes('lang'));
+    assert.doesNotMatch(ui.tagText, /Трейдинг|Business Adviser/);
+    const chip = (id) => ui.chips.find((c) => c.id === id).text;
+    assert.match(chip('grok'), /^1\./);
+    assert.match(chip('army'), /^2\./);
+    assert.match(chip('poker'), /^3\./);
+    assert.match(chip('devops'), /^4\./);
+    assert.match(chip('dev'), /^5\./);
+    assert.match(chip('temshik'), /^6\./);
+    assert.match(chip('finance'), /^7\./);
+    assert.match(chip('invest'), /^7\.1/);
+    assert.match(chip('analyst'), /^7\.2/);
+    assert.match(chip('qa'), /^8\./);
+    assert.match(chip('blog'), /^9\./);
+    assert.match(chip('lang'), /^10\./);
+    assert.equal(ui.options.some((o) => o.value === 'trading' || o.value === 'biz'), false);
+    assert.match(ui.options.find((o) => o.value === 'devops').text, /^4\./);
+    assert.match(ui.options.find((o) => o.value === 'invest').text, /7\.1/);
+    assert.match(ui.options.find((o) => o.value === 'lang').text, /10\./);
+
+    const needsUi = await page.evaluate(() => ({
+      text: document.querySelector('#needsList').textContent,
+      badge: document.querySelector('#needsBadge').textContent.trim(),
+    }));
+    assert.doesNotMatch(needsUi.text, /Архивный пункт трейдинга/);
+    assert.doesNotMatch(needsUi.text, /Трейдинг|Business Adviser/);
+    const apiNeeds = await api('/api/needs');
+    const visibleNeeds = apiNeeds.body.needs.filter((n) => n.fromAgentId !== 'trading' && n.fromAgentId !== 'biz');
+    assert.ok(apiNeeds.body.needs.some((n) => n.fromAgentId === 'trading'));
+    assert.equal(needsUi.badge, String(visibleNeeds.length));
+
+    await page.click('#btnHier');
+    await page.waitForSelector('#hier.open .org-card', { timeout: 4000 });
+    const treeText = await page.$eval('#hTree', (el) => el.textContent);
+    assert.match(treeText, /7\.1\s*Инвестиции/);
+    assert.match(treeText, /7\.2\s*Бизнес-аналитик/);
+    assert.match(treeText, /10\.\s*Language Coach/);
+    assert.doesNotMatch(treeText, /Трейдинг|Business Adviser/);
+
+    const state = await page.evaluate(() => fetch('/api/state').then((r) => r.json()));
+    assert.equal(state.agents.find((a) => a.id === 'trading').archived, true);
+    assert.equal(state.agents.find((a) => a.id === 'biz').archived, true);
+    assert.ok(state.messages.some((m) => m.id === 'ui-archive-trading' && m.text === 'История трейдинга на месте'));
+    assert.ok(state.needs.some((n) => n.fromAgentId === 'trading' && n.what === 'Архивный пункт трейдинга'));
   } finally {
     await page.close();
   }
