@@ -304,7 +304,8 @@ test('слишком большой файл и лишние файлы откл
     body: big,
   });
   assert.equal(over.status, 413);
-  assert.match((await over.json()).error, /10 МБ/);
+  assert.match(over.headers.get('content-type') || '', /application\/json/);
+  assert.equal((await over.json()).error, 'Файл слишком большой (макс. 10 МБ)');
 
   const many = new FormData();
   for (let i = 0; i < 6; i++) many.append('files', new Blob(['x']), `f${i}.txt`);
@@ -315,6 +316,20 @@ test('слишком большой файл и лишние файлы откл
   });
   assert.equal(tooMany.status, 400);
   assert.match((await tooMany.json()).error, /5/);
+});
+
+test('JSON больше 1 МБ отвечает 413 JSON, а не HTML', async () => {
+  const payload = JSON.stringify({ agent: 'dev', text: 'я'.repeat(700000) });
+  assert.ok(Buffer.byteLength(payload) > 1024 * 1024);
+  const r = await fetch(base + '/api/task', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-app-password': 'pw-test' },
+    body: payload,
+  });
+  assert.equal(r.status, 413);
+  assert.match(r.headers.get('content-type') || '', /application\/json/);
+  const body = await r.json();
+  assert.equal(body.error, 'Файл слишком большой (макс. 10 МБ)');
 });
 
 test('общая переписка: push, дедуп и курсор новых реплик владельца', async () => {

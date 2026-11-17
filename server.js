@@ -1047,7 +1047,7 @@ function uploadArray(req, res, next) {
   upload.array('files', MAX_FILES)(req, res, (err) => {
     if (!err) return next();
     if (err instanceof multer.MulterError) {
-      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Файл больше 10 МБ' });
+      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Файл слишком большой (макс. 10 МБ)' });
       if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
         return res.status(400).json({ error: `Слишком много файлов (максимум ${MAX_FILES})` });
       }
@@ -1095,6 +1095,7 @@ function requireUserOrAgent(req, res, next) {
 
 const app = express();
 app.disable('x-powered-by');
+// Текст задачи и id вложений — это JSON до 1 МБ. Сами файлы принимает multer: 10 МБ и не больше 5.
 app.use(express.json({ limit: '1mb' }));
 app.use((_req, res, next) => {
   res.on('finish', () => {
@@ -1490,6 +1491,16 @@ app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Лимит JSON (1 МБ) и лимит multer (10 МБ) оба должны отвечать JSON, а не HTML-страницей Express.
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err && (err.status || err.statusCode);
+  if (status === 413 || (err && err.type === 'entity.too.large')) {
+    return res.status(413).json({ error: 'Файл слишком большой (макс. 10 МБ)' });
+  }
+  return next(err);
+});
+
 const listen = app.listen.bind(app);
 app.listen = function listenWithPoryadokSync(...args) {
   const server = listen(...args);
@@ -1501,9 +1512,13 @@ app.listen = function listenWithPoryadokSync(...args) {
 };
 
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Агенты Москвы (GROK) слушают 0.0.0.0:${PORT}`);
   });
+  // Дольше типичной загрузки 10 МБ, но не дольше прокси Render, чтобы зависший сокет не держал процесс.
+  server.requestTimeout = 100000;
+  server.headersTimeout = 60000;
+  server.timeout = 100000;
 }
 
 module.exports = { app, state };
