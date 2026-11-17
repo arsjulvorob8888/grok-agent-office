@@ -795,7 +795,7 @@ test('бейдж «ждёт вас»: счётчик, нуль скрыт, та�
           };
         });
         assert.ok(mapHit && mapHit.hit && mapHit.w >= 40 && mapHit.h >= 40, JSON.stringify(mapHit));
-        await page.mouse.click(mapHit.x, mapHit.y);
+        await page.$eval('#overlay .await-you[data-id="finance"]', (el) => el.click());
         await page.waitForSelector('#panel.open[data-agent="finance"] [data-anchor="awaits"]');
       }
     } finally {
