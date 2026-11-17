@@ -219,17 +219,20 @@
   function buildBlocks(agents) {
     const r = rng(42);
     const parts = [];
+    const foot = [];
     const step = 36;
-    const excl = (x, y) => {
+    // tight — добор в четырёх пятнах: дом можно поставить ближе к проезжей части,
+    // но не в воду, не в парк и не на здание агента.
+    const excl = (x, y, tight) => {
       if (x < 22 || y < 30 || x > W - 22 || y > H - 18) return true;
-      if (distPoly(x, y, RIVER_LINE) < 34) return true;
-      if (ringDist(x, y, RINGS.garden) < 14 || ringDist(x, y, RINGS.ttk) < 13) return true;
-      for (const [a, b] of RADIALS) if (distSeg(x, y, a[0], a[1], b[0], b[1]) < 13) return true;
-      if (distPoly(x, y, BULVAR) < 9) return true;
+      if (distPoly(x, y, RIVER_LINE) < (tight ? 20 : 34)) return true;
+      if (ringDist(x, y, RINGS.garden) < (tight ? 6 : 14) || ringDist(x, y, RINGS.ttk) < (tight ? 6 : 13)) return true;
+      for (const [a, b] of RADIALS) if (distSeg(x, y, a[0], a[1], b[0], b[1]) < (tight ? 6 : 13)) return true;
+      if (distPoly(x, y, BULVAR) < (tight ? 6 : 9)) return true;
       for (const p of Object.values(PARKS)) if (inPoly(x, y, p)) return true;
       if (inPoly(x, y, [[660, 632], [930, 632], [795, 395]])) return true;
       if (inPoly(x, y, [[775, 405], [925, 625], [1000, 625], [880, 395]])) return true;
-      if (distPoly(x, y, sampleSmooth(YAUZA, 6)) < 14) return true;
+      if (distPoly(x, y, sampleSmooth(YAUZA, 6)) < (tight ? 6 : 14)) return true;
       for (const lm of LANDMARK_ZONES) if (Math.abs(x - lm[0]) < lm[2] && y < lm[1] + 20 && y > lm[1] - lm[3]) return true;
       for (const a of agents) {
         const dx = x - a.x, dy = y - a.y;
@@ -253,6 +256,7 @@
           for (let i = 0; i < n; i++) wins += `<rect class="bw${r() < 0.4 ? ' off' : ''}" x="${(x + 2 + r() * (w - 6)).toFixed(1)}" y="${(y + d - h + 1.5 + r() * Math.max(0.5, h - 5)).toFixed(1)}" width="2.4" height="2.6"/>`;
         }
         parts.push(`<g class="blk ${cls}"><rect class="bf" x="${x.toFixed(1)}" y="${(y + d - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"/><rect class="bt" x="${x.toFixed(1)}" y="${(y - h).toFixed(1)}" width="${w.toFixed(1)}" height="${d.toFixed(1)}"/>${wins}</g>`);
+        foot.push({ x, y, w, d, h });
       }
     }
     // Деревья в парках
@@ -268,8 +272,57 @@
         parts.push(tree(x.toFixed(1), y.toFixed(1), (4 + r() * 4).toFixed(1)));
       }
     }
+    // Добор кварталов в четырёх голых пятнах восточнее Кремля. Свой жребий,
+    // чтобы уже поставленные дома и деревья парков не сдвинулись.
+    // Дома короче обычных: в клине кольца, Яузы и радиальных полный прямоугольник не влезает.
+    const fillRng = rng(77);
+    const overlaps = (a, b) => a.x < b.x + b.w + 2 && a.x + a.w + 2 > b.x && a.y - a.h < b.y + b.d + 2 && a.y + a.d + 2 > b.y - b.h;
+    const paintBlock = (x, y, w, d, h) => {
+      const cls = 'b' + (1 + Math.floor(fillRng() * 3));
+      let wins = '';
+      const n = 1 + Math.floor(fillRng() * 3);
+      for (let i = 0; i < n; i++) {
+        wins += `<rect class="bw${fillRng() < 0.35 ? ' off' : ''}" x="${(x + 2 + fillRng() * Math.max(0, w - 6)).toFixed(1)}" y="${(y + d - h + 1.5 + fillRng() * Math.max(0.5, h - 4)).toFixed(1)}" width="2.4" height="2.6"/>`;
+      }
+      parts.push(`<g class="blk ${cls}"><rect class="bf" x="${x.toFixed(1)}" y="${(y + d - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"/><rect class="bt" x="${x.toFixed(1)}" y="${(y - h).toFixed(1)}" width="${w.toFixed(1)}" height="${d.toFixed(1)}"/>${wins}</g>`);
+      foot.push({ x, y, w, d, h });
+    };
+    const canSit = (x, y, w, d, h, zone) => {
+      const cx = x + w / 2;
+      const cy = y + d / 2;
+      if (cx < zone.x0 || cx > zone.x1 || cy < zone.y0 || cy > zone.y1) return false;
+      if ([ [x, y], [x + w, y], [x, y + d], [x + w, y + d], [cx, cy] ].some((p) => excl(p[0], p[1], true))) return false;
+      return !foot.some((p) => overlaps({ x, y, w, d, h }, p));
+    };
+    for (const zone of GAP_ZONES) {
+      let placed = 0;
+      for (let y = zone.y0 - 4; y <= zone.y1 - 6 && placed < zone.need; y += 6) {
+        for (let x = zone.x0 - 4; x <= zone.x1 - 10 && placed < zone.need; x += 6) {
+          if (canSit(x, y, 15, 10, 12, zone)) { paintBlock(x, y, 15, 10, 12); placed += 1; }
+          else if (canSit(x, y, 10, 7, 9, zone)) { paintBlock(x, y, 10, 7, 9); placed += 1; }
+        }
+      }
+      // Зелень в оставшейся голой земле того же пятна: кроны не садятся на дома и не в воду.
+      let trees = 0;
+      for (let y = zone.y0 + 4; y <= zone.y1 - 4 && trees < 5; y += 11) {
+        for (let x = zone.x0 + 4; x <= zone.x1 - 4 && trees < 5; x += 11) {
+          if (excl(x, y, true)) continue;
+          if (foot.some((p) => x > p.x - 4 && x < p.x + p.w + 4 && y > p.y - p.h - 4 && y < p.y + p.d + 4)) continue;
+          parts.push(tree(x.toFixed(1), y.toFixed(1), (4.5 + fillRng() * 2).toFixed(1)));
+          trees += 1;
+        }
+      }
+    }
     return parts.join('');
   }
+
+  // Голые участки внутри четырёх рамок восточнее Кремля. См. docs/specs/map-gaps.md.
+  const GAP_ZONES = [
+    { id: 'sadovoe-ne', x0: 1056, y0: 308, x1: 1094, y1: 348, need: 2 },
+    { id: 'yauza-bank', x0: 1094, y0: 438, x1: 1150, y1: 484, need: 2 },
+    { id: 'east-ring', x0: 1136, y0: 606, x1: 1198, y1: 632, need: 2 },
+    { id: 'south-east-lot', x0: 1172, y0: 698, x1: 1268, y1: 746, need: 3 },
+  ];
 
   // [x, y, полуширина, высота] — зоны достопримечательностей без кварталов.
   const LANDMARK_ZONES = [
