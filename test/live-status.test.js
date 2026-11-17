@@ -358,7 +358,13 @@ test('сообщение, приказ и пульс по старому ток�
     body: JSON.stringify({ status: 'accepted' }),
   });
   assert.equal(moved.status, 200);
+  assert.equal(agentOf((await json('/api/state')).body, 'routines').activity, 'resting');
+  const { state } = require('../server.js');
+  const row = state.tasks.find((item) => item.id === task.body.id);
+  assert.equal(row.forwardStatus, null);
+  row.forwardStatus = 200;
   assert.equal(agentOf((await json('/api/state')).body, 'routines').activity, 'working');
+  assert.equal(row.status, 'в очереди агента');
 });
 
 test('живой статус не стирает стойкие поля агента и не пишет live в базу', async () => {
@@ -580,6 +586,10 @@ test('forAgent putin будит Путина, координирование с�
     body: JSON.stringify({ agent: 'army', text: 'Старый приказ Путина', fromAgentId: 'grok' }),
   });
   assert.equal(task.status, 201, JSON.stringify(task.body));
+  const row = state.tasks.find((item) => item.id === task.body.id);
+  if (row) row.forwardStatus = 200;
+  const queued = (state.outbox || []).find((item) => item.taskId === task.body.id);
+  if (queued) queued.status = 'delivered';
   const old = new Date(Date.now() - 20 * 60 * 1000).toISOString();
   const grok = state.agents.find((agent) => agent.id === 'grok');
   grok.live = null;

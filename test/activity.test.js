@@ -54,6 +54,57 @@ function agentOf(body, id) {
   return body.agents.find((a) => a.id === id);
 }
 
+test('недоставленная задача не делает working: пустой forwardStatus, ошибка, 2xx и пульс', () => {
+  const now = Date.parse('2026-11-17T12:00:00.000Z');
+  const windowMs = 30 * 60 * 1000;
+  const freshAt = new Date(now - 2 * 60 * 1000).toISOString();
+  const dev = { id: 'dev', name: 'Программирование', parentId: null };
+  const grok = { id: 'grok', name: 'Путин', parentId: null };
+  const agents = [dev, grok];
+  const queued = [{
+    id: 't-1',
+    agentId: 'dev',
+    agent: 'dev',
+    fromAgentId: 'grok',
+    orderStatus: 'in_progress',
+    status: 'в очереди агента',
+    text: 'Старая задача без доставки',
+    createdAt: freshAt,
+    forwardStatus: null,
+    history: [{ at: freshAt, status: 'in_progress' }],
+  }];
+  const snapshot = JSON.stringify(queued);
+  const exec = activityFor(dev, queued, now, windowMs, { agents });
+  const sender = activityFor(grok, queued, now, windowMs, { agents });
+  assert.equal(exec.activity, 'resting');
+  assert.equal(sender.activity, 'resting');
+  assert.equal(exec.currentTask, null);
+  assert.equal(JSON.stringify(queued), snapshot);
+
+  const ancient = [{
+    ...queued[0],
+    id: 't-4',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    history: [{ at: '2026-01-01T00:00:00.000Z', status: 'sent' }],
+  }];
+  assert.equal(activityFor(dev, ancient, now, windowMs, { agents }).activity, 'resting');
+
+  const failed = [{ ...queued[0], id: 't-err', forwardStatus: 502 }];
+  assert.equal(activityFor(dev, failed, now, windowMs, { agents }).activity, 'resting');
+  assert.equal(activityFor(grok, failed, now, windowMs, { agents }).activity, 'resting');
+
+  const delivered = [{ ...queued[0], id: 't-ok', forwardStatus: 200, status: 'отправлена Путину' }];
+  assert.equal(activityFor(dev, delivered, now, windowMs, { agents }).activity, 'working');
+  assert.equal(activityFor(grok, delivered, now, windowMs, { agents }).activity, 'working');
+
+  const beat = { ...dev, lastSeenAt: freshAt, heartbeatNote: 'На линии' };
+  const withBeat = activityFor(beat, queued, now, windowMs, { agents });
+  assert.equal(withBeat.activity, 'working');
+  assert.equal(withBeat.currentTask, 'На линии');
+  assert.equal(queued[0].forwardStatus, null);
+  assert.equal(queued[0].status, 'в очереди агента');
+});
+
 test('окно активности: по умолчанию 30 минут, мусор тоже 30', () => {
   assert.equal(activeWindowMs({}), 30 * 60 * 1000);
   assert.equal(activeWindowMs({ ACTIVITY_WINDOW_MIN: '' }), 30 * 60 * 1000);
@@ -73,14 +124,14 @@ test('activityFor: приказ, пульс и граница окна', () => {
   assert.equal(activityFor({ id: 'grok' }, stale, now, windowMs).activity, 'resting');
 
   const orders = [
-    { id: 't-sent', agentId: 'dev', fromAgentId: 'grok', orderStatus: 'sent', text: 'ещё не взял', createdAt: '2026-11-17T11:55:00.000Z' },
+    { id: 't-sent', agentId: 'dev', fromAgentId: 'grok', orderStatus: 'sent', text: 'ещё не взял', createdAt: '2026-11-17T11:55:00.000Z', forwardStatus: 200 },
     { id: 't-old', agentId: 'dev', orderStatus: 'done', text: 'старое', createdAt: '2026-11-17T10:00:00.000Z' },
   ];
   assert.equal(activityFor(dev, orders, now, windowMs).activity, 'working');
   assert.equal(activityFor(dev, orders, now, windowMs).currentTask, 'ещё не взял');
   assert.equal(activityFor({ id: 'grok', name: 'Путин' }, orders, now, windowMs).activity, 'working');
 
-  orders.push({ id: 't-acc', agentId: 'dev', agent: 'dev', fromAgentId: 'grok', orderStatus: 'accepted', text: 'Принятая задача', createdAt: '2026-11-17T11:56:00.000Z' });
+  orders.push({ id: 't-acc', agentId: 'dev', agent: 'dev', fromAgentId: 'grok', orderStatus: 'accepted', text: 'Принятая задача', createdAt: '2026-11-17T11:56:00.000Z', forwardStatus: 200 });
   const accepted = activityFor(dev, orders, now, windowMs);
   assert.equal(accepted.activity, 'working');
   assert.equal(accepted.currentTask, 'Принятая задача');
@@ -93,6 +144,7 @@ test('activityFor: приказ, пульс и граница окна', () => {
     orderStatus: 'in_progress',
     text: 'Уже делаю',
     createdAt: '2026-11-17T11:40:00.000Z',
+    forwardStatus: 200,
     history: [{ status: 'in_progress', at: '2026-11-17T11:58:00.000Z' }],
   });
   assert.equal(pickCurrentTask('dev', orders).id, 't-go');
@@ -135,16 +187,16 @@ test('окно 10 минут: отданный и полученный прик�
   const finance = { id: 'finance', name: 'Финансы', parentId: null };
   const agents = [grok, dev, finance, invest];
 
-  const sent = [{ id: 't-1', agentId: 'dev', fromAgentId: 'grok', orderStatus: 'sent', text: 'Сверстай экран', createdAt: freshAt }];
+  const sent = [{ id: 't-1', agentId: 'dev', fromAgentId: 'grok', orderStatus: 'sent', text: 'Сверстай экран', createdAt: freshAt, forwardStatus: 200 }];
   assert.equal(activityFor(dev, sent, now, windowMs, { agents }).activity, 'working');
   assert.equal(activityFor(grok, sent, now, windowMs, { agents }).activity, 'working');
   assert.notEqual(activityFor(grok, sent, now, windowMs, { agents }).activity, 'coordinating');
 
-  const aged = [{ id: 't-1', agentId: 'dev', fromAgentId: 'grok', orderStatus: 'in_progress', text: 'Сверстай экран', createdAt: oldAt, history: [{ at: oldAt, status: 'in_progress' }] }];
+  const aged = [{ id: 't-1', agentId: 'dev', fromAgentId: 'grok', orderStatus: 'in_progress', text: 'Сверстай экран', createdAt: oldAt, forwardStatus: 200, history: [{ at: oldAt, status: 'in_progress' }] }];
   assert.equal(activityFor(dev, aged, now, windowMs, { agents }).activity, 'resting');
   assert.equal(activityFor(grok, aged, now, windowMs, { agents }).activity, 'resting');
 
-  const edge = [{ id: 't-edge', agentId: 'dev', fromAgentId: 'grok', orderStatus: 'sent', text: 'на границе', createdAt: new Date(now - 10 * 60 * 1000).toISOString() }];
+  const edge = [{ id: 't-edge', agentId: 'dev', fromAgentId: 'grok', orderStatus: 'sent', text: 'на границе', createdAt: new Date(now - 10 * 60 * 1000).toISOString(), forwardStatus: 200 }];
   assert.equal(activityFor(dev, edge, now, windowMs, { agents }).activity, 'resting');
 
   const messages = [{ id: 'm-1', agentId: 'dev', fromAgentId: 'grok', role: 'owner', text: 'Держи задачу', createdAt: freshAt, source: 'app' }];

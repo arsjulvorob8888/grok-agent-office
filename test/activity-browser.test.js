@@ -96,6 +96,8 @@ async function seedOrder(text, agent = 'dev') {
     body: JSON.stringify({ status: 'accepted' }),
   });
   assert.equal(accepted.status, 200);
+  const task = state.tasks.find((item) => item.id === created.body.id);
+  if (task) task.forwardStatus = 200;
   return created.body.id;
 }
 
@@ -381,6 +383,8 @@ test('классы яркости: idle, working и coordinating на здани
       body: JSON.stringify({ agent: 'social', text: 'Старый приказ для координации', fromAgentId: 'grok' }),
     });
     assert.equal(task.status, 201, JSON.stringify(task.body));
+    const queued = (state.outbox || []).find((item) => item.taskId === task.body.id);
+    if (queued) queued.status = 'delivered';
     const old = new Date(Date.now() - 20 * 60 * 1000).toISOString();
     const grok = state.agents.find((agent) => agent.id === 'grok');
     grok.live = null;

@@ -126,7 +126,8 @@ test('недоставленный приказ не делает агента w
     agentId: 'advisor',
     orderStatus: 'sent',
     text: 'Ждёт доставку',
-    createdAt: '2026-11-17T11:00:00.000Z',
+    createdAt: '2026-11-17T11:55:00.000Z',
+    forwardStatus: null,
   }];
   const held = activityFor({ id: 'advisor' }, orders, now, 60_000, {
     outbox: [{ id: 'ob-1', taskId: 't-held', status: 'queued' }],
@@ -138,7 +139,13 @@ test('недоставленный приказ не делает агента w
   ], now, 60_000, {
     outbox: [{ id: 'ob-1', taskId: 't-held', status: 'queued' }],
   });
-  assert.equal(accepted.activity, 'working');
+  assert.equal(accepted.activity, 'resting');
+  const delivered = activityFor({ id: 'advisor' }, [
+    { ...orders[0], orderStatus: 'accepted', forwardStatus: 200 },
+  ], now, 60_000, {
+    outbox: [{ id: 'ob-1', taskId: 't-held', status: 'queued' }],
+  });
+  assert.equal(delivered.activity, 'working');
 });
 
 test('при старте очередь уходит по порядку и не дублирует delivered', async () => {
