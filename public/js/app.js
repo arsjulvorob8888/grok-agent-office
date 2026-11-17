@@ -370,7 +370,7 @@
   function viewRect() {
     const w = innerWidth, h = innerHeight, mob = w <= 700;
     const hud = $('.hud').getBoundingClientRect();
-    const ros = $('#roster').getBoundingClientRect();
+    const ros = ($('#agentBar') || $('#roster')).getBoundingClientRect();
     let left = 0, right = w, top = hud.bottom + 8, bottom = (ros.height ? ros.top : h) - 8;
     const j = $('#journal');
     const hier = $('#hier');
@@ -762,6 +762,11 @@
   // Вертикальное колесо над полосой листает её вбок, когда агенты не влезают.
   // Иначе на узкой ширине мышью до крайних чипов не добраться: скроллбар был скрыт.
   function initRoster() {
+    const toggle = $('#agentBarToggle');
+    const peek = $('#agentBarPeek');
+    if (toggle) toggle.onclick = () => setAgentBar(!$('#agentBar').classList.contains('collapsed'), true);
+    if (peek) peek.onclick = () => setAgentBar(false, true);
+    setAgentBar(localStorage.getItem('agentBar') === 'collapsed', false);
     const r = $('#roster');
     r.addEventListener('wheel', (e) => {
       if (r.scrollWidth <= r.clientWidth + 1) return;
@@ -787,6 +792,46 @@
       paintAwaitBadge(c.querySelector('.await-you'), a.id, true);
       paintGuestEvents(c, a);
     });
+    paintAgentBar();
+  }
+  function setAgentBar(collapsed, persist) {
+    const bar = $('#agentBar');
+    const roster = $('#roster');
+    const toggle = $('#agentBarToggle');
+    const peek = $('#agentBarPeek');
+    if (!bar || !roster || !toggle) return;
+    if (collapsed) releaseFocus(roster, toggle);
+    bar.classList.toggle('collapsed', !!collapsed);
+    document.body.classList.toggle('agent-bar-collapsed', !!collapsed);
+    roster.inert = !!collapsed;
+    if (peek) peek.hidden = !collapsed;
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    toggle.setAttribute('aria-label', collapsed ? 'Развернуть панель агентов' : 'Свернуть панель агентов');
+    if (persist) localStorage.setItem('agentBar', collapsed ? 'collapsed' : 'open');
+    paintAgentBar();
+    if (!S.loaded) return;
+    placeOverlay();
+    if (!S.userMoved && !S.selected) goHome(false);
+    else applyCam();
+  }
+  function paintAgentBar() {
+    const countEl = $('#agentBarAwait');
+    const dots = $('#agentBarDots');
+    if (countEl && window.OfficeFeed) {
+      const n = Feed.needsForGeneral(S.needs || []).length;
+      countEl.textContent = String(n);
+      const wrap = countEl.closest('.agent-bar-await');
+      if (wrap) wrap.classList.toggle('zero', n === 0);
+    }
+    if (!dots) return;
+    const html = S.agents.filter(onMap).sort(cmpNum).map((a) => {
+      const st = a.status === 'working' || a.status === 'waiting' ? a.status : 'idle';
+      return `<i class="agent-bar-dot ${st}"></i>`;
+    }).join('');
+    if (dots.dataset.sig !== html) {
+      dots.dataset.sig = html;
+      dots.innerHTML = html;
+    }
   }
   function paintGuestEvents(chip, host) {
     const box = chip.querySelector('.chip-events');

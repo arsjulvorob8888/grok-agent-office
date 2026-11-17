@@ -87,7 +87,11 @@
     <div class="quest-list" id="jList"></div>
   </aside>
 
-  <nav id="roster" aria-label="Агенты"></nav>
+  <div id="agentBar">
+    <button type="button" id="agentBarToggle" class="agent-bar-toggle" aria-expanded="true" aria-controls="roster" aria-label="Свернуть панель агентов"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+    <button type="button" id="agentBarPeek" class="agent-bar-peek" hidden aria-label="Развернуть панель агентов"><span class="agent-bar-await">ждёт вас <b id="agentBarAwait">0</b></span><span id="agentBarDots" class="agent-bar-dots" aria-hidden="true"></span></button>
+    <nav id="roster" aria-label="Агенты"></nav>
+  </div>
 
   <div id="minimap" class="glass" title="Мини-карта: нажми, чтобы перелететь">
     <svg viewBox="0 0 1600 1100" preserveAspectRatio="xMidYMid meet"><use href="#mapBase"/><g id="miniDots"></g><rect id="miniView" class="mini-view" x="0" y="0" width="100" height="100" rx="8"/></svg>
