@@ -50,7 +50,7 @@ if (!CHROME || !puppeteer) {
   test('на ширине 390 полоса агентов листается до последнего', async () => {
     const page = await pageAt(390, 844, true);
     try {
-      await page.goto(base + '/?theme=day', { waitUntil: 'networkidle0', timeout: 30000 });
+      await page.goto(base + '/?theme=day', { waitUntil: 'load', timeout: 30000 });
       await page.waitForSelector('#roster .chip');
       const before = await page.evaluate(() => {
         const r = document.querySelector('#roster');
@@ -105,7 +105,7 @@ if (!CHROME || !puppeteer) {
   test('клик «Дать задачу» открывает пропуск так же, как Ctrl+Enter', async () => {
     const page = await pageAt(1280, 800, false);
     try {
-      await page.goto(base + '/?theme=day&agent=grok', { waitUntil: 'networkidle0', timeout: 30000 });
+      await page.goto(base + '/?theme=day&agent=grok', { waitUntil: 'load', timeout: 30000 });
       await page.waitForSelector('#taskSubmit');
       const required = await page.$eval('#taskText', (el) => el.required);
       assert.equal(required, false, 'required снова блокирует submit и клик молчит');
@@ -142,7 +142,15 @@ if (!CHROME || !puppeteer) {
   };
 
   async function tapTask(page) {
-    await page.waitForSelector('#taskSubmit');
+    await page.waitForFunction(() => {
+      const panel = document.querySelector('#panel');
+      const btn = document.querySelector('#taskSubmit');
+      if (!panel || !btn || !panel.classList.contains('open')) return false;
+      const transform = getComputedStyle(panel).transform;
+      if (transform && transform !== 'none') return false;
+      const r = btn.getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= window.innerHeight + 1 && r.left >= -1 && r.right <= window.innerWidth + 1;
+    }, { timeout: 4000 });
     const box = await page.$eval('#taskSubmit', (el) => {
       const r = el.getBoundingClientRect();
       return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, vh: window.innerHeight, vw: window.innerWidth };
@@ -164,7 +172,7 @@ if (!CHROME || !puppeteer) {
         localStorage.removeItem('appPassword');
         localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
       });
-      await page.goto(base + '/?theme=day&agent=qa', { waitUntil: 'networkidle0', timeout: 30000 });
+      await page.goto(base + '/?theme=day&agent=qa', { waitUntil: 'load', timeout: 30000 });
       await page.waitForSelector('#panel.open h2');
       const heading = await page.$eval('#panel .p-title h2', (el) => el.textContent);
       assert.match(heading, /8\.\s*Тестировщик/);
@@ -182,7 +190,7 @@ if (!CHROME || !puppeteer) {
         localStorage.removeItem('appPassword');
         localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
       });
-      await page.goto(base + '/?theme=day&agent=routines', { waitUntil: 'networkidle0', timeout: 30000 });
+      await page.goto(base + '/?theme=day&agent=routines', { waitUntil: 'load', timeout: 30000 });
       await page.waitForSelector('#panel.open h2');
       const heading = await page.$eval('#panel .p-title h2', (el) => el.textContent);
       assert.match(heading, /12\.\s*Рутины/);
@@ -204,7 +212,7 @@ if (!CHROME || !puppeteer) {
   test('прокрутка панели не сбрасывается опросом и сменой статуса', { timeout: 40000 }, async () => {
     const page = await pageAt(1280, 800, false);
     try {
-      await page.goto(base + '/?theme=day&agent=grok', { waitUntil: 'networkidle0', timeout: 30000 });
+      await page.goto(base + '/?theme=day&agent=grok', { waitUntil: 'load', timeout: 30000 });
       await page.waitForSelector('.p-body');
       const placed = await page.evaluate(() => {
         const body = document.querySelector('.p-body');

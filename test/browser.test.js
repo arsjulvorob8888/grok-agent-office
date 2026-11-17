@@ -263,7 +263,10 @@ test('бейдж, цепочка и тихий конверт при reduced-mot
     assert.equal(working.status, 200);
     await page.waitForFunction(() => {
       const badge = document.querySelector('.order-badge[data-id="qa"]');
-      return badge && badge.textContent.includes('в работе') && badge.querySelector('.ob-bar i');
+      if (!badge || !badge.textContent.includes('в работе') || !badge.querySelector('.ob-bar i')) return false;
+      if (badge.classList.contains('hide')) return false;
+      const r = badge.getBoundingClientRect();
+      return r.top > 40 && r.left >= 0 && r.right <= window.innerWidth + 1 && r.width > 40;
     }, { timeout: 10000 });
     const bar = await page.$eval('.order-badge[data-id="qa"] .ob-bar i', (el) => el.style.width);
     assert.equal(bar, '55%');
@@ -2107,10 +2110,22 @@ test('нижняя панель агентов сворачивается и п�
       await page.waitForFunction(() => !document.querySelector('#agentBar').classList.contains('collapsed'));
       assert.equal(await page.$eval(toggle, (el) => el.getAttribute('aria-expanded')), 'true');
 
+      // Полоса раскрывается 280 мс. Клик по шеврону в это время попадает мимо кнопки.
+      const waitBarStill = () => page.waitForFunction(() => {
+        const bar = document.querySelector('#agentBar');
+        const h = Math.round(bar.getBoundingClientRect().height);
+        const prev = Number(bar.dataset.barH);
+        bar.dataset.barH = String(h);
+        return prev === h;
+      }, { timeout: 3000 });
+
+      await waitBarStill();
       await page.click(toggle);
       await page.waitForFunction(() => document.querySelector('#agentBar').classList.contains('collapsed'));
+      await waitBarStill();
       await page.click('#agentBarPeek');
       await page.waitForFunction(() => !document.querySelector('#agentBar').classList.contains('collapsed'));
+      await waitBarStill();
       await page.click(toggle);
       await page.waitForFunction(() => localStorage.getItem('agentBar') === 'collapsed');
 

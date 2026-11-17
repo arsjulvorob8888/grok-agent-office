@@ -66,8 +66,15 @@
 
   function modeOf(agent) {
     if (agent && agent.activity === 'working') return 'working';
+    if (agent && agent.activity === 'coordinating') return 'coordinating';
     if (agent && agent.activity === 'waiting') return 'waiting';
     return 'resting';
+  }
+  function paintState(el, mode) {
+    el.classList.toggle('act-working', mode === 'working');
+    el.classList.toggle('act-coordinating', mode === 'coordinating');
+    el.classList.toggle('act-waiting', mode === 'waiting');
+    el.classList.toggle('act-idle', mode === 'resting');
   }
 
   function paint() {
@@ -77,8 +84,10 @@
       if (!a) return;
       const mode = modeOf(a);
       g.classList.toggle('pulse', mode === 'working');
+      g.classList.toggle('coord', mode === 'coordinating');
       g.classList.toggle('wait', mode === 'waiting');
       g.classList.toggle('sleep', mode === 'resting');
+      paintState(g, mode);
       ensureRing(g);
     });
     document.querySelectorAll('#roster .chip').forEach((chip) => {
@@ -87,8 +96,10 @@
       const mode = modeOf(a);
       const working = mode === 'working';
       chip.classList.toggle('pulse', working);
+      chip.classList.toggle('coord', mode === 'coordinating');
       chip.classList.toggle('wait', mode === 'waiting');
       chip.classList.toggle('sleep', mode === 'resting');
+      paintState(chip, mode);
       ensureChipBits(chip);
       const cap = chip.querySelector('.chip-task');
       const text = working && a.currentTask ? trunc(a.currentTask, 18) : '';
@@ -97,6 +108,11 @@
       else cap.removeAttribute('title');
       const z = chip.querySelector('.chip-zzz');
       if (z) z.title = working ? '' : (mode === 'waiting' ? 'Ждёт' : 'Спит');
+      if (!chip.dataset.baseTitle) chip.dataset.baseTitle = chip.getAttribute('title') || '';
+      const age = a.doingSince && window.LiveStream ? LiveStream.ago(a.doingSince) : '';
+      const what = a.doing || (working ? a.currentTask : '') || '';
+      const busy = what ? `чем занят: ${what}${age ? ` · ${age}` : ''}` : (age ? `уже ${age}` : '');
+      chip.title = busy ? `${chip.dataset.baseTitle} · ${busy}` : chip.dataset.baseTitle;
     });
     const seen = new Set();
     for (const a of agents) {
@@ -116,8 +132,9 @@
       if (a.currentTask) cap.title = a.currentTask;
       else cap.removeAttribute('title');
       const name = a.id === 'grok' ? 'Путин' : (a.name || a.id);
+      const age = a.doingSince && window.LiveStream ? LiveStream.ago(a.doingSince) : '';
       const label = working
-        ? `${name} работает${a.currentTask ? `: ${a.currentTask}` : ''}`
+        ? `${name} работает${a.currentTask ? `: ${a.currentTask}` : ''}${age ? `, уже ${age}` : ''}`
         : (mode === 'waiting' ? `${name} ждёт` : `${name} спит`);
       el.setAttribute('aria-label', label);
       const at = /translate\(\s*([-\d.]+)[ ,]([-\d.]+)/.exec(drawn.getAttribute('transform') || '');
@@ -167,13 +184,13 @@
   }
 
   async function fallback() {
-    if (Date.now() - lastEvent < 6000) return;
+    if (Date.now() - lastEvent < 25000) return;
     const res = await fetch('/api/state', { cache: 'no-store' });
     if (!res.ok) return;
     lastEvent = Date.now();
     take(await res.json());
   }
-  setInterval(() => { fallback().catch(() => {}); }, 4000);
+  setInterval(() => { fallback().catch(() => {}); }, 30000);
 
   window.ActivityView = { paint, place, take };
 })();
