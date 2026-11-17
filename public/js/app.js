@@ -1207,7 +1207,8 @@
   }
   function seatHTML(a, head) {
     const role = a.id === head.id ? 'Руководитель' : (a.parentId ? 'Заместитель' : 'В этом здании');
-    const st = STATUS_TEXT[a.status] || a.status || '';
+    const phrase = deliveryPhrase(a);
+    const st = phrase || STATUS_TEXT[a.status] || a.status || '';
     return `<article class="room-seat" data-id="${esc(a.id)}">
       <div class="room-sit">
         <svg class="room-fig" viewBox="-40 -108 80 116" aria-hidden="true">${Figures.render(a.kind, a.color)}</svg>
@@ -1222,7 +1223,7 @@
       <div class="room-meta">
         <div class="room-role">${esc(role)}</div>
         <div class="room-name">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</div>
-        <div class="room-status"><span class="status-pill ${esc(a.status)}">${esc(st)}</span><span class="now">${esc(a.now || '')}</span></div>
+        <div class="room-status"><span class="status-pill ${esc(phrase ? 'queued' : a.status)}">${esc(st)}</span><span class="now">${phrase ? '' : esc(a.now || '')}</span></div>
         <button type="button" class="btn gold room-go" data-id="${esc(a.id)}">Открыть</button>
       </div>
     </article>`;
@@ -1274,6 +1275,11 @@
   function activityLabel(a) {
     return ACTIVITY_TEXT[activityMode(a)] || STATUS_TEXT[a && a.status] || '';
   }
+  function deliveryPhrase(a) {
+    if (!a || activityMode(a) === 'working') return '';
+    const task = S.tasks.find((t) => (t.agentId || t.agent) === a.id && t.deliveryLabel);
+    return task ? task.deliveryLabel : '';
+  }
   function activityDot(a) {
     const mode = activityMode(a);
     if (mode === 'working') return 'working';
@@ -1285,15 +1291,21 @@
     if (t.orderStatus === 'done' || t.status === 'выполнена') return ['done', 'Выполнена'];
     if (t.orderStatus === 'in_progress') return ['work', 'В работе'];
     if (t.orderStatus === 'accepted') return ['work', 'Принял'];
+    if (!t.orderStatus || t.orderStatus === 'sent') {
+      const caption = Feed.deliveryCaption(t.forwardStatus);
+      const code = Number(t.forwardStatus);
+      const failed = t.forwardStatus != null && t.forwardStatus !== '' && !(Number.isInteger(code) && code >= 200 && code < 300);
+      return [failed ? 'fail' : 'sent', caption];
+    }
     if (t.status === 'выполнена') return ['done', 'Выполнена'];
     const a = S.byId.get(t.agent);
     const latest = S.tasks.find((x) => x.agent === t.agent);
     if (a && a.status === 'working' && latest && latest.id === t.id) return ['work', 'В работе'];
-    if (t.status === 'в очереди агента') return ['sent', 'В очереди'];
-    if (t.status === 'отправлена Путину') return ['sent', 'Путину'];
+    if (t.status === 'в очереди агента') return ['sent', Feed.deliveryCaption(t.forwardStatus)];
+    if (t.status === 'отправлена Путину') return ['sent', Feed.deliveryCaption(t.forwardStatus)];
     if (String(t.status).startsWith('не отправлена')) return ['fail', 'Не отправлена'];
-    if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) return ['fail', 'Ошибка связи'];
-    return ['sent', 'Отправлена'];
+    if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) return ['fail', Feed.deliveryCaption(t.forwardStatus)];
+    return ['sent', Feed.deliveryCaption(t.forwardStatus)];
   }
   const ICONS = {
     send: '<path d="M4 12l16-8-6 16-3-6z M11 14l9-10"/>',
@@ -1369,7 +1381,8 @@
       if (h.status === 'in_progress' && h.progress != null) bits.push(`${h.progress}%`);
       if (h.note) bits.push(h.note);
       if (h.status === 'done' && h.result) bits.push(h.result.length > 140 ? `${h.result.slice(0, 140)}…` : h.result);
-      return `<li><time datetime="${esc(h.at || '')}">${fmtTime(h.at)}</time><b>${esc(ORDER_WORD[h.status] || h.status || '')}</b>${bits.length ? `<span>${esc(bits.join(' · '))}</span>` : ''}</li>`;
+      const word = h.status === 'sent' ? Feed.deliveryCaption(t.forwardStatus) : (ORDER_WORD[h.status] || h.status || '');
+      return `<li><time datetime="${esc(h.at || '')}">${fmtTime(h.at)}</time><b>${esc(word)}</b>${bits.length ? `<span>${esc(bits.join(' · '))}</span>` : ''}</li>`;
     }).join('')}</ol>`;
   }
 
@@ -1398,7 +1411,7 @@
     if (!a) return '';
     const L = levelInfo(a);
     const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
-    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
+    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
     const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
@@ -1461,7 +1474,7 @@
         ${panelNeedsHTML(a)}
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
           <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}">${esc(activityLabel(a))}</span><span class="now">${esc(a.now || '')}</span></div>
+        <div class="status-line" data-anchor="status"><span class="status-pill ${deliveryPhrase(a) ? 'queued' : activityDot(a)}">${esc(deliveryPhrase(a) || activityLabel(a))}</span><span class="now">${deliveryPhrase(a) ? '' : esc(a.now || '')}</span></div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
@@ -1661,9 +1674,12 @@
       toast('Задача отправлена', `${names}: «${preview.slice(0, 80)}»`, 'send');
       $('#taskText').value = '';
       clearDrafts(a.id);
-      msg.className = lastErr ? 'msg err' : 'msg ok';
-      msg.textContent = lastErr || 'Готово! Агент взялся за работу.';
       await loadState();
+      const formMsg = $('#formMsg');
+      if (formMsg) {
+        formMsg.className = lastErr ? 'msg err' : 'msg ok';
+        formMsg.textContent = lastErr || 'Готово! Агент взялся за работу.';
+      }
     } else {
       msg.className = 'msg err'; msg.textContent = lastErr || 'Не удалось отправить';
     }
@@ -1808,7 +1824,7 @@
     const top = list.scrollTop;
     const saved = {};
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
-    const sig = S.tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
+    const sig = S.tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
     $('#jCount').textContent = S.tasks.length;
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;

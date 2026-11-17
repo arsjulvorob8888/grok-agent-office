@@ -105,7 +105,7 @@
       badge.textContent = String(total);
       badge.classList.toggle('zero', total === 0);
     }
-    const sig = rows.map((t) => [t.id, t.orderStatus, t.text, t.fromAgentId, t.agentId || t.agent, t.createdAt].join('\u0001')).join('\u0002')
+    const sig = rows.map((t) => [t.id, t.orderStatus, t.forwardStatus, t.text, t.fromAgentId, t.agentId || t.agent, t.createdAt].join('\u0001')).join('\u0002')
       + '\u0003' + runs.map((r) => [r.id, r.name, r.agentId, r.startedAt].join('\u0001')).join('\u0002');
     tick();
     if (list.dataset.sig === sig) return;
@@ -131,10 +131,13 @@
       const to = person(t.agentId || t.agent, map);
       const what = t.text || 'Задача';
       const status = t.orderStatus;
+      const label = status === 'sent' && window.OfficeFeed
+        ? window.OfficeFeed.deliveryCaption(t.forwardStatus)
+        : (LABEL[status] || status);
       return `<button type="button" class="proc-row ${esc(status)}" data-order-id="${esc(t.id)}">
         <span class="proc-route"><b>${esc(from)}</b><span class="arr" aria-hidden="true">→</span><b>${esc(to)}</b></span>
         <span class="proc-what">${esc(what)}</span>
-        <span class="proc-meta"><span class="proc-st ${esc(status)}">${esc(LABEL[status] || status)}</span><time class="proc-elapsed" data-start="${esc(t.createdAt)}" datetime="${esc(t.createdAt)}">${esc(formatElapsed(t.createdAt, now))}</time></span>
+        <span class="proc-meta"><span class="proc-st ${esc(status)}">${esc(label)}</span><time class="proc-elapsed" data-start="${esc(t.createdAt)}" datetime="${esc(t.createdAt)}">${esc(formatElapsed(t.createdAt, now))}</time></span>
       </button>`;
     }).join('');
     list.scrollTop = top;

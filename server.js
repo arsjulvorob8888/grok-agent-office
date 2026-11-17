@@ -7,6 +7,7 @@ const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
 const { activityFor, activeWindowMs } = require('./lib/activity');
+const { deliveryCaption } = require('./public/js/feed');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
 const { senderName } = require('./public/js/sender-label');
@@ -24,7 +25,7 @@ function noteIgnoredGrokWebhook() {
 }
 noteIgnoredGrokWebhook();
 
-// Приказы, переписка, «Нужно от вас» и байты вложений пишет lib/store.js в Postgres,
+// Приказы, переписка, «Нужно от вас», очередь вебхука и байты вложений пишет lib/store.js в Postgres,
 // если DATABASE_URL задан и база доступна при старте. Иначе всё остаётся в памяти,
 // а файлы — в UPLOAD_DIR. Лимиты загрузки те же: 10 МБ и 5 файлов.
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -480,10 +481,12 @@ const state = {
   files: new Map(),
   needs: [],
   routines: [],
+  outbox: [],
   nextTaskId: 1,
   nextMessageId: 1,
   nextNeedId: 1,
   nextRoutineId: 1,
+  nextOutboxId: 1,
   migrations: { financeTextReopen: false },
 };
 
@@ -919,6 +922,7 @@ function publicState(opts = {}) {
       ...(a.analysis !== undefined ? { analysis: a.analysis } : {}),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
+    outbox: (state.outbox || []).map(publicOutbox),
     messages: messagesForState(),
     needs: state.needs.map((item) => publicNeed(item, Date.now(), opts)),
     routines: state.routines.slice(0, 100).map(publicRoutine),
@@ -927,7 +931,7 @@ function publicState(opts = {}) {
 }
 
 function activityExtras() {
-  return { messages: state.messages, routines: state.routines };
+  return { messages: state.messages, routines: state.routines, outbox: state.outbox || [] };
 }
 
 function publicRoutine(item) {
@@ -1320,7 +1324,28 @@ function publicTask(t) {
     history: (t.history || []).map(publicHistoryEntry),
     attachments: (t.attachments || []).map(publicAttachment),
   };
-  return withStoredFields(base, t);
+  const view = withStoredFields(base, t);
+  view.deliveryLabel = deliveryLabelFor(t);
+  return view;
+}
+
+function deliveryLabelFor(task) {
+  if (!task) return null;
+  if ((task.orderStatus || 'sent') !== 'sent') return null;
+  return deliveryCaption(task.forwardStatus);
+}
+
+function publicOutbox(item) {
+  return {
+    id: item.id,
+    at: item.at,
+    agentId: item.agentId,
+    taskId: item.taskId || null,
+    status: item.status,
+    lastError: item.lastError || null,
+    attempts: item.attempts || 0,
+    payload: item.payload || null,
+  };
 }
 
 function agentLabel(id) {
@@ -1855,6 +1880,36 @@ app.get('/healthz', (_req, res) => {
   res.status(200).type('text/plain').send('ok');
 });
 
+function deliveryAuthorized(req) {
+  const header = String(req.get('authorization') || '');
+  const match = header.match(/^Bearer\s+(\S+)\s*$/i);
+  const bearer = match ? match[1] : '';
+  const agent = req.get('x-agent-token') || '';
+  const password = req.get('x-app-password') || '';
+  if (AGENT_TOKEN && bearer && safeEqual(bearer, AGENT_TOKEN)) return true;
+  if (AGENT_TOKEN && agent && safeEqual(agent, AGENT_TOKEN)) return true;
+  if (APP_PASSWORD && password && safeEqual(password, APP_PASSWORD)) return true;
+  return false;
+}
+
+app.get('/api/health/delivery', (req, res) => {
+  if (!deliveryAuthorized(req)) return res.status(401).json({ error: 'Нужна авторизация' });
+  const list = state.outbox || [];
+  res.json({
+    webhookUrlSet: webhookUrl() !== '',
+    webhookKeySet: String(process.env.KREMLIN_WEBHOOK_KEY || '').trim() !== '',
+    lastDelivery: lastDeliveryView(),
+    queued: list.filter((item) => item && item.status === 'queued').length,
+    delivered: list.filter((item) => item && item.status === 'delivered').length,
+  });
+});
+
+app.post('/api/outbox/retry', requireAppPassword, async (req, res) => {
+  if (!webhookUrl()) return res.status(409).json({ error: 'KREMLIN_WEBHOOK_URL не задан' });
+  const result = await flushOutbox();
+  res.json({ ok: true, sent: result.sent, failed: result.failed });
+});
+
 app.get('/api/state', (req, res) => {
   if (resolveNeedsByEnv()) poryadokSync.schedule();
   res.json(publicState({ includePrivate: hqPasswordOk(req) }));
@@ -2062,40 +2117,166 @@ function openTask(task) {
   return true;
 }
 
-async function notifyKremlin(event) {
-  const url = String(process.env.KREMLIN_WEBHOOK_URL || '').trim();
-  if (!url) return { sent: false, attempted: false };
-  const at = event.at || new Date().toISOString();
+const outboxInflight = new Set();
+let outboxChain = Promise.resolve();
+let startupFlushStarted = false;
+
+function webhookUrl() {
+  return String(process.env.KREMLIN_WEBHOOK_URL || '').trim();
+}
+
+function logDeliveryAttempt(item, label, ms) {
+  const id = String(item && item.id || '').replace(/[\r\n]/g, '');
+  const agent = String(item && item.agentId || '').replace(/[\r\n]/g, '');
+  const result = String(label || '').replace(/[\r\n]/g, '');
+  const attempt = item && item.attempts ? item.attempts : 0;
+  console.log(`webhook attempt id=${id} agent=${agent} attempt=${attempt} ${result} ms=${ms}`);
+}
+
+function createOutboxItem(task, notice) {
+  const id = `ob-${state.nextOutboxId++}`;
+  const at = (notice && notice.at) || task.createdAt || new Date().toISOString();
   const payload = {
-    type: event.type,
-    agentId: event.agentId,
-    text: event.text || '',
+    id,
+    type: notice && notice.type ? notice.type : 'owner_task',
+    agentId: notice && notice.agentId ? notice.agentId : (task.agentId || task.agent),
+    text: notice && notice.text != null ? notice.text : (task.text || ''),
     at,
     atMsk: formatAtMsk(at),
     appUrl: PUBLIC_URL,
   };
-  if (event.needId) payload.needId = event.needId;
-  if (event.taskId) payload.taskId = event.taskId;
+  if (notice && notice.needId) payload.needId = notice.needId;
+  else payload.taskId = task.id;
+  return {
+    id,
+    at,
+    agentId: task.agentId || task.agent,
+    taskId: task.id,
+    status: 'queued',
+    lastError: null,
+    attempts: 0,
+    lastAttemptAt: null,
+    lastStatus: null,
+    deliveredAt: null,
+    payload,
+  };
+}
+
+function applyOutboxResult(item, result) {
+  if (!item || !result || !result.attempted) return;
+  item.lastAttemptAt = new Date().toISOString();
+  if (result.sent) {
+    item.status = 'delivered';
+    item.deliveredAt = item.lastAttemptAt;
+    item.lastError = null;
+    item.lastStatus = result.status;
+    return;
+  }
+  item.status = 'queued';
+  item.lastError = result.error || 'network_error';
+  item.lastStatus = Number.isInteger(result.status) && result.status > 0 ? result.status : null;
+}
+
+function markDeliveredAgent(item, task) {
+  const agent = findAgent((task && (task.agentId || task.agent)) || (item && item.agentId));
+  if (!agent || agent.archived) return;
+  const text = (task && task.text) || (item && item.payload && item.payload.text) || '';
+  agent.status = 'working';
+  if (text) agent.now = String(text).slice(0, 300);
+  store.noteAgent(agent);
+}
+
+async function sendOutboxItem(item) {
+  if (!item || item.status === 'delivered') return { sent: false, attempted: false, skipped: true };
+  if (outboxInflight.has(item.id)) return { sent: false, attempted: false, skipped: true };
+  const url = webhookUrl();
+  if (!url) return { sent: false, attempted: false };
+  outboxInflight.add(item.id);
+  item.attempts = (Number(item.attempts) || 0) + 1;
+  const started = Date.now();
   try {
+    const headers = kremlinWebhookHeaders();
+    headers['x-outbox-id'] = String(item.id);
     const response = await fetch(url, {
       method: 'POST',
-      headers: kremlinWebhookHeaders(),
-      body: JSON.stringify(payload),
+      headers,
+      body: JSON.stringify(item.payload),
       signal: AbortSignal.timeout(10000),
     });
     if (response && typeof response.arrayBuffer === 'function') await response.arrayBuffer().catch(() => {});
+    const ms = Date.now() - started;
     if (!response || !response.ok) {
       const code = response && Number.isFinite(Number(response.status)) ? response.status : 0;
       console.error(`Вебхук Кремля не доставлен: HTTP ${code}`);
+      logDeliveryAttempt(item, `http=${code}`, ms);
       return { sent: false, attempted: true, status: code, error: `HTTP ${code}` };
     }
+    logDeliveryAttempt(item, `http=${response.status}`, ms);
     return { sent: true, attempted: true, status: response.status };
   } catch (err) {
     const timeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
     const kind = timeout ? 'timeout' : 'network_error';
     console.error(`Вебхук Кремля не доставлен: ${kind}`);
+    logDeliveryAttempt(item, `error=${kind}`, Date.now() - started);
     return { sent: false, attempted: true, status: 0, error: kind };
+  } finally {
+    outboxInflight.delete(item.id);
   }
+}
+
+async function drainOutbox() {
+  const url = webhookUrl();
+  if (!url) return { sent: 0, failed: 0 };
+  const pending = (state.outbox || [])
+    .filter((item) => item && item.status === 'queued')
+    .slice()
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)) || String(a.id).localeCompare(String(b.id)));
+  let sent = 0;
+  let failed = 0;
+  for (const item of pending) {
+    if (item.status !== 'queued') continue;
+    const result = await sendOutboxItem(item);
+    if (!result || result.skipped || !result.attempted) continue;
+    applyOutboxResult(item, result);
+    const task = state.tasks.find((entry) => entry.id === item.taskId);
+    applyKremlinResult(task, result);
+    if (result.sent) markDeliveredAgent(item, task);
+    if (task) store.noteTask(task);
+    store.noteOutbox(item);
+    if (result.sent) sent += 1;
+    else failed += 1;
+  }
+  await store.flush();
+  return { sent, failed };
+}
+
+function flushOutbox() {
+  const run = outboxChain.then(() => drainOutbox());
+  outboxChain = run.then(() => {}, () => {});
+  return run;
+}
+
+function kickStartupFlush() {
+  if (startupFlushStarted) return;
+  startupFlushStarted = true;
+  store.ready.then(() => flushOutbox()).catch(() => {
+    console.error('Очередь вебхука не отправлена');
+  });
+}
+
+function lastDeliveryView() {
+  let best = null;
+  for (const item of state.outbox || []) {
+    if (!item || !item.lastAttemptAt) continue;
+    if (!best || item.lastAttemptAt > best.lastAttemptAt || (item.lastAttemptAt === best.lastAttemptAt && String(item.id) > String(best.id))) {
+      best = item;
+    }
+  }
+  if (!best) return null;
+  const view = { at: best.lastAttemptAt, outboxId: best.id };
+  if (Number.isInteger(best.lastStatus) && best.lastStatus > 0) view.status = best.lastStatus;
+  else view.error = best.lastError || 'network_error';
+  return view;
 }
 
 function applyKremlinResult(task, result) {
@@ -2159,9 +2340,6 @@ async function enqueueQueueTask({ agentId, text, fromAgentId, parentOrderId, att
     result: null,
   });
 
-  agent.status = 'working';
-  agent.now = (bodyText || `Файлы: ${files.map((a) => a.name).join(', ')}`).slice(0, 300);
-  store.noteAgent(agent);
   pushTask(task);
   releaseUnusedFiles();
 
@@ -2173,14 +2351,20 @@ async function enqueueQueueTask({ agentId, text, fromAgentId, parentOrderId, att
   };
   if (event && event.needId) notice.needId = event.needId;
   if (!notice.needId) notice.taskId = task.id;
-  try {
-    applyKremlinResult(task, await notifyKremlin(notice));
-  } catch (_) {
-    task.status = 'в очереди агента';
-    task.forwardStatus = 0;
-    task.forwardError = 'network_error';
-    console.error('Вебхук Кремля не доставлен: network_error');
+  const item = createOutboxItem(task, notice);
+  if (!Array.isArray(state.outbox)) state.outbox = [];
+  state.outbox.push(item);
+  store.noteOutbox(item);
+  const result = await sendOutboxItem(item);
+  applyOutboxResult(item, result);
+  applyKremlinResult(task, result);
+  if (result && result.sent) {
+    agent.status = 'working';
+    agent.now = (bodyText || `Файлы: ${files.map((a) => a.name).join(', ')}`).slice(0, 300);
+    store.noteAgent(agent);
   }
+  store.noteTask(task);
+  store.noteOutbox(item);
   return task;
 }
 
@@ -2681,9 +2865,13 @@ app.use((err, _req, res, next) => {
 const listen = app.listen.bind(app);
 app.listen = function listenWithPoryadokSync(...args) {
   const server = listen(...args);
-  if (server && server.listening) poryadokSync.onListening();
+  const start = () => {
+    poryadokSync.onListening();
+    kickStartupFlush();
+  };
+  if (server && server.listening) start();
   else if (server && typeof server.once === 'function') {
-    server.once('listening', () => poryadokSync.onListening());
+    server.once('listening', start);
   }
   return server;
 };
