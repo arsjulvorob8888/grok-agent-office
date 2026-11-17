@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
+const { createDashboardStore } = require('./lib/dashboards');
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -436,6 +437,10 @@ seedOwnerNeeds();
 const poryadokSync = createPoryadokSync({ getState: () => state });
 poryadokSync.start();
 
+// Версии дашборда: Postgres при DATABASE_URL, иначе память. Опрос /api/state
+// читает только время последней записи и не тащит блоки.
+const dashboards = createDashboardStore();
+
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
   const ba = Buffer.from(a);
@@ -470,6 +475,7 @@ function publicState() {
       vacant: !!a.vacant,
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
+      dashboardUpdatedAt: dashboards.updatedAt(a.id),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
@@ -1095,6 +1101,58 @@ function requireUserOrAgent(req, res, next) {
 
 const app = express();
 app.disable('x-powered-by');
+
+// Тело дашборда читаем до общего json-парсера, чтобы отсечь размер ~200 КБ своим 400.
+function readDashboardBody(req, res, next) {
+  const chunks = [];
+  let size = 0;
+  let failed = false;
+  req.on('data', (chunk) => {
+    if (failed) return;
+    size += chunk.length;
+    if (size > dashboards.maxBytes) {
+      failed = true;
+      res.status(400).json({ error: 'Тело дашборда больше 200 КБ' });
+      return;
+    }
+    chunks.push(chunk);
+  });
+  req.on('end', () => {
+    if (failed || res.headersSent) return;
+    let raw = Buffer.concat(chunks).toString('utf8').trim();
+    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1).trim();
+    if (!raw) return res.status(400).json({ error: 'Нужно JSON-тело' });
+    try {
+      req.body = JSON.parse(raw);
+    } catch (_) {
+      return res.status(400).json({ error: 'Некорректный JSON' });
+    }
+    next();
+  });
+  req.on('error', () => {
+    if (!res.headersSent) res.status(400).json({ error: 'Не удалось прочитать тело' });
+  });
+}
+
+app.post('/api/agents/:id/dashboard', requireAgentToken, readDashboardBody, async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim();
+    if (!findAgent(agentId)) return res.status(404).json({ error: 'Агент не найден' });
+    const dashboard = dashboards.parse(req.body);
+    const saved = await dashboards.save(agentId, dashboard);
+    res.status(201).json({
+      ok: true,
+      versions: saved.versions,
+      updatedAt: saved.storedAt,
+      dashboard: saved.dashboard,
+    });
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось сохранить дашборд' });
+  }
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use((_req, res, next) => {
   res.on('finish', () => {
@@ -1107,8 +1165,38 @@ app.get('/healthz', (_req, res) => {
   res.status(200).type('text/plain').send('ok');
 });
 
-app.get('/api/state', (_req, res) => {
-  res.json(publicState());
+app.get('/api/state', async (_req, res) => {
+  try {
+    await dashboards.ready();
+    res.json(publicState());
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Не удалось собрать состояние' });
+  }
+});
+
+app.get('/api/agents/:id/dashboard/history', async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim();
+    if (!findAgent(agentId)) return res.status(404).json({ error: 'Агент не найден' });
+    res.json(await dashboards.history(agentId));
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось прочитать историю дашборда' });
+  }
+});
+
+app.get('/api/agents/:id/dashboard', async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim();
+    if (!findAgent(agentId)) return res.status(404).json({ error: 'Агент не найден' });
+    res.json(await dashboards.current(agentId));
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось прочитать дашборд' });
+  }
 });
 
 app.get('/api/needs', (_req, res) => {
@@ -1506,4 +1594,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, state };
+module.exports = { app, state, dashboards };

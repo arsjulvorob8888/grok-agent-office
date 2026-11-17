@@ -29,7 +29,10 @@
     needs: [],
     seenNeeds: new Set(),
     needsReady: false,
+    dashboards: new Map(),
   };
+  let panelTab = 'dashboard';
+  let panelTabAgent = null;
   const drafts = new Map();
   const MAX_FILES = 5;
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -767,6 +770,14 @@
     renderPanel({ preserveScroll: prev === S.selected });
     S.panelSig = panelContentSig(S.selected);
     panel.classList.add('open');
+    const openId = S.selected;
+    syncDashboard(openId).then(() => {
+      if (S.selected !== openId) return;
+      const nextSig = panelContentSig(openId);
+      if (nextSig === S.panelSig) return;
+      S.panelSig = nextSig;
+      renderPanel({ preserveScroll: true });
+    }).catch(() => {});
     updateAgents();
     if ($('#hier').classList.contains('open')) renderHierarchy(true);
     const a = S.byId.get(S.selected);
@@ -889,7 +900,54 @@
     const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = S.messages.filter((m) => m.agentId === a.id).map((m) => [m.id, m.role, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
-    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey].join('\u0003');
+    const cached = S.dashboards.get(a.id);
+    const dashKey = `${a.dashboardUpdatedAt || ''}|${cached ? JSON.stringify(cached.data) : ''}`;
+    const needKey = (S.needs || []).filter((n) => n.fromAgentId === a.id).map((n) => [n.id, n.what, n.where, n.urgency].join('\u0001')).join('\u0002');
+    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, dashKey, needKey].join('\u0003');
+  }
+
+  function panelTabFor(agentId) {
+    if (panelTabAgent !== agentId) {
+      panelTabAgent = agentId;
+      panelTab = 'dashboard';
+    }
+    return panelTab;
+  }
+  const dashInflight = new Map();
+  async function syncDashboard(agentId) {
+    const a = S.byId.get(agentId);
+    if (!a) return;
+    const stamp = a.dashboardUpdatedAt || '';
+    const cached = S.dashboards.get(agentId);
+    if (cached && cached.stamp === stamp) return;
+    const key = `${agentId}:${stamp}`;
+    if (dashInflight.has(key)) return dashInflight.get(key);
+    const job = (async () => {
+      if (!stamp) {
+        S.dashboards.set(agentId, { stamp: '', data: null });
+        return;
+      }
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/dashboard`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const body = await res.json().catch(() => ({}));
+      const current = S.byId.get(agentId);
+      if (!current || (current.dashboardUpdatedAt || '') !== stamp) return;
+      S.dashboards.set(agentId, { stamp, data: body.dashboard || null });
+    })();
+    dashInflight.set(key, job);
+    try { await job; } finally { dashInflight.delete(key); }
+  }
+  function agentNeedsHTML(agent) {
+    const list = (S.needs || []).filter((n) => n && n.fromAgentId === agent.id && !n.closedAt);
+    if (!list.length) return '<div class="empty"><b>Пусто</b>Этот агент сейчас ничего не ждёт.</div>';
+    const urgLabel = { low: 'несрочно', normal: 'обычно', high: 'срочно' };
+    return `<div class="agent-needs">${list.map((n) => {
+      const urg = urgLabel[n.urgency] ? n.urgency : 'normal';
+      return `<article class="need-item urg-${urg}" data-id="${esc(n.id)}">
+        <div class="need-what">${esc(n.what)}</div>
+        <div class="need-meta"><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${urgLabel[urg]}</span></div>
+      </article>`;
+    }).join('')}</div>`;
   }
 
   function renderPanel(opts = {}) {
@@ -937,6 +995,16 @@
     const taskBlock = tier === 'main'
       ? `<div class="sec" data-anchor="tasks"><h4>Последние задачи штаба</h4><div class="quest-list" style="padding:0">${S.tasks.slice(0, 8).map((t) => questHTML(t, true)).join('') || emptyQuests()}</div></div>`
       : `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${tasks.slice(0, 12).map((t) => questHTML(t, false)).join('') || emptyQuests()}</div></div>`;
+    const tab = panelTabFor(a.id);
+    const needCount = (S.needs || []).filter((n) => n && n.fromAgentId === a.id && !n.closedAt).length;
+    const tabBtn = (id, label) => {
+      const count = id === 'needs' && needCount ? `<span class="tab-count">${needCount}</span>` : '';
+      return `<button type="button" class="agent-tab" role="tab" data-tab="${id}" id="tab-${id}" aria-selected="${tab === id ? 'true' : 'false'}" aria-controls="panel-${id}">${label}${count}</button>`;
+    };
+    const hidden = (id) => (tab === id ? '' : ' hidden');
+    const cachedDash = S.dashboards.get(a.id);
+    const dashHtml = window.OfficeDashboard.renderDashboard(cachedDash ? cachedDash.data : null);
+    const doneHtml = a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : '';
     panel.innerHTML = `
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
@@ -947,15 +1015,32 @@
       <div class="p-body">
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
           <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>
-        ${currentOrderHTML(a)}`}
+        <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>`}
+        <div class="agent-tabs" role="tablist" aria-label="Разделы агента">
+          ${tabBtn('dashboard', 'Дашборд')}${tabBtn('chat', 'Переписка')}${tabBtn('journal', 'Журнал')}${tabBtn('needs', 'Ждёт от вас')}
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-dashboard" data-tab-panel="dashboard" aria-labelledby="tab-dashboard"${hidden('dashboard')}>${dashHtml}</div>
+        <div class="tab-panel" role="tabpanel" id="panel-chat" data-tab-panel="chat" aria-labelledby="tab-chat"${hidden('chat')}>
+          <div class="chat-log" data-scroll-key="chat">${a.vacant ? '<div class="empty"><b>Переписки нет</b>Сначала дай направлению имя.</div>' : chatHTML(a)}</div>
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-journal" data-tab-panel="journal" aria-labelledby="tab-journal"${hidden('journal')}>
+          ${a.vacant ? '' : currentOrderHTML(a)}
+          ${a.vacant ? '<div class="empty"><b>Журнал пуст</b>У свободного участка ещё нет приказов.</div>' : taskBlock}
+          ${a.vacant ? '' : doneHtml}
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-needs" data-tab-panel="needs" aria-labelledby="tab-needs"${hidden('needs')}>${agentNeedsHTML(a)}</div>
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
-        ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
-        ${a.vacant ? '' : taskBlock}
-        ${a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : ''}
       </div>`;
     $('#pClose').onclick = () => select(null);
+    panel.querySelectorAll('.agent-tab').forEach((btn) => {
+      btn.onclick = () => {
+        if (btn.getAttribute('aria-selected') === 'true') return;
+        panelTabAgent = a.id;
+        panelTab = btn.dataset.tab;
+        renderPanel({ preserveScroll: true });
+      };
+    });
     const parentBtn = panel.querySelector('.parent-link');
     if (parentBtn) parentBtn.onclick = () => select(parentBtn.dataset.parent);
     const f = $('#taskForm');
@@ -1409,6 +1494,7 @@
     S.agents = agents; S.tasks = data.tasks || []; S.messages = data.messages || [];
     S.byId = new Map(agents.map((a) => [a.id, a]));
     syncNeeds(data.needs);
+    if (S.selected) await syncDashboard(S.selected);
     const sig = agentSig(agents);
     if (sig !== S.sig) { S.sig = sig; buildAgents(); }
     noteFreshOrders();
