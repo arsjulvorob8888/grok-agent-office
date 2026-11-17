@@ -14,6 +14,7 @@ process.env.GROK_WEBHOOK_URL = '';
 process.env.GROK_WEBHOOK_KEY = '';
 process.env.PUBLIC_URL = 'http://127.0.0.1';
 delete process.env.AGENT_ACTIVE_MINUTES;
+delete process.env.ACTIVITY_WINDOW_MIN;
 
 const { app, state } = require('../server.js');
 const puppeteer = require('puppeteer-core');
@@ -294,7 +295,7 @@ test('на 390px с тачем линия видна, панель нажима�
     await finish(id);
     await page.waitForFunction((orderId) => !document.querySelector(`#delegations [data-order-id="${orderId}"]`), { timeout: 10000 }, id);
     const devSleep = await page.$eval('#agents .agent[data-id="dev"]', (el) => el.classList.contains('sleep'));
-    assert.equal(devSleep, true);
+    assert.equal(devSleep, false);
   } finally {
     await page.close();
   }

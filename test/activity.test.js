@@ -27,6 +27,7 @@ before(async () => {
   process.env.GROK_WEBHOOK_KEY = 'hook-key';
   process.env.PUBLIC_URL = 'https://example.test';
   delete process.env.AGENT_ACTIVE_MINUTES;
+  delete process.env.ACTIVITY_WINDOW_MIN;
   office = require('../server.js');
   const { app } = office;
   server = await new Promise((r) => {
@@ -50,12 +51,12 @@ function agentOf(body, id) {
   return body.agents.find((a) => a.id === id);
 }
 
-test('окно активности: по умолчанию 10 минут, мусор тоже 10', () => {
-  assert.equal(activeWindowMs({}), 10 * 60 * 1000);
-  assert.equal(activeWindowMs({ AGENT_ACTIVE_MINUTES: '' }), 10 * 60 * 1000);
-  assert.equal(activeWindowMs({ AGENT_ACTIVE_MINUTES: 'нет' }), 10 * 60 * 1000);
-  assert.equal(activeWindowMs({ AGENT_ACTIVE_MINUTES: '-3' }), 10 * 60 * 1000);
-  assert.equal(activeWindowMs({ AGENT_ACTIVE_MINUTES: '2' }), 2 * 60 * 1000);
+test('окно активности: по умолчанию 30 минут, мусор тоже 30', () => {
+  assert.equal(activeWindowMs({}), 30 * 60 * 1000);
+  assert.equal(activeWindowMs({ ACTIVITY_WINDOW_MIN: '' }), 30 * 60 * 1000);
+  assert.equal(activeWindowMs({ ACTIVITY_WINDOW_MIN: 'нет' }), 30 * 60 * 1000);
+  assert.equal(activeWindowMs({ ACTIVITY_WINDOW_MIN: '-3' }), 30 * 60 * 1000);
+  assert.equal(activeWindowMs({ ACTIVITY_WINDOW_MIN: '2' }), 2 * 60 * 1000);
 });
 
 test('activityFor: приказ, пульс и граница окна', () => {
@@ -66,8 +67,8 @@ test('activityFor: приказ, пульс и граница окна', () => {
     { id: 't-sent', agentId: 'dev', orderStatus: 'sent', text: 'ещё не взял', createdAt: '2026-11-17T11:00:00.000Z' },
     { id: 't-old', agentId: 'dev', orderStatus: 'done', text: 'старое', createdAt: '2026-11-17T10:00:00.000Z' },
   ];
-  assert.equal(activityFor(dev, orders, now, windowMs).activity, 'resting');
-  assert.equal(activityFor(dev, orders, now, windowMs).currentTask, null);
+  assert.equal(activityFor(dev, orders, now, windowMs).activity, 'working');
+  assert.equal(activityFor(dev, orders, now, windowMs).currentTask, 'ещё не взял');
 
   orders.push({ id: 't-acc', agentId: 'dev', agent: 'dev', orderStatus: 'accepted', text: 'Принятая задача', createdAt: '2026-11-17T11:30:00.000Z' });
   const accepted = activityFor(dev, orders, now, windowMs);
@@ -200,8 +201,8 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   const devSent = agentOf(sentState.body, 'dev');
   const grok = agentOf(sentState.body, 'grok');
   assert.equal(devSent.status, 'working');
-  assert.equal(devSent.activity, 'resting', 'отправленный приказ ещё не работа');
-  assert.equal(devSent.currentTask, null);
+  assert.equal(devSent.activity, 'working', 'открытый приказ — это работа');
+  assert.equal(devSent.currentTask, 'Собрать отчёт по активности');
   assert.equal(grok.activity, 'resting');
 
   const accepted = await json(`/api/orders/${task.body.id}`, {
@@ -252,10 +253,10 @@ test('пульс: токен, 404 и расчёт activity на сервере',
     body: JSON.stringify({ status: 'failed', note: 'не то' }),
   });
   const after = agentOf((await json('/api/state')).body, 'dev');
-  assert.equal(after.activity, 'resting');
+  assert.equal(after.activity, 'working');
   assert.equal(after.currentTask, null);
 
-  process.env.AGENT_ACTIVE_MINUTES = '0.001';
+  process.env.ACTIVITY_WINDOW_MIN = '0.001';
   const beat = await json('/api/agents/temshik/heartbeat', {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-act' },
@@ -314,7 +315,7 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   assert.equal(langHidden.archived, true);
   assert.equal(langHidden.activity, 'resting');
   assert.equal(langHidden.number, '');
-  delete process.env.AGENT_ACTIVE_MINUTES;
+  delete process.env.ACTIVITY_WINDOW_MIN;
 
   const fresh = await json('/api/state');
   for (const id of ['social', 'routines']) {
@@ -345,7 +346,7 @@ test('пульс: токен, 404 и расчёт activity на сервере',
     body: JSON.stringify({ agent: 'routines', text: 'Собрать утреннюю рутину', fromAgentId: 'grok' }),
   });
   assert.equal(routineTask.status, 201);
-  assert.equal(agentOf((await json('/api/state')).body, 'routines').activity, 'resting');
+  assert.equal(agentOf((await json('/api/state')).body, 'routines').activity, 'working');
   const acceptedRoutine = await json(`/api/orders/${routineTask.body.id}`, {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-act' },

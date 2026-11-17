@@ -64,22 +64,31 @@
     return el;
   }
 
+  function modeOf(agent) {
+    if (agent && agent.activity === 'working') return 'working';
+    if (agent && agent.activity === 'waiting') return 'waiting';
+    return 'resting';
+  }
+
   function paint() {
     const byId = new Map(agents.map((a) => [a.id, a]));
     document.querySelectorAll('#agents .agent').forEach((g) => {
       const a = byId.get(g.dataset.id);
       if (!a) return;
-      const working = a.activity === 'working';
-      g.classList.toggle('pulse', working);
-      g.classList.toggle('sleep', !working);
+      const mode = modeOf(a);
+      g.classList.toggle('pulse', mode === 'working');
+      g.classList.toggle('wait', mode === 'waiting');
+      g.classList.toggle('sleep', mode === 'resting');
       ensureRing(g);
     });
     document.querySelectorAll('#roster .chip').forEach((chip) => {
       const a = byId.get(chip.dataset.id);
       if (!a) return;
-      const working = a.activity === 'working';
+      const mode = modeOf(a);
+      const working = mode === 'working';
       chip.classList.toggle('pulse', working);
-      chip.classList.toggle('sleep', !working);
+      chip.classList.toggle('wait', mode === 'waiting');
+      chip.classList.toggle('sleep', mode === 'resting');
       ensureChipBits(chip);
       const cap = chip.querySelector('.chip-task');
       const text = working && a.currentTask ? trunc(a.currentTask, 18) : '';
@@ -87,25 +96,28 @@
       if (a.currentTask) cap.title = a.currentTask;
       else cap.removeAttribute('title');
       const z = chip.querySelector('.chip-zzz');
-      if (z) z.title = working ? '' : 'Отдыхает';
+      if (z) z.title = working ? '' : (mode === 'waiting' ? 'Ждёт' : 'Спит');
     });
     const seen = new Set();
     for (const a of agents) {
       const el = markerFor(a.id);
       if (!el) continue;
       seen.add(a.id);
-      const working = a.activity === 'working';
+      const mode = modeOf(a);
+      const working = mode === 'working';
       el.classList.toggle('pulse', working);
-      el.classList.toggle('sleep', !working);
+      el.classList.toggle('wait', mode === 'waiting');
+      el.classList.toggle('sleep', mode === 'resting');
       const cap = el.querySelector('.act-caption');
       const text = working && a.currentTask ? trunc(a.currentTask, 32) : '';
       setText(cap, text);
       if (a.currentTask) cap.title = a.currentTask;
       else cap.removeAttribute('title');
       const name = a.id === 'grok' ? 'Путин' : (a.name || a.id);
-      el.setAttribute('aria-label', working
+      const label = working
         ? `${name} работает${a.currentTask ? `: ${a.currentTask}` : ''}`
-        : `${name} отдыхает`);
+        : (mode === 'waiting' ? `${name} ждёт` : `${name} спит`);
+      el.setAttribute('aria-label', label);
       el.dataset.x = String(a.x);
       el.dataset.y = String(a.y);
     }
