@@ -1,0 +1,30 @@
+[
+  {
+    "externalId": "kremlin-goal-income",
+    "title": "Доход",
+    "description": "Главная цель",
+    "deadline": null,
+    "kpis": [
+      {
+        "name": "Доход в месяц",
+        "current": 235000,
+        "target": null,
+        "unit": "₽/мес"
+      }
+    ]
+  },
+  {
+    "externalId": "kremlin-goal-networth",
+    "title": "Чистый капитал",
+    "description": "",
+    "deadline": "2031-11-17",
+    "kpis": [
+      {
+        "name": "Чистый капитал",
+        "current": 6750000,
+        "target": 1000000000,
+        "unit": "₽"
+      }
+    ]
+  }
+]

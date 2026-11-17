@@ -23,6 +23,7 @@ if (!CHROME || !puppeteer) {
     process.env.AGENT_TOKEN = 'tok-ui';
     process.env.GROK_WEBHOOK_URL = '';
     process.env.PUBLIC_URL = 'http://127.0.0.1';
+    delete process.env.PORYADOK_INGEST_TOKEN;
     const { app } = require('../server.js');
     server = await new Promise((resolve) => {
       const s = app.listen(0, '127.0.0.1', () => resolve(s));
