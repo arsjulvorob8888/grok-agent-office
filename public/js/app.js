@@ -212,7 +212,8 @@
       const e = S.els.get(a.id);
       if (!e) continue;
       const tier = tierOf(a), L = levelInfo(a);
-      e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${S.selected === a.id ? ' sel' : ''}`);
+      const act = a.activity === 'working' ? ' pulse' : ' sleep';
+      e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${act}${S.selected === a.id ? ' sel' : ''}`);
       e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}`;
       e.tag.innerHTML = `<span class="lvl">${a.vacant ? '?' : L.lvl}</span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
       e.w = 0;
@@ -229,6 +230,7 @@
       paintAwaitBadge(e.awaitBadge, a.id);
     }
     updateRoster();
+    if (window.ActivityView) ActivityView.paint();
     doPlaceOverlay();
   }
 
@@ -300,7 +302,9 @@
     let left = 0, right = w, top = hud.bottom + 8, bottom = (ros.height ? ros.top : h) - 8;
     const j = $('#journal');
     const hier = $('#hier');
-    if (!mob && w > 900 && hier && hier.classList.contains('open')) left = hier.getBoundingClientRect().right + 8;
+    const proc = $('#processes');
+    if (!mob && w > 900 && proc && proc.classList.contains('open')) left = proc.getBoundingClientRect().right + 8;
+    else if (!mob && w > 900 && hier && hier.classList.contains('open')) left = hier.getBoundingClientRect().right + 8;
     else if (!mob && w > 900 && !j.classList.contains('collapsed') && getComputedStyle(j).display !== 'none') left = j.getBoundingClientRect().right + 8;
     if (S.selected && $('#panel').classList.contains('open')) {
       // Берём итоговые размеры панели, а не текущие (панель может ещё выезжать).
@@ -315,6 +319,8 @@
     document.body.classList.toggle('zoom-far', k < 0.55);
     placeOverlay();
     updateMiniView();
+    if (window.ActivityView) ActivityView.place();
+    if (window.Delegation) Delegation.rescale();
   }
   function clampCam() {
     const c = S.cam, w = innerWidth, h = innerHeight;
@@ -435,6 +441,7 @@
     clampCam(); applyCam();
   }
   function clickAt(target) {
+    if (window.Delegation && Delegation.click(target)) return;
     const ag = target.closest && target.closest('.agent');
     if (ag) { select(ag.dataset.id); return; }
     const lm = target.closest && target.closest('.landmark');
@@ -482,7 +489,7 @@
     const compact = k < 0.6;
     const order = [...S.agents].sort((a, b) => prio(b) - prio(a));
     // Панели интерфейса — препятствия для табличек.
-    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open', '#needsPop.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
+    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open', '#needsPop.open', '#processes.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
     const hit = (r) => placed.some((p) => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
     for (const a of order) {
       const e = S.els.get(a.id);
@@ -626,6 +633,8 @@
       const a = S.byId.get(c.dataset.id);
       if (!a) return;
       c.classList.toggle('sel', S.selected === a.id);
+      c.classList.toggle('pulse', a.activity === 'working');
+      c.classList.toggle('sleep', a.activity !== 'working');
       c.querySelector('.st').className = `st ${a.status}`;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
       paintAwaitBadge(c.querySelector('.await-you'), a.id);
@@ -986,7 +995,8 @@
     const a = S.byId.get(S.selected);
     if (!a) return;
     const tier = tierOf(a), L = levelInfo(a);
-    const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
+    const tasks = Feed.ordersForAgent(S.tasks, a.id);
+    const pin = S.pinnedOrder && tasks.find((t) => t.id === S.pinnedOrder);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
     const parent = a.parentId ? S.byId.get(a.parentId) : null;
     const panel = $('#panel');
@@ -1009,7 +1019,7 @@
     } else {
       form = `<form class="task-form" id="taskForm">
         ${tier === 'main' ? `<label for="taskTarget">Кому поручить</label><select id="taskTarget">
-            <option value="${esc(a.id)}">1. GROK лично</option>
+            <option value="${esc(a.id)}">1. Путину лично</option>
             ${depts.map((d) => `<option value="${esc(d.id)}">${esc(titled(d))}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
@@ -1022,7 +1032,10 @@
         <div class="attach-preview" id="attachPreview"></div>
       </form>`;
     }
-    const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${tasks.map((t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id)).join('') || emptyQuests()}</div></div>`;
+    const shown = tasks.slice(0, 20);
+    if (pin && !shown.some((t) => t.id === pin.id)) shown.unshift(pin);
+    const focusCls = (t) => (S.pinnedOrder === t.id ? ' order-focus' : '');
+    const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${shown.map((t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id).replace('class="quest"', `class="quest${focusCls(t)}"`)).join('') || emptyQuests()}</div></div>`;
     panel.innerHTML = `
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
@@ -1414,6 +1427,7 @@
     });
   }
   function setHierarchy(open) {
+    if (open && window.Processes) Processes.setOpen(false);
     const h = $('#hier');
     if (open && innerWidth <= 900) $('#panel').classList.remove('open');
     h.classList.toggle('open', open);
@@ -1429,7 +1443,7 @@
   }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
-    const active = staff.filter((a) => a.status === 'working').length;
+    const active = staff.filter((a) => (a.activity ? a.activity === 'working' : a.status === 'working')).length;
     const done = S.agents.reduce((s, a) => s + (a.completed || 0), 0);
     const energy = Math.min(100, Math.round(20 + (active / Math.max(1, staff.length)) * 50 + Math.min(30, done * 3)));
     $('#stTasks').textContent = S.tasks.length;
@@ -1445,6 +1459,7 @@
       j.classList.toggle('collapsed'); localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
     };
     $('#btnJournal').onclick = () => {
+      if (window.Processes) Processes.setOpen(false);
       blip(600);
       const fromHier = $('#hier').classList.contains('open');
       if (fromHier) setHierarchy(false);
@@ -1615,6 +1630,30 @@
     };
   }
 
+  function openOrder(id) {
+    const t = S.tasks.find((x) => x.id === id);
+    if (!t) return;
+    const agentId = t.agentId || t.agent;
+    S.pinnedOrder = id;
+    document.body.dataset.openOrder = id;
+    if (S.selected !== agentId) select(agentId);
+    else {
+      renderPanel({ preserveScroll: false });
+      S.panelSig = panelContentSig(S.selected);
+      updateAgents();
+    }
+    const mark = () => {
+      const panel = $('#panel');
+      const q = panel && panel.querySelector(`.quest.order-focus, .quest[data-anchor="q:${CSS.escape(id)}"]`);
+      if (!q) return;
+      q.classList.add('order-focus');
+      const body = panel.querySelector('.p-body');
+      if (body) body.scrollTop = Math.max(0, q.offsetTop - 12);
+    };
+    requestAnimationFrame(mark);
+  }
+  window.Office = { openOrder };
+
   // ── Загрузка состояния ───────────────────────────────────────────────────
   async function loadState() {
     const res = await fetch('/api/state', { cache: 'no-store' });
@@ -1656,6 +1695,7 @@
         renderPanel({ preserveScroll: true });
       }
     }
+    document.dispatchEvent(new CustomEvent('officestate', { detail: data }));
     if (!S.loaded) {
       S.loaded = true;
       goHome(false);

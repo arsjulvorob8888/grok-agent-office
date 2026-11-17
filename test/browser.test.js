@@ -514,7 +514,7 @@ test('«Решить» экранирует ссылку и подсказку �
       await api(`/api/needs/${created.body.id}/close`, {
         method: 'POST',
         headers: { 'x-agent-token': 'tok-ui' },
-        body: '{}',
+        body: JSON.stringify({ agentId: 'grok' }),
       });
     }
   }
@@ -957,7 +957,7 @@ test('бейдж «ждёт вас»: счётчик, нуль скрыт, та�
           };
         });
         assert.ok(mapHit && mapHit.hit && mapHit.w >= 40 && mapHit.h >= 40, JSON.stringify(mapHit));
-        await page.mouse.click(mapHit.x, mapHit.y);
+        await page.$eval('#overlay .await-you[data-id="finance"]', (el) => el.click());
         await page.waitForSelector('#panel.open[data-agent="finance"] [data-anchor="awaits"]');
       }
     } finally {
@@ -1092,6 +1092,7 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.match(chip('blog'), /^9\./);
     assert.match(chip('lang'), /^10\./);
     assert.equal(ui.options.some((o) => o.value === 'trading' || o.value === 'biz'), false);
+    assert.equal(ui.options.find((o) => o.value === 'grok').text, '1. Путину лично');
     assert.match(ui.options.find((o) => o.value === 'devops').text, /^4\./);
     assert.match(ui.options.find((o) => o.value === 'invest').text, /7\.1/);
     assert.match(ui.options.find((o) => o.value === 'lang').text, /10\./);
