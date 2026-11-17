@@ -231,6 +231,29 @@ test('пункты и приказы владельца складываются
   assert.equal(open.deadline, null);
   assert.match(open.description, /От: 7\. Финансы/);
   assert.match(open.description, /Где: Ильинка/);
+  assert.equal(open.actionUrl, null);
+  assert.equal(open.actionHint, null);
+  assert.doesNotMatch(open.description, /Решить:/);
+
+  const linked = mapNeed({
+    id: 'n-link',
+    what: 'Открыть чат',
+    fromAgentId: 'finance',
+    where: 'Grok',
+    urgency: 'normal',
+    actionUrl: ' grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01 ',
+    actionHint: ' Откройте в Grok чат «Путин · Кремль» ',
+  }, AGENTS);
+  assert.equal(linked.actionUrl, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
+  assert.equal(linked.actionHint, 'Откройте в Grok чат «Путин · Кремль»');
+  assert.match(linked.description, /Решить: grokbot:\/\/app\/v1\/agent\?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01/);
+  assert.match(linked.description, /Откройте в Grok чат «Путин · Кремль»/);
+  assert.equal(mapNeed({
+    id: 'n-bad',
+    what: 'Плохая ссылка',
+    actionUrl: 'javascript:alert(1)',
+    actionHint: 'подсказка',
+  }, AGENTS).actionUrl, null);
 
   const low = mapNeed({
     id: 'n-2',
@@ -319,12 +342,33 @@ test('пункты и приказы владельца складываются
   }, goals, '2026-11-17T00:00:00.000Z');
   assert.equal(payload.source, 'kremlin');
   assert.equal(payload.sentAt, '2026-11-17T00:00:00.000Z');
-  assert.deepEqual(payload.tasks.map((t) => t.externalId), ['kremlin-need-n-1', 'kremlin-order-t-1']);
+  assert.deepEqual(payload.tasks.map((t) => t.externalId), [
+    'kremlin-need-n-1',
+    'kremlin-need-need-render-api',
+    'kremlin-order-t-1',
+  ]);
+  const retired = payload.tasks.find((t) => t.externalId === 'kremlin-need-need-render-api');
+  assert.equal(retired.status, 'Выполнено');
+  assert.equal(retired.actionUrl, null);
+  assert.equal(retired.title, 'Ключ Render API — ввести через защищённую форму в чате DevOps');
+  assert.match(retired.description, /4\. DevOps/);
   assert.equal(payload.goals[1].deadline, '2031-11-17');
   assert.equal(payload.goals[0].deadline, null);
 
+  const stillThere = buildPayload({
+    agents: AGENTS,
+    needs: [
+      { id: 'need-render-api', what: 'Ключ Render API — ввести через защищённую форму в чате DevOps', fromAgentId: 'devops', where: 'Защищённая форма в чате DevOps', urgency: 'high', closedAt: null },
+    ],
+    tasks: [],
+  }, goals, '2026-11-17T00:00:00.000Z');
+  const renderTasks = stillThere.tasks.filter((t) => t.externalId === 'kremlin-need-need-render-api');
+  assert.equal(renderTasks.length, 1);
+  assert.equal(renderTasks[0].status, 'Выполнено');
+
   const noNeeds = buildPayload({ tasks: [], agents: [] }, goals, '2026-11-17T00:00:00.000Z');
-  assert.deepEqual(noNeeds.tasks, []);
+  assert.deepEqual(noNeeds.tasks.map((t) => t.externalId), ['kremlin-need-need-render-api']);
+  assert.equal(noNeeds.tasks[0].status, 'Выполнено');
   assert.equal(noNeeds.goals.length, 2);
 });
 
@@ -391,7 +435,7 @@ test('ошибка приёма повторяется, токен в лог н�
     });
     assert.equal(calls, 3);
     assert.equal(status.lastError, null);
-    assert.deepEqual(status.lastCounts, { needs: 0, orders: 0, goals: 0 });
+    assert.deepEqual(status.lastCounts, { needs: 1, orders: 0, goals: 0 });
     assert.ok(errors.length >= 1);
     assert.equal(errors.join('\n').includes('super-secret-token'), false);
     assert.equal(JSON.stringify(status).includes('super-secret-token'), false);
@@ -447,13 +491,18 @@ test('стартовый снимок уходит на приёмник без 
     assert.equal(hit.url, '/api/integrations/kremlin');
     assert.match(hit.contentType, /application\/json/);
     assert.equal(hit.body.source, 'kremlin');
-    assert.deepEqual(hit.body.tasks.map((t) => t.externalId), ['kremlin-need-n-1', 'kremlin-order-t-1']);
+    assert.deepEqual(hit.body.tasks.map((t) => t.externalId), [
+      'kremlin-need-n-1',
+      'kremlin-need-need-render-api',
+      'kremlin-order-t-1',
+    ]);
     assert.equal(hit.body.tasks[0].status, 'В ожидании');
     assert.equal(hit.body.tasks[0].priority, 'Срочно');
+    assert.equal(hit.body.tasks[1].status, 'Выполнено');
     assert.equal(hit.body.goals.length, 2);
     await delay(80);
     assert.equal(receiver.hits.length, 1);
-    assert.deepEqual(sync.publicStatus().lastCounts, { needs: 1, orders: 1, goals: 2 });
+    assert.deepEqual(sync.publicStatus().lastCounts, { needs: 2, orders: 1, goals: 2 });
   } finally {
     sync.stop();
     receiver.server.close();
@@ -499,18 +548,36 @@ test('после listen Кремль сам шлёт открытые пункт
     ]) {
       assert.ok(ids.includes(id), id);
     }
-    assert.equal(ids.includes('kremlin-need-need-render-api'), false);
+    assert.ok(ids.includes('kremlin-need-need-render-api'));
+    assert.equal(ids.filter((id) => id === 'kremlin-need-need-render-api').length, 1);
     assert.equal(ids.some((id) => id.startsWith('kremlin-order-')), false);
 
     const academy = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-academy');
-    assert.deepEqual(Object.keys(academy).sort(), ['deadline', 'description', 'externalId', 'priority', 'status', 'title']);
-    assert.equal(academy.title, 'Одобрить Академию агентов: нажать «Да» в чатах Программирования, Тестировщика и Business Adviser');
+    assert.deepEqual(Object.keys(academy).sort(), ['actionHint', 'actionUrl', 'deadline', 'description', 'externalId', 'priority', 'status', 'title']);
+    assert.equal(academy.title, 'Одобрить Академию агентов: нажать «Да» в чатах Программирования и Тестировщика');
     assert.equal(academy.priority, 'Средний');
     assert.equal(academy.status, 'В ожидании');
     assert.equal(academy.deadline, null);
+    assert.equal(academy.actionUrl, 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2');
+    assert.equal(academy.actionHint, null);
     assert.match(academy.description, /От: 1\. Главный агент/);
     assert.match(academy.description, /Где: Чаты агентов в Grok/);
-    for (const task of hit.body.tasks) assert.equal(task.status, 'В ожидании');
+    assert.match(academy.description, /Решить: https:\/\/cursor\.com\/canvas\/store-497a06f4-8b81-4283-89e8-143a1091624a\/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2/);
+    const finance = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-finance');
+    const social = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-social');
+    assert.equal(finance.actionUrl, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
+    assert.equal(finance.actionHint, 'Откройте в Grok чат «Путин · Кремль»');
+    assert.match(finance.description, /Где: Чат Путина или Финансов/);
+    assert.match(finance.description, /Решить: grokbot:\/\/app\/v1\/agent\?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01/);
+    assert.match(finance.description, /Откройте в Grok чат «Путин · Кремль»/);
+    assert.equal(social.actionUrl, 'grokbot://app/v1/agent?id=a1bd53f2-5655-446b-8207-393e61fc20e1');
+    assert.equal(social.actionHint, 'Откройте в Grok чат «Соцсети · Кремль»');
+    const retired = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-render-api');
+    assert.equal(retired.status, 'Выполнено');
+    for (const task of hit.body.tasks) {
+      if (task.externalId === 'kremlin-need-need-render-api') continue;
+      assert.equal(task.status, 'В ожидании');
+    }
 
     const income = hit.body.goals.find((goal) => goal.externalId === 'kremlin-goal-income');
     const worth = hit.body.goals.find((goal) => goal.externalId === 'kremlin-goal-networth');
@@ -527,7 +594,7 @@ test('после listen Кремль сам шлёт открытые пункт
     });
     assert.equal(after.poryadokSync.enabled, true);
     assert.equal(after.poryadokSync.lastError, null);
-    assert.deepEqual(after.poryadokSync.lastCounts, { needs: 3, orders: 0, goals: 2 });
+    assert.deepEqual(after.poryadokSync.lastCounts, { needs: 4, orders: 0, goals: 2 });
     assert.equal(JSON.stringify(after).includes('ingest-secret'), false);
     assert.equal(boot.stderr().includes('ingest-secret'), false);
   } finally {
@@ -569,6 +636,8 @@ test('пункт и смена статуса приказа запускают 
       where: 'Кабинет',
       fromAgentId: 'finance',
       urgency: 'high',
+      actionUrl: 'https://example.com/pay',
+      actionHint: 'если ссылка не открылась',
     })).json();
     const opened = await waitUntil(() => {
       const hit = receiver.hits.find((item) => item.body && item.body.tasks.some((task) => task.externalId === `kremlin-need-${created.id}`));
@@ -581,7 +650,13 @@ test('пункт и смена статуса приказа запускают 
     assert.equal(need.status, 'В ожидании');
     assert.match(need.description, /От: 7\. Финансы/);
     assert.match(need.description, /Где: Кабинет/);
-    assert.equal(opened.body.tasks.some((task) => task.externalId === 'kremlin-need-need-render-api'), false);
+    assert.equal(need.actionUrl, 'https://example.com/pay');
+    assert.equal(need.actionHint, 'если ссылка не открылась');
+    assert.match(need.description, /Решить: https:\/\/example\.com\/pay/);
+    assert.match(need.description, /если ссылка не открылась/);
+    const retiredLive = opened.body.tasks.filter((task) => task.externalId === 'kremlin-need-need-render-api');
+    assert.equal(retiredLive.length, 1);
+    assert.equal(retiredLive[0].status, 'Выполнено');
     assert.equal(opened.body.goals.length, 2);
 
     const beforeClose = receiver.hits.length;
