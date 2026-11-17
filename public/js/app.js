@@ -986,7 +986,7 @@
     const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
     const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
-    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.checkedAt].join('\u0001')).join('\u0002');
+    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
     return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
@@ -1518,6 +1518,22 @@
     return `<div class="sec awaits" data-anchor="awaits"><h4>Ждёт от вас</h4><div class="awaits-list">${list.map((n) => needCardHTML(n, true)).join('')}</div></div>`;
   }
   const NEED_LABEL = { low: 'несрочно', normal: 'обычно', high: 'срочно', stale: 'требует проверки', closed: 'закрыто' };
+  function safeActionUrl(value) {
+    const url = String(value ?? '').trim();
+    if (!url || url.length > 500) return '';
+    if (!/^(https|grokbot):\/\/\S+$/i.test(url)) return '';
+    return url;
+  }
+  function needActionHTML(n) {
+    const url = safeActionUrl(n && n.actionUrl);
+    if (!url) return '';
+    const https = /^https:\/\//i.test(url);
+    const label = String((n && n.actionLabel) ?? '').trim() || 'Решить';
+    const hint = String((n && n.actionHint) ?? '').trim();
+    const extra = https ? ' target="_blank" rel="noopener noreferrer"' : '';
+    const hintHtml = !https && hint ? `<div class="need-action-hint">${esc(hint)}</div>` : '';
+    return `<div class="need-action-wrap"><a class="need-action" href="${esc(url)}"${extra}>${esc(label)}</a>${hintHtml}</div>`;
+  }
   function needCardHTML(n, withClose) {
     const view = Feed.needUrgencyView(n);
     const close = withClose && !n.closedAt
@@ -1527,6 +1543,7 @@
       ${close}
       <div class="need-what">${esc(n.what)}</div>
       <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span></div>
+      ${needActionHTML(n)}
     </article>`;
   }
   async function closeNeed(id) {
@@ -1562,7 +1579,7 @@
     if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
     const box = $('#needsList');
     if (!box) return;
-    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.stale, n.checkedAt].join('\u0001')).join('\n');
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.stale, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint].join('\u0001')).join('\n');
     if (box.dataset.sig === sig) return;
     const top = box.scrollTop;
     box.innerHTML = list.length
