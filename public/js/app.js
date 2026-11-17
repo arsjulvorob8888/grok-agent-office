@@ -104,7 +104,7 @@
 
   // ── Агенты на карте ──────────────────────────────────────────────────────
   const tierOf = (a) => (a.id === CONFIG.mainId ? 'main' : (a.parentId || a.tier === 'sub') ? 'sub' : a.tier === 'extra' ? 'extra' : 'dept');
-  const plainName = (a) => (a && a.id === CONFIG.mainId ? 'Главный агент' : (a && a.name) || '');
+  const plainName = (a) => (a && a.id === CONFIG.mainId ? 'Путин' : (a && a.name) || '');
   const numLabel = (a) => {
     if (!a || !a.number) return '';
     return String(a.number).includes('.') ? String(a.number) : `${a.number}.`;
@@ -1069,7 +1069,7 @@
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
         <div class="p-portrait">${portrait(a, '-34 -104 68 76')}</div>
-        <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · главный агент' : (a.district || '') + (tier === 'extra' ? ' · союзник' : ''))}</div>
+        <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · Путин' : (a.district || '') + (tier === 'extra' ? ' · союзник' : ''))}</div>
           <h2>${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</h2><div class="role">${esc(a.role || '')}</div>${parent ? `<button type="button" class="parent-link" data-parent="${esc(parent.id)}">Помощник · ${esc(titled(parent))}</button>` : ''}</div>
       </div>
       <div class="p-body">
@@ -1574,6 +1574,17 @@
     b.textContent = on ? 'Уведомления включены' : 'Включить уведомления';
     b.disabled = on;
   }
+  function moscowStamp(iso) {
+    const d = new Date(iso || '');
+    if (Number.isNaN(d.getTime())) return '';
+    const clock = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: 'Europe/Moscow',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(d);
+    return `обновлено ${clock} МСК`;
+  }
   function needFromLabel(id) {
     const a = S.byId.get(id);
     return a ? titled(a) : (id || 'агент');
@@ -1622,7 +1633,7 @@
     return `<article class="need-item urg-${view}${n.closedAt ? ' is-closed' : ''}${view === 'stale' ? ' is-stale' : ''}${test ? ' is-test' : ''}" data-id="${esc(n.id)}">
       ${close}
       <div class="need-what">${test ? '<span class="test-mark">тест</span>' : ''}${esc(n.what)}</div>
-      <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span>${n.answerStatus === 'answered' ? '<span class="need-answered">ответ получен</span>' : ''}</div>
+      <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span><span class="need-updated">${esc(moscowStamp(n.updatedAt || n.createdAt))}</span>${n.answerStatus === 'answered' ? '<span class="need-answered">ответ получен</span>' : ''}</div>
       ${needActionHTML(n)}
     </article>`;
   }
@@ -1672,7 +1683,7 @@
     const box = $('#needsList');
     if (!box) return;
     const tests = Feed.testNeeds(S.needs || []);
-    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.kind, n.stale, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\n')
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.kind, n.stale, n.updatedAt, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\n')
       + '\n#test\n' + tests.map((n) => [n.id, n.what, n.closedAt].join('\u0001')).join('\n');
     if (box.dataset.sig === sig) return;
     const top = box.scrollTop;
@@ -1779,7 +1790,7 @@
       if (S.loaded && t.status === 'выполнена' && prevStatus.get(t.id) && prevStatus.get(t.id) !== 'выполнена') {
         const a = S.byId.get(t.agent);
         if (a) {
-          toast(`${tierOf(a) === 'main' ? 'GROK' : a.name}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${t.result ? t.result.slice(0, 90) : t.text.slice(0, 90)}`, 'check');
+          toast(`${plainName(a)}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${t.result ? t.result.slice(0, 90) : t.text.slice(0, 90)}`, 'check');
           xpPop(a, CONFIG.xpPerTask); chime();
         }
       }
@@ -1808,9 +1819,36 @@
       if (S.loaded) flyOrder(t);
     }
   }
+  async function refreshNeeds() {
+    const headers = {};
+    const password = getPassword();
+    if (password) headers['x-app-password'] = password;
+    const res = await fetch('/api/needs', { cache: 'no-store', headers });
+    if (!res.ok) return;
+    const data = await res.json().catch(() => ({}));
+    const open = Array.isArray(data.needs) ? data.needs : [];
+    const seen = new Set(open.map((n) => n && n.id).filter(Boolean));
+    const merged = new Map(S.needs.map((n) => [n.id, n]));
+    for (const item of open) {
+      if (item && item.id) merged.set(item.id, item);
+    }
+    for (const item of S.needs) {
+      if (!item || !item.id || seen.has(item.id) || item.closedAt) continue;
+      merged.set(item.id, { ...item, closedAt: new Date().toISOString() });
+    }
+    syncNeeds([...merged.values()]);
+    if (S.selected) {
+      const sig = panelContentSig(S.selected);
+      if (sig !== S.panelSig) {
+        S.panelSig = sig;
+        renderPanel({ preserveScroll: true });
+      }
+    }
+  }
   function poll() {
     loadState().catch(() => {}).finally(() => setTimeout(poll, document.hidden ? CONFIG.pollMs * 3 : CONFIG.pollMs));
   }
+  setInterval(() => { refreshNeeds().catch(() => {}); }, 30000);
 
   function initNeedPage() {
     if (!NEED_ID) return;
@@ -1825,10 +1863,30 @@
     const badge = $('#needAnswerBadge');
     let need = null;
 
+    function archivedAuthor() {
+      return !!(need && need.fromAgentId && S.archivedIds && S.archivedIds.has(need.fromAgentId));
+    }
+    function hideArchivedNeed() {
+      if (title) title.textContent = 'Пункт не найден';
+      if (who) who.textContent = '';
+      if (where) where.textContent = '';
+      if (details) details.innerHTML = '';
+      if (external) external.innerHTML = '';
+      if (form) form.hidden = true;
+      if (badge) badge.hidden = true;
+    }
     function paintWho() {
       if (!need || !who) return;
+      if (archivedAuthor()) {
+        hideArchivedNeed();
+        return;
+      }
       const agent = S.byId.get(need.fromAgentId);
-      who.textContent = agent ? `Ждёт: ${titled(agent)}` : `Ждёт: ${need.fromAgentId || 'агент'}`;
+      if (!agent) {
+        who.textContent = '';
+        return;
+      }
+      who.textContent = `Ждёт: ${titled(agent)}`;
     }
     document.addEventListener('officestate', paintWho);
 

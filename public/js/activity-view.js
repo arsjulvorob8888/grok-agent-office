@@ -113,7 +113,7 @@
       setText(cap, text);
       if (a.currentTask) cap.title = a.currentTask;
       else cap.removeAttribute('title');
-      const name = a.id === 'grok' ? 'Главный агент' : (a.name || a.id);
+      const name = a.id === 'grok' ? 'Путин' : (a.name || a.id);
       const label = working
         ? `${name} работает${a.currentTask ? `: ${a.currentTask}` : ''}`
         : (mode === 'waiting' ? `${name} ждёт` : `${name} спит`);

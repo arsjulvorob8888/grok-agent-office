@@ -61,15 +61,17 @@ test('state содержит новый ростер без секретов', a
   const { status, body } = await json('/api/state');
   assert.equal(status, 200);
   const ids = body.agents.map((a) => a.id);
-  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst', 'lang', 'biz', 'social', 'routines']) {
+  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst', 'lang', 'biz', 'advisor', 'social', 'routines']) {
     assert.ok(ids.includes(id), `нет агента ${id}`);
   }
   const grok = body.agents.find((a) => a.id === 'grok');
+  assert.equal(grok.name, 'Путин');
   assert.equal(grok.kind, 'putin');
   assert.equal(grok.tier, 'main');
   assert.equal(grok.number, '1');
   assert.equal(grok.archived, false);
-  assert.ok(!grok.links.includes('trading') && !grok.links.includes('biz'));
+  assert.ok(grok.links.includes('advisor'));
+  assert.ok(!grok.links.includes('trading') && !grok.links.includes('biz') && !grok.links.includes('lang'));
   const army = body.agents.find((a) => a.id === 'army');
   assert.ok(army.responsibilities.length >= 4);
   assert.equal(army.completed, 0);
@@ -84,13 +86,24 @@ test('state содержит новый ростер без секретов', a
     analyst: '7.2',
     qa: '8',
     blog: '9',
-    lang: '10',
+    advisor: '10',
+    social: '11',
+    routines: '12',
   };
   for (const [id, number] of Object.entries(numbers)) {
     const agent = body.agents.find((a) => a.id === id);
     assert.equal(agent.number, number, id);
     assert.equal(agent.archived, false, id);
   }
+  const advisor = body.agents.find((a) => a.id === 'advisor');
+  assert.equal(advisor.name, 'Советник Путина');
+  assert.equal(advisor.role, 'Стратегический советник Путина');
+  assert.equal(advisor.kind, 'advisor');
+  assert.equal(advisor.tier, 'dept');
+  assert.equal(advisor.parentId, null);
+  assert.equal(advisor.district, 'Кремль');
+  assert.equal(advisor.grokAgentId, '961b2d3d-5f80-4891-b87a-c6913bbf2971');
+  assert.ok(Math.hypot(advisor.x - grok.x, advisor.y - grok.y) < 220);
   const finance = body.agents.find((a) => a.id === 'finance');
   assert.equal(finance.name, 'Финансы');
   assert.equal(finance.vacant, false);
@@ -121,10 +134,11 @@ test('state содержит новый ростер без секретов', a
   assert.equal(routines.district, 'Хамовники');
   assert.match(routines.role, /рутинам и автоматизации/);
   assert.match(routines.role, /обучает владельца/);
-  for (const id of ['trading', 'biz']) {
+  for (const id of ['trading', 'biz', 'lang']) {
     const archived = body.agents.find((a) => a.id === id);
     assert.equal(archived.archived, true, id);
-    assert.equal(archived.number, '');
+    assert.equal(archived.number, '', id);
+    assert.equal(archived.name.length > 0, true, id);
   }
   assert.ok(finance.links.includes('invest') && finance.links.includes('analyst'));
   const raw = JSON.stringify(body);
@@ -458,21 +472,21 @@ test('результат статуса попадает в переписку �
   const t = await json('/api/task', {
     method: 'POST',
     headers: { 'x-app-password': 'pw-test' },
-    body: JSON.stringify({ agent: 'lang', text: 'Сводка по сделкам' }),
+    body: JSON.stringify({ agent: 'advisor', text: 'Сводка по сделкам' }),
   });
   const h = { 'x-agent-token': 'tok-test' };
-  const body = { agent: 'lang', status: 'idle', now: 'Жду задач', taskId: t.body.id, result: 'Три сделки в плюсе' };
+  const body = { agent: 'advisor', status: 'idle', now: 'Жду задач', taskId: t.body.id, result: 'Три сделки в плюсе' };
   await json('/api/status', { method: 'POST', headers: h, body: JSON.stringify(body) });
   await json('/api/status', { method: 'POST', headers: h, body: JSON.stringify(body) });
   const echoed = await json('/api/messages', {
     method: 'POST',
     headers: h,
-    body: JSON.stringify({ id: `result:${t.body.id}`, agentId: 'lang', role: 'agent', text: 'другой итог', taskId: t.body.id }),
+    body: JSON.stringify({ id: `result:${t.body.id}`, agentId: 'advisor', role: 'agent', text: 'другой итог', taskId: t.body.id }),
   });
   assert.equal(echoed.body.duplicate, true);
   assert.equal(echoed.body.message.text, 'Три сделки в плюсе');
   const st = await json('/api/state');
-  const replies = st.body.messages.filter((m) => m.agentId === 'lang' && m.role === 'agent' && m.taskId === t.body.id);
+  const replies = st.body.messages.filter((m) => m.agentId === 'advisor' && m.role === 'agent' && m.taskId === t.body.id);
   assert.equal(replies.length, 1);
   assert.equal(replies[0].text, 'Три сделки в плюсе');
   const sys = st.body.messages.filter((m) => m.role === 'system' && m.taskId === t.body.id);
@@ -685,11 +699,19 @@ test('пункты «нужно от вас»: посев, токен, созд�
     headers: { 'x-agent-token': 'wrong' },
     body: '{}',
   })).status, 401);
-  assert.equal((await json('/api/needs', {
+  const byPasswordCreate = await json('/api/needs', {
     method: 'POST',
     headers: { 'x-app-password': 'pw-test' },
-    body: JSON.stringify({ what: 'x', where: 'y', fromAgentId: 'grok', urgency: 'low' }),
-  })).status, 401);
+    body: JSON.stringify({ what: 'x', where: 'y', fromAgentId: 'grok', urgency: 'low', kind: 'secret' }),
+  });
+  assert.equal(byPasswordCreate.status, 201);
+  assert.ok(byPasswordCreate.body.updatedAt);
+  assert.equal(byPasswordCreate.body.kind, 'secret');
+  assert.equal((await json(`/api/needs/${byPasswordCreate.body.id}/close`, {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-test' },
+    body: '{}',
+  })).status, 200);
   assert.equal((await json('/api/needs/need-missing/close', { method: 'POST', body: '{}' })).status, 401);
 
   const h = { 'x-agent-token': 'tok-test' };
@@ -1082,7 +1104,7 @@ test('открытый пункт закрывается по переменно
 test('архивные агенты не принимают задачи, история читается', async () => {
   const pw = { 'x-app-password': 'pw-test' };
   const tok = { 'x-agent-token': 'tok-test' };
-  for (const agent of ['trading', 'biz']) {
+  for (const agent of ['trading', 'biz', 'lang']) {
     const denied = await json('/api/task', {
       method: 'POST', headers: pw,
       body: JSON.stringify({ agent, text: `Новый приказ ${agent}` }),
@@ -1144,6 +1166,9 @@ test('архивные агенты не принимают задачи, ист
   const bizRead = await json('/api/messages?agentId=biz', { headers: tok });
   assert.equal(bizRead.status, 200);
   assert.ok(Array.isArray(bizRead.body.messages));
+  const langRead = await json('/api/messages?agentId=lang', { headers: tok });
+  assert.equal(langRead.status, 200);
+  assert.ok(Array.isArray(langRead.body.messages));
 
   const moved = await json('/api/orders/t-archive-trading', {
     method: 'POST', headers: tok,
@@ -1160,6 +1185,9 @@ test('архивные агенты не принимают задачи, ист
   assert.ok(st.body.messages.some((m) => m.id === 'archive-trading-note' && m.attachments.length === 1));
   assert.equal(st.body.agents.find((a) => a.id === 'trading').archived, true);
   assert.equal(st.body.agents.find((a) => a.id === 'biz').archived, true);
+  assert.equal(st.body.agents.find((a) => a.id === 'lang').archived, true);
+  assert.equal(st.body.agents.find((a) => a.id === 'advisor').parentId, null);
+  assert.equal(st.body.agents.find((a) => a.id === 'advisor').number, '10');
 
   const need = await json('/api/needs', {
     method: 'POST', headers: tok,
@@ -1168,6 +1196,36 @@ test('архивные агенты не принимают задачи, ист
   assert.equal(need.status, 201);
   const needs = await json('/api/needs');
   assert.ok(needs.body.needs.some((n) => n.id === need.body.id && n.fromAgentId === 'biz'));
+  const bizPage = await json(`/api/needs/${need.body.id}`);
+  assert.equal(bizPage.status, 404);
+
+  const langNeed = await json('/api/needs', {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({
+      what: 'Архивный вопрос репетитора',
+      where: 'МГУ',
+      fromAgentId: 'lang',
+      urgency: 'low',
+      answerable: true,
+      details: 'Текст урока не должен открыться',
+    }),
+  });
+  assert.equal(langNeed.status, 201);
+  const listed = await json('/api/needs');
+  assert.ok(listed.body.needs.some((n) => n.id === langNeed.body.id && n.fromAgentId === 'lang'));
+  const langPage = await json(`/api/needs/${langNeed.body.id}`, { headers: pw });
+  assert.equal(langPage.status, 404);
+  assert.equal(JSON.stringify(langPage.body).includes('Текст урока'), false);
+  assert.equal(JSON.stringify(langPage.body).includes('Language Coach'), false);
+  const langAnswer = await json(`/api/needs/${langNeed.body.id}/answer`, {
+    method: 'POST', headers: pw,
+    body: JSON.stringify({ text: 'Ответ архивному репетитору' }),
+  });
+  assert.ok(langAnswer.status >= 400 && langAnswer.status < 500, String(langAnswer.status));
+  assert.equal(langAnswer.status, 409);
+  const after = await json('/api/state');
+  assert.equal(after.body.tasks.some((t) => t.agent === 'lang' && /Ответ архивному репетитору/.test(t.text || '')), false);
+  assert.ok(after.body.needs.some((n) => n.id === langNeed.body.id && n.fromAgentId === 'lang'));
 });
 
 test('безопасный markdown не делает html и grokbot ссылкой', () => {
@@ -1308,4 +1366,51 @@ test('details и ответы только с паролем штаба, отв�
     if (previous === undefined) delete process.env.NEEDS_DETAILS_JSON;
     else process.env.NEEDS_DETAILS_JSON = previous;
   }
+});
+
+test('PATCH пункта меняет поля, ставит updatedAt и закрывает', async () => {
+  const h = { 'x-agent-token': 'tok-test' };
+  const created = await json('/api/needs', {
+    method: 'POST',
+    headers: h,
+    body: JSON.stringify({
+      what: 'Удалить черновик',
+      where: 'База',
+      fromAgentId: 'dev',
+      urgency: 'low',
+      kind: 'delete',
+    }),
+  });
+  assert.equal(created.status, 201);
+  assert.ok(created.body.updatedAt);
+  const bad = await json(`/api/needs/${created.body.id}`, {
+    method: 'PATCH',
+    headers: h,
+    body: JSON.stringify({ what: '   ' }),
+  });
+  assert.equal(bad.status, 400);
+  const edited = await json(`/api/needs/${created.body.id}`, {
+    method: 'PATCH',
+    headers: { 'x-app-password': 'pw-test' },
+    body: JSON.stringify({
+      what: 'Удалить черновик сегодня',
+      urgency: 'high',
+      docUrl: 'https://example.com/wipe',
+    }),
+  });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.body.what, 'Удалить черновик сегодня');
+  assert.equal(edited.body.urgency, 'high');
+  assert.equal(edited.body.docUrl, 'https://example.com/wipe');
+  assert.equal(edited.body.actionUrl, `/needs/${created.body.id}`);
+  assert.ok(Date.parse(edited.body.updatedAt) >= Date.parse(created.body.updatedAt));
+  const closed = await json(`/api/needs/${created.body.id}`, {
+    method: 'PATCH',
+    headers: h,
+    body: JSON.stringify({ closed: true, agentId: 'dev' }),
+  });
+  assert.equal(closed.status, 200);
+  assert.ok(closed.body.closedAt);
+  assert.equal(closed.body.closedBy, 'dev');
+  assert.equal((await json('/api/needs')).body.needs.find((n) => n.id === created.body.id), undefined);
 });

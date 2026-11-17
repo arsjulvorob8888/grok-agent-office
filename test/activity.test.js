@@ -130,7 +130,7 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   assert.equal(missing.status, 404);
   assert.match(missing.body.error, /Неизвестный агент/);
 
-  for (const id of ['trading', 'biz']) {
+  for (const id of ['trading', 'biz', 'lang']) {
     const archivedBeat = await json(`/api/agents/${id}/heartbeat`, {
       method: 'POST',
       headers: { 'x-agent-token': 'tok-act' },
@@ -165,24 +165,26 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   assert.equal(bare.body.currentTask, null);
   assert.equal(Number.isNaN(Date.parse(bare.body.lastSeenAt)), false);
 
-  const noted = await json('/api/agents/lang/heartbeat', {
+  const noted = await json('/api/agents/advisor/heartbeat', {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-act' },
-    body: JSON.stringify({ note: '  Смотрю урок  ' }),
+    body: JSON.stringify({ note: '  Смотрю сводку  ' }),
   });
   assert.equal(noted.status, 200);
-  assert.equal(noted.body.currentTask, 'Смотрю урок');
+  assert.equal(noted.body.currentTask, 'Смотрю сводку');
 
   const state1 = await json('/api/state');
   assert.equal(state1.status, 200);
   const poker = agentOf(state1.body, 'poker');
-  const lang = agentOf(state1.body, 'lang');
+  const advisor = agentOf(state1.body, 'advisor');
   const dev = agentOf(state1.body, 'dev');
   assert.equal(poker.activity, 'working');
   assert.equal(poker.currentTask, null);
   assert.ok(poker.lastSeenAt);
-  assert.equal(lang.activity, 'working');
-  assert.equal(lang.currentTask, 'Смотрю урок');
+  assert.equal(advisor.activity, 'working');
+  assert.equal(advisor.currentTask, 'Смотрю сводку');
+  assert.equal(advisor.number, '10');
+  assert.equal(advisor.parentId, null);
   assert.equal(dev.activity, 'resting');
   assert.equal(dev.lastSeenAt, null);
   assert.equal(JSON.stringify(state1.body).includes('tok-act'), false);
@@ -309,6 +311,10 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   const biz = agentOf((await json('/api/state')).body, 'biz');
   assert.equal(biz.archived, true);
   assert.equal(biz.activity, 'resting');
+  const langHidden = agentOf((await json('/api/state')).body, 'lang');
+  assert.equal(langHidden.archived, true);
+  assert.equal(langHidden.activity, 'resting');
+  assert.equal(langHidden.number, '');
   delete process.env.ACTIVITY_WINDOW_MIN;
 
   const fresh = await json('/api/state');

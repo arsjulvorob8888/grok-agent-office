@@ -21,7 +21,7 @@ const {
 const GOALS_FILE = path.join(__dirname, '..', 'config', 'finance-goals.json');
 
 const AGENTS = [
-  { id: 'grok', name: 'Главный агент · GROK', order: 1 },
+  { id: 'grok', name: 'Путин', order: 1 },
   { id: 'army', name: 'Военная служба', order: 2 },
   { id: 'poker', name: 'Покер', order: 3 },
   { id: 'trading', name: 'Трейдинг', order: 4, archived: true },
@@ -593,7 +593,7 @@ test('после listen Кремль сам шлёт открытые пункт
     assert.equal(academy.deadline, null);
     assert.equal(academy.actionUrl, 'http://127.0.0.1/needs/need-academy');
     assert.equal(academy.actionHint, 'Откроется страница вопроса на сайте Кремля');
-    assert.match(academy.description, /От: 1\. Главный агент/);
+    assert.match(academy.description, /От: 1\. Путин/);
     assert.match(academy.description, /Где: Чаты агентов в Grok/);
     assert.match(academy.description, /Решить: http:\/\/127\.0\.0\.1\/needs\/need-academy/);
     assert.doesNotMatch(academy.description, /cursor\.com/);

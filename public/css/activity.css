@@ -71,7 +71,7 @@ body.proc-on #journal{display:none}
 @media (max-width:700px){
   .hud-actions{flex-wrap:wrap;justify-content:flex-end;max-width:100%}
   #btnProcesses{width:40px;height:40px;min-width:40px;min-height:40px}
-  #roster{z-index:8}
+  #roster{z-index:5}
   #processes{bottom:108px;max-height:min(30vh,220px);z-index:6}
   body.proc-on #needsPop.open{top:calc(var(--hud-h) + 8px);bottom:auto;z-index:7;max-height:calc(100vh - var(--hud-h) - min(30vh, 220px) - 124px)}
   .proc-row{min-height:44px;padding:12px}
