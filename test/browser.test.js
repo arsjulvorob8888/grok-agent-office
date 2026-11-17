@@ -514,7 +514,7 @@ test('«Решить» экранирует ссылку и подсказку �
       await api(`/api/needs/${created.body.id}/close`, {
         method: 'POST',
         headers: { 'x-agent-token': 'tok-ui' },
-        body: '{}',
+        body: JSON.stringify({ agentId: 'grok' }),
       });
     }
   }

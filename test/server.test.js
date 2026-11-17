@@ -741,7 +741,7 @@ test('пункты «нужно от вас»: посев, токен, созд�
   });
   assert.equal(limit.status, 201);
   assert.equal(limit.body.actionUrl, exact);
-  assert.equal((await json(`/api/needs/${limit.body.id}/close`, { method: 'POST', headers: h, body: '{}' })).status, 200);
+  assert.equal((await json(`/api/needs/${limit.body.id}/close`, { method: 'POST', headers: h, body: JSON.stringify({ agentId: 'grok' }) })).status, 200);
 
   const created = await json('/api/needs', {
     method: 'POST', headers: h,
@@ -773,7 +773,7 @@ test('пункты «нужно от вас»: посев, токен, созд�
   const listedOpen = await json('/api/needs');
   assert.equal(listedOpen.body.needs.find((n) => n.id === created.body.id).actionLabel, 'Открыть');
 
-  const closed = await json(`/api/needs/${created.body.id}/close`, { method: 'POST', headers: h, body: '{}' });
+  const closed = await json(`/api/needs/${created.body.id}/close`, { method: 'POST', headers: h, body: JSON.stringify({ agent: 'temshik' }) });
   assert.equal(closed.status, 200);
   assert.ok(closed.body.closedAt);
   const again = await json(`/api/needs/${created.body.id}/close`, { method: 'POST', headers: h, body: '{}' });
@@ -802,6 +802,65 @@ test('пункты «нужно от вас»: посев, токен, созд�
   assert.equal(sameToken.status, 200);
   assert.equal(sameToken.body.closedAt, byPassword.body.closedAt);
   assert.equal((await json('/api/needs')).body.needs.find((n) => n.id === 'need-finance'), undefined);
+  assert.equal(byPassword.body.closedBy, 'user');
+});
+
+test('закрытие пункта пишет closedBy и одну строку в лог', async () => {
+  const h = { 'x-agent-token': 'tok-test' };
+  const logs = [];
+  const orig = console.log;
+  console.log = (...args) => { logs.push(args.map(String).join(' ')); };
+  try {
+    const created = await json('/api/needs', {
+      method: 'POST', headers: h,
+      body: JSON.stringify({ what: 'Закрыть с автором', where: 'Чат', fromAgentId: 'dev', urgency: 'low' }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.closedBy, null);
+    const bare = await json(`/api/needs/${created.body.id}/close`, { method: 'POST', headers: h, body: '{}' });
+    assert.equal(bare.status, 400);
+    const unknown = await json(`/api/needs/${created.body.id}/close`, {
+      method: 'POST', headers: h, body: JSON.stringify({ agentId: 'no-such' }),
+    });
+    assert.equal(unknown.status, 400);
+    const byAgent = await json(`/api/needs/${created.body.id}/close`, {
+      method: 'POST', headers: h, body: JSON.stringify({ agentId: 'dev' }),
+    });
+    assert.equal(byAgent.status, 200);
+    assert.equal(byAgent.body.closedBy, 'dev');
+    assert.ok(byAgent.body.closedAt);
+    const again = await json(`/api/needs/${created.body.id}/close`, {
+      method: 'POST', headers: h, body: JSON.stringify({ agentId: 'qa' }),
+    });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.closedBy, 'dev');
+    assert.equal(again.body.closedAt, byAgent.body.closedAt);
+
+    const other = await json('/api/needs', {
+      method: 'POST', headers: h,
+      body: JSON.stringify({ what: 'Закрыть паролем', where: 'Чат', fromAgentId: 'grok', urgency: 'low' }),
+    });
+    const byUser = await json(`/api/needs/${other.body.id}/close`, {
+      method: 'POST',
+      headers: { 'x-app-password': 'pw-test', 'x-agent-token': 'tok-test' },
+      body: JSON.stringify({ agentId: 'dev' }),
+    });
+    assert.equal(byUser.status, 200);
+    assert.equal(byUser.body.closedBy, 'user');
+
+    const st = await json('/api/state');
+    assert.equal(st.body.needs.find((n) => n.id === created.body.id).closedBy, 'dev');
+    assert.equal(st.body.needs.find((n) => n.id === other.body.id).closedBy, 'user');
+    assert.deepEqual(
+      logs.filter((line) => line.startsWith('need closed:')),
+      [`need closed: ${created.body.id} by dev`, `need closed: ${other.body.id} by user`],
+    );
+    const blob = logs.join('\n');
+    assert.equal(blob.includes('tok-test'), false);
+    assert.equal(blob.includes('pw-test'), false);
+  } finally {
+    console.log = orig;
+  }
 });
 
 test('need-render-api не сеется, открытая сохранённая копия закрывается', () => {

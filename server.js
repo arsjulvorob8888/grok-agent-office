@@ -1323,6 +1323,19 @@ function requireUserOrAgent(req, res, next) {
   return res.status(401).json({ error: 'Нужен пароль доступа или токен агента' });
 }
 
+// Пароль посетителя важнее токена, если прислали оба. Иначе id агента из тела.
+function needCloser(req) {
+  const pw = req.get('x-app-password') || '';
+  if (APP_PASSWORD && safeEqual(pw, APP_PASSWORD)) return { id: 'user' };
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const raw = typeof body.agentId === 'string' && body.agentId.trim()
+    ? body.agentId.trim()
+    : (typeof body.agent === 'string' ? body.agent.trim() : '');
+  if (!raw) return { error: 'Для токена агента нужен agentId' };
+  if (!findAgent(raw)) return { error: 'Неизвестный агент' };
+  return { id: raw };
+}
+
 const app = express();
 app.disable('x-powered-by');
 // Текст задачи и id вложений — это JSON до 1 МБ. Сами файлы принимает multer: 10 МБ и не больше 5.
@@ -1387,7 +1400,12 @@ app.post('/api/needs/:id/confirm', requireAgentToken, (req, res) => {
 app.post('/api/needs/:id/close', requireUserOrAgent, (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
-  if (!item.closedAt) item.closedAt = new Date().toISOString();
+  if (item.closedAt) return res.json(publicNeed(item));
+  const who = needCloser(req);
+  if (who.error) return res.status(400).json({ error: who.error });
+  item.closedAt = new Date().toISOString();
+  item.closedBy = who.id;
+  console.log(`need closed: ${item.id} by ${who.id}`);
   poryadokSync.schedule();
   res.json(publicNeed(item));
 });
