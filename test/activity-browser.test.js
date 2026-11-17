@@ -425,3 +425,36 @@ test('классы яркости: idle, working и coordinating на здани
     await page.close();
   }
 });
+
+test('неактивный спящий чип серый, а reduced-motion гасит переход', { timeout: 30000 }, async () => {
+  const poker = state.agents.find((agent) => agent.id === 'poker');
+  if (poker) poker.live = null;
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForFunction(() => {
+      const chip = document.querySelector('#roster .chip[data-id="poker"]');
+      return chip && chip.classList.contains('sleep') && chip.classList.contains('act-idle');
+    }, { timeout: 10000 });
+    const look = await page.$eval('#roster .chip[data-id="poker"] .av', (el) => {
+      const style = getComputedStyle(el);
+      return { filter: style.filter, opacity: style.opacity };
+    });
+    assert.match(String(look.filter), /grayscale\(0?\.4\)/, JSON.stringify(look));
+    assert.ok(Math.abs(Number(look.opacity) - 0.55) < 0.05, JSON.stringify(look));
+  } finally {
+    await page.close();
+  }
+
+  const quiet = await openPage({ width: 1280, height: 800 }, { reduced: true });
+  try {
+    await quiet.waitForSelector('#roster .chip.sleep.act-idle .av', { timeout: 10000 });
+    const motion = await quiet.$eval('#roster .chip.sleep.act-idle .av', (el) => {
+      const style = getComputedStyle(el);
+      return { property: style.transitionProperty, duration: style.transitionDuration, filter: style.filter };
+    });
+    assert.ok(motion.property === 'none' || motion.duration === '0s', JSON.stringify(motion));
+    assert.match(String(motion.filter), /grayscale\(0?\.4\)/, JSON.stringify(motion));
+  } finally {
+    await quiet.close();
+  }
+});

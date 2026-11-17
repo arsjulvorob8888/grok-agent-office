@@ -34,6 +34,7 @@
   let layout = 'kanban';
   let ticket = 0;
   let frame = 0;
+  let ownsHistory = false;
   const frozen = [];
 
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
@@ -62,12 +63,36 @@
     };
   }
 
+  function hashUrl(hash) {
+    return `${location.pathname}${location.search}#${hash}`;
+  }
+
+  function panelHash() {
+    return `agent=${encodeURIComponent(agentId)}`;
+  }
+
+  function dashboardHash() {
+    return `agent=${encodeURIComponent(agentId)}&view=dashboard&tab=${tab}`;
+  }
+
   function writeHash(mode) {
-    const hash = `agent=${encodeURIComponent(agentId)}&view=dashboard&tab=${tab}`;
-    const url = `${location.pathname}${location.search}#${hash}`;
-    const state = { agentDash: 1 };
-    if (mode === 'push') history.pushState(state, '', url);
-    else history.replaceState(state, '', url);
+    const url = hashUrl(dashboardHash());
+    const own = mode === 'push' || ownsHistory || !!(history.state && history.state.agentDash);
+    if (mode === 'push') history.pushState({ agentDash: 1 }, '', url);
+    else history.replaceState(own ? { agentDash: 1 } : null, '', url);
+  }
+
+  // Прямая ссылка сидит на первой записи. Кладём под неё панель, чтобы Back
+  // остался на сайте, но свою push-запись клика не считаем: закрытие идёт через replaceState.
+  function anchorDirectLink() {
+    if (ownsHistory || (history.state && history.state.agentDash)) return;
+    history.replaceState({ agentPanel: 1 }, '', hashUrl(panelHash()));
+    history.pushState({ agentDash: 1, direct: 1 }, '', hashUrl(dashboardHash()));
+  }
+
+  function revealPanel(id) {
+    const office = window.Office;
+    if (office && typeof office.showAgent === 'function') office.showAgent(id);
   }
 
   function fmtTime(iso) {
@@ -214,25 +239,34 @@
     open = true;
     if (!was) freeze();
     show();
-    if (mode === 'push') writeHash('push');
-    else if (mode === 'replace') writeHash('replace');
+    if (mode === 'push') {
+      writeHash('push');
+      ownsHistory = true;
+    } else if (mode === 'replace') writeHash('replace');
+    else anchorDirectLink();
     load();
   }
 
   function closeDash() {
     if (!open) return;
-    if (history.state && history.state.agentDash) {
+    if (ownsHistory) {
+      ownsHistory = false;
       history.back();
       return;
     }
-    history.replaceState(null, '', `${location.pathname}${location.search}`);
+    const id = agentId;
+    history.replaceState({ agentPanel: 1 }, '', hashUrl(panelHash()));
+    revealPanel(id);
     hide();
   }
 
   function applyHash() {
     const hash = readHash();
     if (hash.view === 'dashboard' && hash.agent) openDash(hash.agent, hash.tab, 'quiet');
-    else hide();
+    else {
+      if (hash.agent) revealPanel(hash.agent);
+      hide();
+    }
   }
 
   async function load() {
@@ -432,7 +466,7 @@
     return `
       <div class="dash-status">
         <span class="dash-pill ${esc(mode)}">${esc(activity)}</span>
-        ${agent.now ? `<span class="dash-now">${esc(agent.now)}</span>` : ''}
+        ${agent.now && mode !== 'resting' && agent.currentTask ? `<span class="dash-now">${esc(agent.now)}</span>` : ''}
         ${live}
       </div>
       <div class="dash-block">
