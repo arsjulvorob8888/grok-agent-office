@@ -304,6 +304,7 @@ html.need-route #needPage{display:flex}
 .need-answers{display:flex;flex-direction:column;gap:8px;min-width:0}
 .need-answer{padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);min-width:0}
 .need-answer p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.need-answer .note{display:block;margin-top:4px;color:var(--muted);font-size:12px}
 .need-answer time{display:block;margin-top:4px;color:var(--muted);font-size:12px}
 .need-partial{display:flex;align-items:flex-start;gap:8px;min-height:44px;font:700 14px/1.35 var(--font)}
 .need-partial input{width:22px;height:22px;margin-top:1px;flex:none}
