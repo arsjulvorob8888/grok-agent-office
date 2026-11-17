@@ -435,6 +435,11 @@ const state = {
 };
 
 const NEED_URGENCY = new Set(['low', 'normal', 'high']);
+const RENDER_NEED_ID = 'need-render-api';
+const ACADEMY_NEED_ID = 'need-academy';
+const ACADEMY_WHAT = 'Одобрить Академию агентов: нажать «Да» в чатах Программирования, Тестировщика и Business Adviser';
+const ACADEMY_WHERE = 'Чаты агентов в Grok';
+const NEEDS_RESOLVE_MS = 3 * 60 * 1000;
 
 function needAuthor(id) {
   const agent = findAgent(id);
@@ -442,21 +447,13 @@ function needAuthor(id) {
   return agent.id;
 }
 
-function seedOwnerNeeds() {
-  const createdAt = new Date().toISOString();
-  const seeds = [
+function needSeeds() {
+  return [
     {
-      id: 'need-render-api',
-      what: 'Ключ Render API — ввести через защищённую форму в чате DevOps',
-      fromAgentId: needAuthor('devops'),
-      where: 'Защищённая форма в чате DevOps',
-      urgency: 'high',
-    },
-    {
-      id: 'need-academy',
-      what: 'Одобрить «Академию агентов»',
+      id: ACADEMY_NEED_ID,
+      what: ACADEMY_WHAT,
       fromAgentId: needAuthor('grok'),
-      where: 'Чат главного агента',
+      where: ACADEMY_WHERE,
       urgency: 'normal',
     },
     {
@@ -474,10 +471,109 @@ function seedOwnerNeeds() {
       urgency: 'normal',
     },
   ];
-  state.needs = seeds.map((item) => ({ ...item, createdAt, closedAt: null }));
 }
 
-seedOwnerNeeds();
+// Часы без подтверждения, после которых открытый пункт «требует проверки».
+// Читается при каждом запросе, чтобы тесты могли подменить NEEDS_STALE_HOURS.
+function staleHours() {
+  const raw = process.env.NEEDS_STALE_HOURS;
+  if (raw == null || raw === '') return 24;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 24;
+  return n;
+}
+
+function isNeedStale(item, now = Date.now(), hours = staleHours()) {
+  if (!item || item.closedAt) return false;
+  const checked = Date.parse(item.checkedAt || item.createdAt || '');
+  if (Number.isNaN(checked)) return false;
+  return now - checked > Number(hours) * 60 * 60 * 1000;
+}
+
+// Закрывает открытые пункты, у которых переменная resolvesWhenEnv уже непустая.
+// В ответ и в логи попадает только имя переменной, не её значение.
+function resolveNeedsByEnv(env = process.env, now = new Date().toISOString()) {
+  let closed = 0;
+  for (const item of state.needs) {
+    if (!item || item.closedAt) continue;
+    const name = item.resolvesWhenEnv;
+    if (!name || typeof name !== 'string') continue;
+    const value = env[name];
+    if (typeof value !== 'string' || value.trim() === '') continue;
+    item.closedAt = now;
+    item.closedBy = 'auto-env';
+    closed += 1;
+  }
+  return closed;
+}
+
+// Идемпотентный посев и миграция. Ничего не удаляет.
+// need-render-api в посев не входит: после деплоя он не появляется снова.
+// Если копия уже лежит в хранилище и ещё открыта, старт её закрывает.
+function migrateOwnerNeeds(list = state.needs) {
+  const now = new Date().toISOString();
+  for (const seed of needSeeds()) {
+    let item = list.find((n) => n && n.id === seed.id);
+    if (!item) {
+      item = {
+        id: seed.id,
+        what: seed.what,
+        fromAgentId: seed.fromAgentId,
+        where: seed.where,
+        urgency: seed.urgency,
+        createdAt: now,
+        checkedAt: now,
+        closedAt: null,
+        closedBy: null,
+        resolvesWhenEnv: null,
+      };
+      list.push(item);
+    } else if (!item.checkedAt) {
+      item.checkedAt = item.createdAt || now;
+    }
+  }
+  for (const item of list) {
+    if (!item || item.id !== ACADEMY_NEED_ID) continue;
+    item.what = ACADEMY_WHAT;
+    item.where = ACADEMY_WHERE;
+  }
+  for (const item of list) {
+    if (!item || item.id !== RENDER_NEED_ID) continue;
+    if (!item.closedAt) item.closedAt = now;
+  }
+  if (list === state.needs) resolveNeedsByEnv();
+  return list;
+}
+
+function migrateExternalNeedStore() {
+  const file = path.join(__dirname, 'lib', 'store.js');
+  if (!fs.existsSync(file)) return;
+  let store;
+  try {
+    store = require(file);
+  } catch (err) {
+    console.error('Хранилище needs не подключено', err && err.message);
+    return;
+  }
+  if (typeof store.withNeeds === 'function') {
+    try {
+      store.withNeeds((list) => { if (Array.isArray(list)) migrateOwnerNeeds(list); });
+    } catch (err) {
+      console.error('Миграция needs в хранилище не выполнена', err && err.message);
+    }
+  }
+  if (Array.isArray(store.needs)) migrateOwnerNeeds(store.needs);
+  if (store.state && Array.isArray(store.state.needs)) migrateOwnerNeeds(store.state.needs);
+}
+
+migrateOwnerNeeds();
+migrateExternalNeedStore();
+const needsResolveTimer = setInterval(() => {
+  try {
+    if (resolveNeedsByEnv()) poryadokSync.schedule();
+  } catch (err) { console.error(err); }
+}, NEEDS_RESOLVE_MS);
+if (typeof needsResolveTimer.unref === 'function') needsResolveTimer.unref();
 
 // Снимок в «Порядок» отдельно от списка «Нужно от вас» и приказов.
 const poryadokSync = createPoryadokSync({ getState: () => state });
@@ -521,12 +617,12 @@ function publicState() {
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
-    needs: openNeeds().map(publicNeed),
+    needs: state.needs.map((item) => publicNeed(item)),
     poryadokSync: poryadokSync.publicStatus(),
   };
 }
 
-function publicNeed(item) {
+function publicNeed(item, now = Date.now()) {
   return {
     id: item.id,
     what: item.what,
@@ -534,7 +630,11 @@ function publicNeed(item) {
     where: item.where,
     urgency: item.urgency,
     createdAt: item.createdAt,
+    checkedAt: item.checkedAt || item.createdAt || null,
     closedAt: item.closedAt || null,
+    closedBy: item.closedBy || null,
+    resolvesWhenEnv: item.resolvesWhenEnv || null,
+    stale: isNeedStale(item, now),
   };
 }
 
@@ -550,6 +650,15 @@ function needText(value, field, max) {
   return text;
 }
 
+function parseEnvName(value) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') throw httpError(400, 'resolvesWhenEnv должен быть строкой');
+  const name = value.trim();
+  if (!name) return null;
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(name)) throw httpError(400, 'Некорректное имя resolvesWhenEnv');
+  return name;
+}
+
 function parseNeed(body) {
   body = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
   const what = needText(body.what, 'what', 500);
@@ -559,7 +668,8 @@ function parseNeed(body) {
   if (!findAgent(fromAgentId)) throw httpError(400, 'Неизвестный агент');
   const urgency = typeof body.urgency === 'string' ? body.urgency.trim() : '';
   if (!NEED_URGENCY.has(urgency)) throw httpError(400, 'urgency должен быть low, normal или high');
-  return { what, where, fromAgentId, urgency };
+  const resolvesWhenEnv = parseEnvName(body.resolvesWhenEnv);
+  return { what, where, fromAgentId, urgency, resolvesWhenEnv };
 }
 
 function cleanList(value) {
@@ -1161,19 +1271,27 @@ app.get('/api/state', (_req, res) => {
 });
 
 app.get('/api/needs', (_req, res) => {
-  res.json({ needs: openNeeds().map(publicNeed) });
+  res.json({ needs: openNeeds().map((item) => publicNeed(item)) });
 });
 
 app.post('/api/needs', requireAgentToken, (req, res) => {
   try {
     const parsed = parseNeed(req.body);
+    const createdAt = new Date().toISOString();
     const item = {
       id: `n-${state.nextNeedId++}`,
-      ...parsed,
-      createdAt: new Date().toISOString(),
+      what: parsed.what,
+      where: parsed.where,
+      fromAgentId: parsed.fromAgentId,
+      urgency: parsed.urgency,
+      resolvesWhenEnv: parsed.resolvesWhenEnv,
+      createdAt,
+      checkedAt: createdAt,
       closedAt: null,
+      closedBy: null,
     };
     state.needs.unshift(item);
+    resolveNeedsByEnv();
     poryadokSync.schedule();
     res.status(201).json(publicNeed(item));
   } catch (err) {
@@ -1183,7 +1301,15 @@ app.post('/api/needs', requireAgentToken, (req, res) => {
   }
 });
 
-app.post('/api/needs/:id/close', requireAgentToken, (req, res) => {
+app.post('/api/needs/:id/confirm', requireAgentToken, (req, res) => {
+  const item = state.needs.find((n) => n.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'Пункт не найден' });
+  item.checkedAt = new Date().toISOString();
+  poryadokSync.schedule();
+  res.json(publicNeed(item));
+});
+
+app.post('/api/needs/:id/close', requireUserOrAgent, (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
   if (!item.closedAt) item.closedAt = new Date().toISOString();
@@ -1574,4 +1700,13 @@ if (require.main === module) {
   server.timeout = 100000;
 }
 
-module.exports = { app, state };
+module.exports = {
+  app,
+  state,
+  migrateOwnerNeeds,
+  isNeedStale,
+  resolveNeedsByEnv,
+  staleHours,
+  ACADEMY_WHAT,
+  ACADEMY_WHERE,
+};
