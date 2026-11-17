@@ -7,6 +7,19 @@
 .agent.sleep .bld,.agent.sleep .fig-wrap{filter:saturate(.85) brightness(.95)}
 .agent.sleep.st-working .fig-body,.agent.sleep.st-working .beacon,.agent.sleep .beacon{animation:none;opacity:0}
 .agent.sleep .beacon{opacity:0}
+.agent .bld,.agent .fig-wrap{transition:opacity .3s ease,filter .3s ease}
+.agent.act-idle .bld,.agent.act-idle .fig-wrap{opacity:.55;filter:grayscale(.4)}
+.agent.act-coordinating .bld,.agent.act-coordinating .fig-wrap{opacity:.8;filter:grayscale(.15)}
+.agent.act-working .bld,.agent.act-working .fig-wrap{opacity:1;filter:none}
+.tag.act-idle{color:#c5ccd8}
+.tag.act-coordinating{color:#e4e9f1}
+.tag.act-working{color:#f4f7fb}
+.chip .av{transition:opacity .3s ease,filter .3s ease}
+.chip.act-idle .av{opacity:.55;filter:grayscale(.4)}
+.chip.act-coordinating .av{opacity:.8;filter:grayscale(.15)}
+.chip.act-working .av{opacity:1;filter:none}
+.chip.act-idle .cn{color:#c5ccd8}
+.chip.act-coordinating .cn{color:#e4e9f1}
 
 .act-marker{position:absolute;left:0;top:0;z-index:0;display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:none;max-width:148px}
 .act-marker.hide{opacity:0}
@@ -20,7 +33,7 @@
 .chip.pulse .av{box-shadow:0 0 0 2px rgba(34,197,94,.85),0 0 12px rgba(34,197,94,.55);animation:chipPulse 1.35s ease-in-out infinite}
 .chip.pulse .st{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.35);animation:dot 1.2s infinite}
 @keyframes chipPulse{50%{box-shadow:0 0 0 5px rgba(34,197,94,.25),0 0 16px rgba(34,197,94,.45)}}
-.chip.sleep .av{filter:grayscale(1) brightness(.78)}
+.chip.sleep .av{filter:none}
 .chip.sleep .st{background:#64748b;box-shadow:none;animation:none}
 .chip-zzz{display:none;font-size:12px;line-height:1}
 .chip.sleep .chip-zzz{display:block}
@@ -84,4 +97,5 @@ body.proc-on #journal{display:none}
 @media (prefers-reduced-motion:reduce){
   .deleg-line,.agent.pulse .pulse-ring,.chip.pulse .av,.chip.pulse .st{animation:none !important}
   .agent.pulse .pulse-ring{opacity:.9;stroke-width:4}
+  .agent .bld,.agent .fig-wrap,.chip .av,.tag{transition:none}
 }

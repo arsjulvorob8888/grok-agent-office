@@ -309,7 +309,7 @@
       const tier = tierOf(a);
       const act = activityClass(a);
       e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${act}${S.selected === a.id ? ' sel' : ''}`);
-      e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}`;
+      e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
       e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
       e.w = 0;
       const show = !a.vacant && (a.status === 'working' || a.status === 'waiting') && a.now;
@@ -837,8 +837,13 @@
       if (!a) return;
       c.classList.toggle('sel', S.selected === a.id);
       c.classList.toggle('pulse', activityMode(a) === 'working');
+      c.classList.toggle('coord', activityMode(a) === 'coordinating');
       c.classList.toggle('wait', activityMode(a) === 'waiting');
       c.classList.toggle('sleep', activityMode(a) === 'resting');
+      c.classList.toggle('act-working', activityMode(a) === 'working');
+      c.classList.toggle('act-coordinating', activityMode(a) === 'coordinating');
+      c.classList.toggle('act-waiting', activityMode(a) === 'waiting');
+      c.classList.toggle('act-idle', activityMode(a) === 'resting');
       c.querySelector('.st').className = `st ${a.status}`;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
       paintAwaitBadge(c.querySelector('.await-you'), a.id, true);
@@ -1274,17 +1279,27 @@
   }
 
   const STATUS_TEXT = { working: 'Работает', idle: 'Свободен', waiting: 'Ждёт тебя' };
-  const ACTIVITY_TEXT = { working: 'Работает', waiting: 'Ждёт', resting: 'Спит' };
+  const ACTIVITY_TEXT = { working: 'Работает', coordinating: 'Координирует', waiting: 'Ждёт', resting: 'Спит' };
   function activityMode(a) {
     if (a && a.activity === 'working') return 'working';
+    if (a && a.activity === 'coordinating') return 'coordinating';
     if (a && a.activity === 'waiting') return 'waiting';
     return 'resting';
   }
+  function actStateClass(a) {
+    const mode = activityMode(a);
+    if (mode === 'working') return ' act-working';
+    if (mode === 'coordinating') return ' act-coordinating';
+    if (mode === 'waiting') return ' act-waiting';
+    return ' act-idle';
+  }
   function activityClass(a) {
     const mode = activityMode(a);
-    if (mode === 'working') return ' pulse';
-    if (mode === 'waiting') return ' wait';
-    return ' sleep';
+    const dim = actStateClass(a);
+    if (mode === 'working') return ` pulse${dim}`;
+    if (mode === 'coordinating') return ` coord${dim}`;
+    if (mode === 'waiting') return ` wait${dim}`;
+    return ` sleep${dim}`;
   }
   function activityLabel(a) {
     return ACTIVITY_TEXT[activityMode(a)] || STATUS_TEXT[a && a.status] || '';
@@ -1297,13 +1312,15 @@
   function activityDot(a) {
     const mode = activityMode(a);
     if (mode === 'working') return 'working';
+    if (mode === 'coordinating') return 'coord';
     if (mode === 'waiting') return 'waiting';
     return 'idle';
   }
   function statusNowHTML(a) {
-    const working = activityMode(a) === 'working';
-    const what = String((a && (a.doing || (working ? a.currentTask : '') || a.now)) || '').trim();
-    if (!working || !what) return `<span class="now">${esc(a && a.now || '')}</span>`;
+    const mode = activityMode(a);
+    const active = mode === 'working' || mode === 'coordinating';
+    const what = String((a && (a.doing || (active ? a.currentTask : '') || a.now)) || '').trim();
+    if (!active || !what) return `<span class="now">${esc(a && a.now || '')}</span>`;
     const age = agoText(a.doingSince || a.lastSeenAt);
     return `<span class="now"><span class="k">чем занят</span> ${esc(what)}</span>${age ? `<span class="ago">уже ${esc(age)}</span>` : ''}`;
   }

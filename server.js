@@ -948,7 +948,7 @@ function publicState(opts = {}) {
 }
 
 function activityExtras() {
-  return { messages: state.messages, routines: state.routines, outbox: state.outbox || [] };
+  return { messages: state.messages, routines: state.routines, agents: state.agents, outbox: state.outbox || [] };
 }
 
 function publicRoutine(item) {

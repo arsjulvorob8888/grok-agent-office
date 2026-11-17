@@ -66,8 +66,15 @@
 
   function modeOf(agent) {
     if (agent && agent.activity === 'working') return 'working';
+    if (agent && agent.activity === 'coordinating') return 'coordinating';
     if (agent && agent.activity === 'waiting') return 'waiting';
     return 'resting';
+  }
+  function paintState(el, mode) {
+    el.classList.toggle('act-working', mode === 'working');
+    el.classList.toggle('act-coordinating', mode === 'coordinating');
+    el.classList.toggle('act-waiting', mode === 'waiting');
+    el.classList.toggle('act-idle', mode === 'resting');
   }
 
   function paint() {
@@ -77,8 +84,10 @@
       if (!a) return;
       const mode = modeOf(a);
       g.classList.toggle('pulse', mode === 'working');
+      g.classList.toggle('coord', mode === 'coordinating');
       g.classList.toggle('wait', mode === 'waiting');
       g.classList.toggle('sleep', mode === 'resting');
+      paintState(g, mode);
       ensureRing(g);
     });
     document.querySelectorAll('#roster .chip').forEach((chip) => {
@@ -87,8 +96,10 @@
       const mode = modeOf(a);
       const working = mode === 'working';
       chip.classList.toggle('pulse', working);
+      chip.classList.toggle('coord', mode === 'coordinating');
       chip.classList.toggle('wait', mode === 'waiting');
       chip.classList.toggle('sleep', mode === 'resting');
+      paintState(chip, mode);
       ensureChipBits(chip);
       const cap = chip.querySelector('.chip-task');
       const text = working && a.currentTask ? trunc(a.currentTask, 18) : '';

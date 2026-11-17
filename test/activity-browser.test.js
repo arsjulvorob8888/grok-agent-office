@@ -340,3 +340,84 @@ test('живой working виден на карте быстрее чем за 3
     await page.close();
   }
 });
+
+test('классы яркости: idle, working и coordinating на здании и аватарке', { timeout: 60000 }, async () => {
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForFunction(() => {
+      const fig = document.querySelector('#agents .agent[data-id="poker"]');
+      const chip = document.querySelector('#roster .chip[data-id="poker"]');
+      return fig && fig.classList.contains('act-idle') && chip && chip.classList.contains('act-idle');
+    }, { timeout: 10000 });
+    const idleLook = await page.$eval('#agents .agent[data-id="poker"] .fig-wrap', (el) => {
+      const cs = getComputedStyle(el);
+      return { opacity: cs.opacity, filter: cs.filter };
+    });
+    assert.ok(Math.abs(Number(idleLook.opacity) - 0.55) < 0.05, JSON.stringify(idleLook));
+    assert.match(String(idleLook.filter), /grayscale|0\.4/);
+
+    const posted = await api('/api/agent-status', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer status-aui' },
+      body: JSON.stringify({ agentId: 'poker', status: 'working', doing: 'Считаю эквити' }),
+    });
+    assert.equal(posted.status, 200, JSON.stringify(posted.body));
+    await page.waitForFunction(() => {
+      const fig = document.querySelector('#agents .agent[data-id="poker"]');
+      const chip = document.querySelector('#roster .chip[data-id="poker"]');
+      return fig && fig.classList.contains('act-working')
+        && chip && chip.classList.contains('act-working')
+        && !fig.classList.contains('act-idle')
+        && !chip.classList.contains('act-idle');
+    }, { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#agents .agent[data-id="poker"] .fig-wrap');
+      return el && Math.abs(parseFloat(getComputedStyle(el).opacity) - 1) < 0.05;
+    }, { timeout: 2000 });
+
+    const task = await api('/api/task', {
+      method: 'POST',
+      headers: { 'x-app-password': 'pw-aui' },
+      body: JSON.stringify({ agent: 'social', text: 'Старый приказ для координации', fromAgentId: 'grok' }),
+    });
+    assert.equal(task.status, 201, JSON.stringify(task.body));
+    const old = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const grok = state.agents.find((agent) => agent.id === 'grok');
+    grok.live = null;
+    grok.lastSeenAt = null;
+    grok.lastStatusAt = null;
+    grok.lastDashboardAt = null;
+    grok.heartbeatNote = '';
+    for (const item of state.tasks) {
+      if (item.fromAgentId === 'grok' || item.agentId === 'grok' || item.agent === 'grok') {
+        item.createdAt = old;
+        for (const step of item.history || []) step.at = old;
+      }
+    }
+    for (const message of state.messages) {
+      if (message.agentId === 'grok' || message.fromAgentId === 'grok') message.createdAt = old;
+    }
+    const child = await api('/api/agent-status', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer status-aui' },
+      body: JSON.stringify({ agentId: 'social', status: 'working', doing: 'Веду приказ' }),
+    });
+    assert.equal(child.status, 200, JSON.stringify(child.body));
+    await page.waitForFunction(() => {
+      const fig = document.querySelector('#agents .agent[data-id="grok"]');
+      const chip = document.querySelector('#roster .chip[data-id="grok"]');
+      const social = document.querySelector('#agents .agent[data-id="social"]');
+      return fig && fig.classList.contains('act-coordinating')
+        && chip && chip.classList.contains('act-coordinating')
+        && social && social.classList.contains('act-working');
+    }, { timeout: 5000 });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#agents .agent[data-id="grok"] .fig-wrap');
+      return el && Math.abs(parseFloat(getComputedStyle(el).opacity) - 0.8) < 0.05;
+    }, { timeout: 2000 });
+    const clickable = await page.$eval('#agents .agent[data-id="poker"]', (el) => getComputedStyle(el).pointerEvents);
+    assert.notEqual(clickable, 'none');
+  } finally {
+    await page.close();
+  }
+});

@@ -168,7 +168,7 @@ test('имя «Программирование · Кремль» станови
     agent: 'grok',
   });
   assert.equal(named.status, 200, JSON.stringify(named.body));
-  assert.deepEqual(Object.keys(named.body).sort(), ['activity', 'doing', 'id', 'ok', 'since', 'status', 'until']);
+  assert.deepEqual(Object.keys(named.body).sort(), ['activity', 'doing', 'forAgent', 'id', 'ok', 'since', 'status', 'until']);
   assert.equal(named.body.ok, true);
   assert.equal(named.body.id, 'dev');
   assert.equal(named.body.status, 'working');
@@ -543,4 +543,79 @@ test('хаб пишет keepalive и отпускает подписчика п�
   assert.equal(hub.clientCount(), 0);
   assert.equal(closed, true);
   hub.close();
+});
+
+test('forAgent putin будит Путина, координирование слабее своего working', async () => {
+  const { state } = require('../server.js');
+  const named = await postStatus({
+    agentId: 'army',
+    status: 'working',
+    doing: 'Свожу отчёт',
+    forAgent: 'putin',
+  });
+  assert.equal(named.status, 200, JSON.stringify(named.body));
+  assert.equal(named.body.forAgent, 'grok');
+  let view = agentOf((await json('/api/state')).body, 'grok');
+  assert.equal(view.activity, 'working');
+
+  const alias = await postStatus({
+    agentId: 'army',
+    status: 'working',
+    onBehalfOf: 'Путин · Кремль',
+    doing: 'Свожу отчёт',
+  });
+  assert.equal(alias.status, 200, JSON.stringify(alias.body));
+  assert.equal(alias.body.forAgent, 'grok');
+
+  const unknown = await postStatus({ agentId: 'army', status: 'working', forAgent: 'никто-такой' });
+  assert.equal(unknown.status, 400);
+
+  const idle = await postStatus({ agentId: 'army', status: 'idle' });
+  assert.equal(idle.status, 200);
+  assert.equal(idle.body.forAgent, null);
+
+  const task = await json('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-live' },
+    body: JSON.stringify({ agent: 'army', text: 'Старый приказ Путина', fromAgentId: 'grok' }),
+  });
+  assert.equal(task.status, 201, JSON.stringify(task.body));
+  const old = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const grok = state.agents.find((agent) => agent.id === 'grok');
+  grok.live = null;
+  grok.lastSeenAt = null;
+  grok.lastStatusAt = null;
+  grok.lastDashboardAt = null;
+  grok.heartbeatNote = '';
+  for (const item of state.tasks) {
+    if (item.fromAgentId === 'grok' || item.agentId === 'grok' || item.agent === 'grok') {
+      item.createdAt = old;
+      for (const step of item.history || []) step.at = old;
+    }
+  }
+  for (const message of state.messages) {
+    if (message.agentId === 'grok' || message.fromAgentId === 'grok' || message.toAgentId === 'grok') {
+      message.createdAt = old;
+      message.timestamp = old;
+    }
+  }
+  const child = await postStatus({ agentId: 'army', status: 'working', doing: 'Делаю приказ' });
+  assert.equal(child.status, 200, JSON.stringify(child.body));
+  view = agentOf((await json('/api/state')).body, 'grok');
+  const childView = agentOf((await json('/api/state')).body, 'army');
+  assert.equal(childView.activity, 'working');
+  assert.equal(view.activity, 'coordinating');
+
+  const boss = await postStatus({ agentId: 'grok', status: 'working', doing: 'Сам на линии' });
+  assert.equal(boss.status, 200, JSON.stringify(boss.body));
+  view = agentOf((await json('/api/state')).body, 'grok');
+  assert.equal(view.activity, 'working');
+
+  await postStatus({ agentId: 'grok', status: 'idle' });
+  const marked = await postStatus({ agentId: 'army', status: 'working', doing: 'По задаче', forAgent: 'putin' });
+  assert.equal(marked.status, 200);
+  view = agentOf((await json('/api/state')).body, 'grok');
+  assert.equal(view.activity, 'working');
+  assert.match(view.currentTask, /Военная служба/);
+  assert.match(view.currentTask, /По задаче/);
 });
