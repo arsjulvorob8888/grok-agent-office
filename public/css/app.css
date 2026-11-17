@@ -380,6 +380,9 @@ body.hier-on #journal{display:none}
 .chip .lv{position:absolute;top:36px;left:8px;font:800 9px/1 var(--display);padding:3px 4px;border-radius:6px;background:#0d1017;color:var(--gold);border:1px solid rgba(245,196,81,.4)}
 .chip.main .av{background:radial-gradient(circle at 50% 30%,#e0283f,#7e0a1c);box-shadow:inset 0 0 0 2px rgba(245,196,81,.6)}
 .chip.vacant .av{background:repeating-linear-gradient(45deg,#2a2f3b 0 6px,#232733 6px 12px)}
+.chip-events{display:flex;flex-direction:column;gap:2px;width:100%;max-width:168px}
+.chip-events[hidden]{display:none !important}
+.chip-event{font-size:9px;font-weight:700;line-height:1.25;color:#d7e6da;text-align:center;white-space:normal}
 .chip.sub{width:64px;margin-top:8px}
 .chip.sub .av{width:36px;height:36px;border-radius:11px}
 .chip.sub .cn{font-size:9.5px;max-width:60px}

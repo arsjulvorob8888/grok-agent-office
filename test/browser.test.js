@@ -1123,11 +1123,11 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.match(chip('dev'), /^5\./);
     assert.match(chip('temshik'), /^6\./);
     assert.match(chip('finance'), /^7\./);
-    assert.match(chip('invest'), /^7\.1/);
-    assert.match(chip('analyst'), /^7\.2/);
+    assert.equal(chipIds.includes('invest'), false);
+    assert.equal(chipIds.includes('analyst'), false);
+    assert.equal(chipIds.includes('advisor'), false);
     assert.match(chip('qa'), /^8\./);
     assert.match(chip('blog'), /^9\./);
-    assert.equal(chip('advisor'), '10. Советник Путина');
     assert.match(chip('social'), /^11\./);
     assert.match(chip('routines'), /^12\./);
     assert.equal(ui.options.some((o) => o.value === 'trading' || o.value === 'biz' || o.value === 'lang'), false);
@@ -1223,7 +1223,7 @@ test('на десктопе подписи «1. Путин» и «10. Совет
     });
     assert.equal(ui.vw, 1280);
     assert.equal(ui.advisorTitle, '10. Советник Путина');
-    assert.equal(ui.advisorChip, '10. Советник Путина');
+    assert.equal(ui.advisorChip, '');
     assert.equal(ui.advisorTag, '');
     assert.match(ui.advisorKicker, /Кремль/);
     assert.match(ui.advisorRole, /стратегический советник Путина/i);
@@ -1570,5 +1570,259 @@ test('частичный текстовый тест копится и не ух
     assert.match(tests, /Тестовые/);
   } finally {
     await page.close();
+  }
+});
+
+function trackErrors(page) {
+  const errors = [];
+  page.on('pageerror', (err) => errors.push(String(err)));
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (/fonts\.(googleapis|gstatic)|favicon|ERR_FAILED/i.test(text)) return;
+    errors.push(text);
+  });
+  return errors;
+}
+
+async function quietPage(viewport) {
+  const page = await browser.newPage();
+  const errors = trackErrors(page);
+  await page.setViewport({
+    width: viewport.width,
+    height: viewport.height,
+    isMobile: viewport.width <= 700,
+    hasTouch: viewport.width <= 700,
+    deviceScaleFactor: 1,
+  });
+  await page.evaluateOnNewDocument(() => {
+    localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+    localStorage.setItem('journal', 'collapsed');
+  });
+  await page.goto(`${base}/?theme=day`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#agents .agent[data-id="finance"]', { timeout: 8000 });
+  await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+  return { page, errors };
+}
+
+async function openFinanceRoom(page) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const point = await hitAgent(page, 'finance');
+    await page.mouse.click(point.x, point.y);
+    try {
+      await page.waitForSelector('#room.open', { timeout: 1500 });
+      return;
+    } catch (_) { /* точка могла уехать вместе с камерой */ }
+  }
+  await page.evaluate(() => {
+    const tag = document.querySelector('#overlay .tag[data-id="finance"]');
+    if (tag) tag.click();
+  });
+  await page.waitForSelector('#room.open', { timeout: 3000 });
+}
+
+async function hitAgent(page, id) {
+  for (let step = 0; step < 8; step += 1) {
+    const found = await page.evaluate((agentId) => {
+      const g = document.querySelector(`#agents .agent[data-id="${agentId}"]`);
+      if (!g) return null;
+      const r = g.getBoundingClientRect();
+      for (let y = r.top + 4; y < r.bottom - 2; y += 8) {
+        for (let x = r.left + 4; x < r.right - 2; x += 8) {
+          if (x < 6 || y < 6 || x > innerWidth - 6 || y > innerHeight - 6) continue;
+          const el = document.elementFromPoint(x, y);
+          if (el && g.contains(el)) return { x, y };
+        }
+      }
+      return { miss: true, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+    }, id);
+    if (found && !found.miss) return found;
+    const vw = page.viewport().width;
+    const vh = page.viewport().height;
+    await page.mouse.move(vw / 2, Math.min(vh / 2, vh - 180));
+    await page.mouse.down();
+    await page.mouse.move(found.cx < vw / 2 ? vw - 40 : 40, found.cy < vh / 2 ? vh - 180 : 140, { steps: 8 });
+    await page.mouse.up();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+  throw new Error(`здание ${id} не попало на экран`);
+}
+
+function overlaps(a, b) {
+  const gap = 1;
+  return a.x < b.x + b.w + gap && a.x + a.w + gap > b.x && a.y < b.y + b.h + gap && a.y + a.h + gap > b.y;
+}
+
+test('помещения, лента, подсказка, бейдж и зазоры', { timeout: 120000 }, async () => {
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    const { page, errors } = await quietPage(viewport);
+    try {
+      const boxes = await page.evaluate(() => {
+        const read = (el, kind) => {
+          const r = el.getBoundingClientRect();
+          return { id: el.dataset.id, kind, x: r.left, y: r.top, w: r.width, h: r.height };
+        };
+        const agents = [...document.querySelectorAll('#agents .agent')].map((el) => read(el, 'b'));
+        const tags = [...document.querySelectorAll('#overlay .tag:not(.hide)')].map((el) => read(el, 't'));
+        const chips = [...document.querySelectorAll('#roster .chip')].map((el) => el.dataset.id);
+        return { agents, tags, chips };
+      });
+      const bad = [];
+      const all = [...boxes.agents, ...boxes.tags];
+      for (let i = 0; i < all.length; i += 1) {
+        for (let j = i + 1; j < all.length; j += 1) {
+          if (all[i].id === all[j].id) continue;
+          if (overlaps(all[i], all[j])) bad.push(`${all[i].id}/${all[i].kind}×${all[j].id}/${all[j].kind}`);
+        }
+      }
+      assert.deepEqual(bad, [], `${viewport.width}: ${bad.join(', ')}`);
+      assert.equal(boxes.agents.some((b) => b.id === 'invest' || b.id === 'analyst' || b.id === 'advisor'), false);
+      assert.equal(boxes.chips.includes('invest'), false);
+      assert.equal(boxes.chips.includes('analyst'), false);
+      assert.equal(boxes.chips.includes('advisor'), false);
+      assert.ok(boxes.chips.includes('finance') && boxes.chips.includes('grok'));
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  }
+
+  const desk = await quietPage({ width: 1280, height: 800 });
+  try {
+    const point = await hitAgent(desk.page, 'finance');
+    await desk.page.mouse.move(point.x, point.y);
+    await desk.page.waitForFunction(() => {
+      const tip = document.querySelector('#tooltip');
+      const text = tip ? tip.textContent : '';
+      return tip && tip.classList.contains('show') && /Заместители:\s*2/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text);
+    }, { timeout: 4000 });
+    assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
+    await desk.page.mouse.click(point.x, point.y);
+    await desk.page.waitForSelector('#room.open .room-seat[data-id="finance"]', { timeout: 4000 });
+    await desk.page.waitForSelector('#room.open .room-seat[data-id="invest"]');
+    await desk.page.waitForSelector('#room.open .room-seat[data-id="analyst"]');
+    const seats = await desk.page.$$eval('#room .room-seat', (els) => els.map((el) => el.dataset.id));
+    assert.deepEqual(seats, ['finance', 'invest', 'analyst']);
+    await desk.page.click('#room .room-go[data-id="invest"]');
+    await desk.page.waitForSelector('#panel.open[data-agent="invest"]', { timeout: 8000 });
+    assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
+    await desk.page.click('#pClose');
+    await desk.page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'));
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    await openFinanceRoom(desk.page);
+    await desk.page.click('#roomX');
+    await desk.page.waitForFunction(() => !document.querySelector('#room').classList.contains('open'));
+
+    await openFinanceRoom(desk.page);
+    await desk.page.keyboard.press('Escape');
+    await desk.page.waitForFunction(() => !document.querySelector('#room').classList.contains('open'));
+
+    await openFinanceRoom(desk.page);
+    await desk.page.mouse.click(8, 8);
+    await desk.page.waitForFunction(() => !document.querySelector('#room').classList.contains('open'));
+
+    const poker = await hitAgent(desk.page, 'poker');
+    await desk.page.mouse.move(poker.x, poker.y);
+    await desk.page.waitForFunction(() => /Заместителей нет/.test(document.querySelector('#tooltip')?.textContent || ''), { timeout: 4000 });
+    assert.deepEqual(desk.errors, []);
+  } finally {
+    await desk.page.close();
+  }
+
+  const phone = await quietPage({ width: 390, height: 844 });
+  try {
+    const point = await hitAgent(phone.page, 'finance');
+    await phone.page.touchscreen.touchStart(point.x, point.y);
+    await phone.page.waitForFunction(() => {
+      const tip = document.querySelector('#tooltip');
+      const text = tip ? tip.textContent : '';
+      return tip && tip.classList.contains('show') && /Заместители:\s*2/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text);
+    }, { timeout: 4000 });
+    assert.equal(await phone.page.$eval('#room', (el) => el.classList.contains('open')), false);
+    await phone.page.touchscreen.touchEnd();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(await phone.page.$eval('#room', (el) => el.classList.contains('open')), false);
+
+    await phone.page.touchscreen.tap(point.x, point.y);
+    await phone.page.waitForSelector('#room.open .room-seat[data-id="analyst"]', { timeout: 4000 });
+    const fit = await phone.page.evaluate(() => {
+      const sheet = document.querySelector('.room-sheet').getBoundingClientRect();
+      const seats = [...document.querySelectorAll('.room-seat')].map((el) => el.getBoundingClientRect());
+      let overlap = false;
+      for (let i = 0; i < seats.length; i += 1) {
+        for (let j = i + 1; j < seats.length; j += 1) {
+          const a = seats[i], b = seats[j];
+          if (a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1) overlap = true;
+        }
+      }
+      return {
+        w: Math.round(sheet.width),
+        h: Math.round(sheet.height),
+        overlap,
+        scroll: ['auto', 'scroll'].includes(getComputedStyle(document.querySelector('.room-scroll')).overflowY),
+      };
+    });
+    assert.equal(fit.w, 390);
+    assert.equal(fit.h, 844);
+    assert.equal(fit.overlap, false);
+    assert.equal(fit.scroll, true);
+    await phone.page.click('#roomX');
+    await phone.page.waitForFunction(() => !document.querySelector('#room').classList.contains('open'));
+    assert.deepEqual(phone.errors, []);
+  } finally {
+    await phone.page.close();
+  }
+
+  const marked = await api('/api/status', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({ agent: 'invest', status: 'working', now: 'Смотрю долю кэша' }),
+  });
+  assert.equal(marked.status, 200);
+  const advised = await api('/api/status', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({ agent: 'advisor', status: 'working', now: 'Готовлю сводку' }),
+  });
+  assert.equal(advised.status, 200);
+  const investNeed = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({ what: 'Подпись инвестиционной записки', where: 'Портфель', fromAgentId: 'invest', urgency: 'normal' }),
+  });
+  assert.equal(investNeed.status, 201);
+  const analystNeed = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({ what: 'Сверить юнит-экономику', where: 'Модель', fromAgentId: 'analyst', urgency: 'high' }),
+  });
+  assert.equal(analystNeed.status, 201);
+  const needs = await api('/api/needs');
+  const openFor = (id) => needs.body.needs.filter((n) => !n.closedAt && n.fromAgentId === id).length;
+  const sum = openFor('finance') + openFor('invest') + openFor('analyst');
+  assert.ok(sum > openFor('finance'));
+
+  const watch = await quietPage({ width: 1280, height: 800 });
+  try {
+    await watch.page.waitForFunction((expected) => {
+      const map = document.querySelector('#overlay .await-you[data-id="finance"] .await-you-count');
+      const roster = document.querySelector('#roster .chip[data-id="finance"] .await-you .await-you-count');
+      return map && roster && map.textContent === expected && roster.textContent === expected;
+    }, { timeout: 12000 }, String(sum));
+    await watch.page.waitForFunction(() => {
+      const finance = document.querySelector('#roster .chip[data-id="finance"] .chip-event');
+      const grok = document.querySelector('#roster .chip[data-id="grok"] .chip-event');
+      if (!finance || !grok) return false;
+      const name = document.querySelector('#roster .chip[data-id="finance"] .cn').getBoundingClientRect();
+      const row = finance.getBoundingClientRect();
+      return /Финансы · Инвестиции:\s*Смотрю долю кэша/.test(finance.textContent)
+        && /Путин · Советник/.test(grok.textContent)
+        && /Готовлю сводку/.test(grok.textContent)
+        && row.top >= name.bottom - 1;
+    }, { timeout: 12000 });
+    assert.deepEqual(watch.errors, []);
+  } finally {
+    await watch.page.close();
   }
 });

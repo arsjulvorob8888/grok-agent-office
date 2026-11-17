@@ -217,9 +217,15 @@
       tag.className = `tag ${tier}`;
       tag.style.setProperty('--c', a.color);
       tag.dataset.id = a.id;
-      tag.onclick = (e) => { e.stopPropagation(); openRoom(a.id); };
+      tag.onclick = (e) => {
+        e.stopPropagation();
+        if (eatClick) { eatClick = false; return; }
+        openRoom(a.id);
+      };
+      tag.addEventListener('pointerdown', (e) => armHold(e, a.id));
       tag.addEventListener('pointerenter', () => setPeek(a.id));
       tag.addEventListener('pointerleave', () => { if (S.peekId === a.id) setPeek(null); });
+      tag.addEventListener('contextmenu', (e) => e.preventDefault());
       overlay.appendChild(tag);
       const bubble = document.createElement('div');
       bubble.className = 'bubble hide';
@@ -435,7 +441,13 @@
       svg.setPointerCapture(e.pointerId);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       cancelAnimationFrame(flyRaf);
-      if (pts.size === 1) { moved = 0; start = { x: e.clientX, y: e.clientY, target: e.target }; }
+      if (pts.size === 1) {
+        moved = 0;
+        start = { x: e.clientX, y: e.clientY, target: e.target };
+        const held = e.target.closest && e.target.closest('.agent');
+        if (held) armHold(e, held.dataset.id);
+        else clearHold();
+      }
       if (pts.size === 2) {
         const [a, b] = [...pts.values()];
         pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), k: S.cam.k };
@@ -447,7 +459,8 @@
       p.x = e.clientX; p.y = e.clientY;
       if (pts.size === 1) {
         moved += Math.abs(dx) + Math.abs(dy);
-        if (moved > 5) { svg.classList.add('dragging'); S.cam.tx += dx; S.cam.ty += dy; S.userMoved = true; clampCam(); applyCam(); hideTip(); }
+        nudgeHold(e);
+        if (moved > 5) { clearHold(); svg.classList.add('dragging'); S.cam.tx += dx; S.cam.ty += dy; S.userMoved = true; clampCam(); applyCam(); hideTip(); }
       } else if (pts.size === 2 && pinch) {
         moved = 99;
         const [a, b] = [...pts.values()];
@@ -462,6 +475,7 @@
       if (pts.size < 2) pinch = null;
       if (pts.size === 0) {
         svg.classList.remove('dragging');
+        if (eatClick) { eatClick = false; clearHold(); return; }
         if (moved <= 5 && start) clickAt(start.target);
       }
     };
@@ -548,6 +562,28 @@
     if (top - h < pad) top = Math.min(innerHeight - pad, y + 18 + h);
     tip.style.left = left + 'px';
     tip.style.top = top + 'px';
+  }
+  let holdTimer = 0;
+  let eatClick = false;
+  let holdAt = null;
+  function clearHold() {
+    clearTimeout(holdTimer);
+    holdTimer = 0;
+  }
+  function armHold(e, id) {
+    clearHold();
+    if (!id || e.pointerType === 'mouse' || e.pointerType === 'pen') return;
+    holdAt = { x: e.clientX, y: e.clientY, id };
+    holdTimer = setTimeout(() => {
+      holdTimer = 0;
+      eatClick = true;
+      const a = S.byId.get(id);
+      if (a) showDeputyTip(a, holdAt.x, holdAt.y);
+    }, 500);
+  }
+  function nudgeHold(e) {
+    if (!holdTimer || !holdAt) return;
+    if (Math.hypot(e.clientX - holdAt.x, e.clientY - holdAt.y) > 12) clearHold();
   }
   function setPeek(id) {
     S.peekId = id || null;
@@ -683,7 +719,7 @@
   }
   function buildRoster() {
     const r = $('#roster');
-    const list = [...S.agents].sort(cmpNum);
+    const list = S.agents.filter(onMap).sort(cmpNum);
     let html = '', lastGroup = null;
     for (const a of list) {
       const t = tierOf(a);
@@ -692,7 +728,8 @@
       lastGroup = group;
       html += `<button class="chip ${t}${a.vacant ? ' vacant' : ''}" data-id="${esc(a.id)}" style="--c:${esc(a.color)}" title="${esc(titled(a))}">
         <span class="await-you is-off" data-id="${esc(a.id)}" hidden aria-hidden="true"></span>
-        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span></button>`;
+        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>
+        <span class="chip-events" hidden></span></button>`;
     }
     r.innerHTML = html;
     r.querySelectorAll('.chip').forEach((c) => (c.onclick = (e) => {
@@ -732,8 +769,24 @@
       c.classList.toggle('sleep', activityMode(a) === 'resting');
       c.querySelector('.st').className = `st ${a.status}`;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
-      paintAwaitBadge(c.querySelector('.await-you'), a.id);
+      paintAwaitBadge(c.querySelector('.await-you'), a.id, true);
+      paintGuestEvents(c, a);
     });
+  }
+  function paintGuestEvents(chip, host) {
+    const box = chip.querySelector('.chip-events');
+    if (!box) return;
+    const lines = roomGuests(host.id).map((guest) => {
+      const text = String(guest.currentTask || '').trim();
+      if (!text) return '';
+      return `${plainName(host)} · ${plainName(guest)}: ${text}`;
+    }).filter(Boolean);
+    const sig = lines.join('\n');
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.innerHTML = lines.map((line) => `<span class="chip-event">${esc(line)}</span>`).join('');
+    }
+    box.hidden = lines.length === 0;
   }
   function buildMiniDots() {
     $('#miniDots').innerHTML = S.agents.filter(onMap).map((a) => `<circle class="mini-dot" cx="${a.x}" cy="${a.y}" r="18" fill="${a.color}" opacity=".8"/>`).join('');
