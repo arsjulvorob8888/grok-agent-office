@@ -5,8 +5,11 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
+const { activityFor } = require('./lib/activity');
+const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
 const { createDashboardStore } = require('./lib/dashboards');
+const { createAnalysisStore } = require('./lib/analysis');
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -438,8 +441,18 @@ const state = {
 const NEED_URGENCY = new Set(['low', 'normal', 'high']);
 const RENDER_NEED_ID = 'need-render-api';
 const ACADEMY_NEED_ID = 'need-academy';
-const ACADEMY_WHAT = 'Одобрить Академию агентов: нажать «Да» в чатах Программирования, Тестировщика и Business Adviser';
+const ACADEMY_WHAT = 'Одобрить Академию агентов: нажать «Да» в чатах Программирования и Тестировщика';
 const ACADEMY_WHERE = 'Чаты агентов в Grok';
+const FINANCE_NEED_ID = 'need-finance';
+const FINANCE_WHERE = 'Чат Путина или Финансов';
+const ACTION_URL_MAX = 500;
+const ACTION_LABEL_MAX = 80;
+const ACTION_HINT_MAX = 300;
+const ACADEMY_ACTION_URL = 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2';
+const FINANCE_ACTION_URL = 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01';
+const FINANCE_ACTION_HINT = 'Откройте в Grok чат «Путин · Кремль»';
+const SOCIAL_ACTION_URL = 'grokbot://app/v1/agent?id=a1bd53f2-5655-446b-8207-393e61fc20e1';
+const SOCIAL_ACTION_HINT = 'Откройте в Grok чат «Соцсети · Кремль»';
 const NEEDS_RESOLVE_MS = 3 * 60 * 1000;
 
 function needAuthor(id) {
@@ -456,6 +469,9 @@ function needSeeds() {
       fromAgentId: needAuthor('grok'),
       where: ACADEMY_WHERE,
       urgency: 'normal',
+      actionUrl: ACADEMY_ACTION_URL,
+      actionLabel: null,
+      actionHint: null,
     },
     {
       id: 'need-social',
@@ -463,13 +479,19 @@ function needSeeds() {
       fromAgentId: needAuthor('social'),
       where: 'Instagram и YouTube',
       urgency: 'normal',
+      actionUrl: SOCIAL_ACTION_URL,
+      actionLabel: null,
+      actionHint: SOCIAL_ACTION_HINT,
     },
     {
-      id: 'need-finance',
+      id: FINANCE_NEED_ID,
       what: 'Ответить на шесть финансовых вопросов',
       fromAgentId: needAuthor('finance'),
-      where: 'Чат Финансов',
+      where: FINANCE_WHERE,
       urgency: 'normal',
+      actionUrl: FINANCE_ACTION_URL,
+      actionLabel: null,
+      actionHint: FINANCE_ACTION_HINT,
     },
   ];
 }
@@ -508,9 +530,23 @@ function resolveNeedsByEnv(env = process.env, now = new Date().toISOString()) {
   return closed;
 }
 
+function blankNeedField(value) {
+  return value == null || (typeof value === 'string' && value.trim() === '');
+}
+
+// Дописывает ссылку и подсказку посева, только если своего значения ещё нет.
+function fillSeedActions(item, seed) {
+  if (!item || !seed) return;
+  if (blankNeedField(item.actionUrl) && seed.actionUrl) item.actionUrl = seed.actionUrl;
+  if (blankNeedField(item.actionLabel) && seed.actionLabel) item.actionLabel = seed.actionLabel;
+  if (blankNeedField(item.actionHint) && seed.actionHint) item.actionHint = seed.actionHint;
+}
+
 // Идемпотентный посев и миграция. Ничего не удаляет.
 // need-render-api в посев не входит: после деплоя он не появляется снова.
 // Если копия уже лежит в хранилище и ещё открыта, старт её закрывает.
+// У посевных пунктов пустые actionUrl и actionHint заполняются один раз.
+// Текст академии и «где» у финансов обновляются на месте: пункт не закрывается и не удаляется.
 function migrateOwnerNeeds(list = state.needs) {
   const now = new Date().toISOString();
   for (const seed of needSeeds()) {
@@ -522,6 +558,9 @@ function migrateOwnerNeeds(list = state.needs) {
         fromAgentId: seed.fromAgentId,
         where: seed.where,
         urgency: seed.urgency,
+        actionUrl: seed.actionUrl || null,
+        actionLabel: seed.actionLabel || null,
+        actionHint: seed.actionHint || null,
         createdAt: now,
         checkedAt: now,
         closedAt: null,
@@ -529,14 +568,19 @@ function migrateOwnerNeeds(list = state.needs) {
         resolvesWhenEnv: null,
       };
       list.push(item);
-    } else if (!item.checkedAt) {
-      item.checkedAt = item.createdAt || now;
+    } else {
+      if (!item.checkedAt) item.checkedAt = item.createdAt || now;
+      fillSeedActions(item, seed);
     }
   }
   for (const item of list) {
     if (!item || item.id !== ACADEMY_NEED_ID) continue;
     item.what = ACADEMY_WHAT;
     item.where = ACADEMY_WHERE;
+  }
+  for (const item of list) {
+    if (!item || item.id !== FINANCE_NEED_ID) continue;
+    item.where = FINANCE_WHERE;
   }
   for (const item of list) {
     if (!item || item.id !== RENDER_NEED_ID) continue;
@@ -583,6 +627,11 @@ poryadokSync.start();
 // Версии дашборда: Postgres при DATABASE_URL, иначе память. Опрос /api/state
 // читает только время последней записи и не тащит блоки.
 const dashboards = createDashboardStore();
+const analyses = createAnalysisStore();
+
+function isFinanceAgent(agent) {
+  return !!(agent && (agent.id === 'finance' || agent.parentId === 'finance'));
+}
 
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -620,6 +669,8 @@ function publicState() {
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
       dashboardUpdatedAt: dashboards.updatedAt(a.id),
+      analysisUpdatedAt: analyses.get(a.id) ? analyses.get(a.id).updatedAt : null,
+      ...activityFor(a, state.tasks),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
@@ -635,6 +686,9 @@ function publicNeed(item, now = Date.now()) {
     fromAgentId: item.fromAgentId,
     where: item.where,
     urgency: item.urgency,
+    actionUrl: item.actionUrl || null,
+    actionLabel: item.actionLabel || null,
+    actionHint: item.actionHint || null,
     createdAt: item.createdAt,
     checkedAt: item.checkedAt || item.createdAt || null,
     closedAt: item.closedAt || null,
@@ -665,6 +719,28 @@ function parseEnvName(value) {
   return name;
 }
 
+function optionalNeedText(value, field, max) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') throw httpError(400, `${field} должен быть строкой`);
+  const text = value.trim();
+  if (!text) return null;
+  if (text.length > max) throw httpError(400, `${field} слишком длинное (максимум ${max} символов)`);
+  return text;
+}
+
+// Только https:// и grokbot://. Пустое значение — поле не задано.
+function parseActionUrl(value) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') throw httpError(400, 'actionUrl должен быть строкой');
+  const url = value.trim();
+  if (!url) return null;
+  if (url.length > ACTION_URL_MAX) throw httpError(400, `actionUrl слишком длинное (максимум ${ACTION_URL_MAX} символов)`);
+  if (!/^(https|grokbot):\/\/\S+$/i.test(url)) {
+    throw httpError(400, 'actionUrl должен начинаться с https:// или grokbot://');
+  }
+  return url;
+}
+
 function parseNeed(body) {
   body = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
   const what = needText(body.what, 'what', 500);
@@ -675,7 +751,10 @@ function parseNeed(body) {
   const urgency = typeof body.urgency === 'string' ? body.urgency.trim() : '';
   if (!NEED_URGENCY.has(urgency)) throw httpError(400, 'urgency должен быть low, normal или high');
   const resolvesWhenEnv = parseEnvName(body.resolvesWhenEnv);
-  return { what, where, fromAgentId, urgency, resolvesWhenEnv };
+  const actionUrl = parseActionUrl(body.actionUrl);
+  const actionLabel = optionalNeedText(body.actionLabel, 'actionLabel', ACTION_LABEL_MAX);
+  const actionHint = optionalNeedText(body.actionHint, 'actionHint', ACTION_HINT_MAX);
+  return { what, where, fromAgentId, urgency, resolvesWhenEnv, actionUrl, actionLabel, actionHint };
 }
 
 function cleanList(value) {
@@ -1257,6 +1336,19 @@ function requireUserOrAgent(req, res, next) {
   return res.status(401).json({ error: 'Нужен пароль доступа или токен агента' });
 }
 
+// Пароль посетителя важнее токена, если прислали оба. Иначе id агента из тела.
+function needCloser(req) {
+  const pw = req.get('x-app-password') || '';
+  if (APP_PASSWORD && safeEqual(pw, APP_PASSWORD)) return { id: 'user' };
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const raw = typeof body.agentId === 'string' && body.agentId.trim()
+    ? body.agentId.trim()
+    : (typeof body.agent === 'string' ? body.agent.trim() : '');
+  if (!raw) return { error: 'Для токена агента нужен agentId' };
+  if (!findAgent(raw)) return { error: 'Неизвестный агент' };
+  return { id: raw };
+}
+
 const app = express();
 app.disable('x-powered-by');
 // Текст задачи и id вложений — это JSON до 1 МБ. Сами файлы принимает multer: 10 МБ и не больше 5.
@@ -1371,6 +1463,9 @@ app.post('/api/needs', requireAgentToken, (req, res) => {
       where: parsed.where,
       fromAgentId: parsed.fromAgentId,
       urgency: parsed.urgency,
+      actionUrl: parsed.actionUrl,
+      actionLabel: parsed.actionLabel,
+      actionHint: parsed.actionHint,
       resolvesWhenEnv: parsed.resolvesWhenEnv,
       createdAt,
       checkedAt: createdAt,
@@ -1399,7 +1494,12 @@ app.post('/api/needs/:id/confirm', requireAgentToken, (req, res) => {
 app.post('/api/needs/:id/close', requireUserOrAgent, (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
-  if (!item.closedAt) item.closedAt = new Date().toISOString();
+  if (item.closedAt) return res.json(publicNeed(item));
+  const who = needCloser(req);
+  if (who.error) return res.status(400).json({ error: who.error });
+  item.closedAt = new Date().toISOString();
+  item.closedBy = who.id;
+  console.log(`need closed: ${item.id} by ${who.id}`);
   poryadokSync.schedule();
   res.json(publicNeed(item));
 });
@@ -1751,6 +1851,53 @@ app.post('/api/orders/:id', requireAgentToken, (req, res) => {
   }
 });
 
+registerHeartbeat(app, {
+  requireAgentToken,
+  findAgent,
+  orders: () => state.tasks,
+});
+
+function agentStub(res, title) {
+  res.status(404).type('html').send(
+    `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:sans-serif;background:#0d1017;color:#eef1f7"><main style="max-width:36rem;padding:24px"><h1>${title}</h1><p><a href="/" style="color:#f5c451">На карту</a></p></main></body></html>`,
+  );
+}
+
+app.get('/agent/:id', (req, res) => {
+  const id = String(req.params.id || '').trim();
+  const agent = findAgent(id);
+  if (!agent) return agentStub(res, 'Агент не найден');
+  if (agent.archived) return agentStub(res, 'Агент в архиве');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/api/agents/:id/analysis', (req, res) => {
+  const agent = findAgent(String(req.params.id || '').trim());
+  if (!agent) return res.status(404).json({ error: 'Агент не найден' });
+  if (agent.archived) return res.status(404).json({ error: 'Агент в архиве' });
+  const send = () => {
+    const row = analyses.get(agent.id);
+    res.json({ agentId: agent.id, text: row ? row.text : '', updatedAt: row ? row.updatedAt : null });
+  };
+  if (isFinanceAgent(agent)) return requireAppPassword(req, res, send);
+  return send();
+});
+
+app.put('/api/agents/:id/analysis', requireUserOrAgent, (req, res) => {
+  try {
+    const agent = findAgent(String(req.params.id || '').trim());
+    if (!agent) return res.status(404).json({ error: 'Агент не найден' });
+    if (agent.archived) return res.status(404).json({ error: 'Агент в архиве' });
+    const parsed = analyses.parse(req.body || {});
+    analyses.set(agent.id, parsed);
+    res.json({ ok: true, agentId: agent.id, text: parsed.text, updatedAt: parsed.updatedAt });
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось сохранить анализ' });
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/', (_req, res) => {
@@ -1797,4 +1944,11 @@ module.exports = {
   staleHours,
   ACADEMY_WHAT,
   ACADEMY_WHERE,
+  FINANCE_WHERE,
+  ACADEMY_ACTION_URL,
+  FINANCE_ACTION_URL,
+  FINANCE_ACTION_HINT,
+  SOCIAL_ACTION_URL,
+  SOCIAL_ACTION_HINT,
+  ACTION_URL_MAX,
 };

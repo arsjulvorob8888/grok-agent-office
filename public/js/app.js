@@ -32,6 +32,8 @@
     seenNeeds: new Set(),
     needsReady: false,
     dashboards: new Map(),
+    analyses: new Map(),
+    deskId: null,
     panelScrollTo: '',
     archivedIds: new Set(),
   };
@@ -215,7 +217,8 @@
       const e = S.els.get(a.id);
       if (!e) continue;
       const tier = tierOf(a), L = levelInfo(a);
-      e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${S.selected === a.id ? ' sel' : ''}`);
+      const act = a.activity === 'working' ? ' pulse' : ' sleep';
+      e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${act}${S.selected === a.id ? ' sel' : ''}`);
       e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}`;
       e.tag.innerHTML = `<span class="lvl">${a.vacant ? '?' : L.lvl}</span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
       e.w = 0;
@@ -232,6 +235,7 @@
       paintAwaitBadge(e.awaitBadge, a.id);
     }
     updateRoster();
+    if (window.ActivityView) ActivityView.paint();
     doPlaceOverlay();
   }
 
@@ -303,7 +307,9 @@
     let left = 0, right = w, top = hud.bottom + 8, bottom = (ros.height ? ros.top : h) - 8;
     const j = $('#journal');
     const hier = $('#hier');
-    if (!mob && w > 900 && hier && hier.classList.contains('open')) left = hier.getBoundingClientRect().right + 8;
+    const proc = $('#processes');
+    if (!mob && w > 900 && proc && proc.classList.contains('open')) left = proc.getBoundingClientRect().right + 8;
+    else if (!mob && w > 900 && hier && hier.classList.contains('open')) left = hier.getBoundingClientRect().right + 8;
     else if (!mob && w > 900 && !j.classList.contains('collapsed') && getComputedStyle(j).display !== 'none') left = j.getBoundingClientRect().right + 8;
     if (S.selected && $('#panel').classList.contains('open')) {
       // Берём итоговые размеры панели, а не текущие (панель может ещё выезжать).
@@ -318,6 +324,8 @@
     document.body.classList.toggle('zoom-far', k < 0.55);
     placeOverlay();
     updateMiniView();
+    if (window.ActivityView) ActivityView.place();
+    if (window.Delegation) Delegation.rescale();
   }
   function clampCam() {
     const c = S.cam, w = innerWidth, h = innerHeight;
@@ -438,6 +446,7 @@
     clampCam(); applyCam();
   }
   function clickAt(target) {
+    if (window.Delegation && Delegation.click(target)) return;
     const ag = target.closest && target.closest('.agent');
     if (ag) { select(ag.dataset.id); return; }
     const lm = target.closest && target.closest('.landmark');
@@ -485,7 +494,7 @@
     const compact = k < 0.6;
     const order = [...S.agents].sort((a, b) => prio(b) - prio(a));
     // Панели интерфейса — препятствия для табличек.
-    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open', '#needsPop.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
+    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open', '#needsPop.open', '#processes.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
     const hit = (r) => placed.some((p) => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
     for (const a of order) {
       const e = S.els.get(a.id);
@@ -629,6 +638,8 @@
       const a = S.byId.get(c.dataset.id);
       if (!a) return;
       c.classList.toggle('sel', S.selected === a.id);
+      c.classList.toggle('pulse', a.activity === 'working');
+      c.classList.toggle('sleep', a.activity !== 'working');
       c.querySelector('.st').className = `st ${a.status}`;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
       paintAwaitBadge(c.querySelector('.await-you'), a.id);
@@ -992,7 +1003,7 @@
     const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
     const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
-    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.checkedAt].join('\u0001')).join('\u0002');
+    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
     const cached = S.dashboards.get(a.id);
     const dashKey = `${a.dashboardUpdatedAt || ''}|${cached ? JSON.stringify(cached.data) : ''}`;
@@ -1038,7 +1049,8 @@
     const a = S.byId.get(S.selected);
     if (!a) return;
     const tier = tierOf(a), L = levelInfo(a);
-    const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
+    const tasks = Feed.ordersForAgent(S.tasks, a.id);
+    const pin = S.pinnedOrder && tasks.find((t) => t.id === S.pinnedOrder);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
     const parent = a.parentId ? S.byId.get(a.parentId) : null;
     const panel = $('#panel');
@@ -1061,7 +1073,7 @@
     } else {
       form = `<form class="task-form" id="taskForm">
         ${tier === 'main' ? `<label for="taskTarget">Кому поручить</label><select id="taskTarget">
-            <option value="${esc(a.id)}">1. GROK лично</option>
+            <option value="${esc(a.id)}">1. Путину лично</option>
             ${depts.map((d) => `<option value="${esc(d.id)}">${esc(titled(d))}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
@@ -1074,7 +1086,10 @@
         <div class="attach-preview" id="attachPreview"></div>
       </form>`;
     }
-    const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${tasks.map((t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id)).join('') || emptyQuests()}</div></div>`;
+    const shown = tasks.slice(0, 20);
+    if (pin && !shown.some((t) => t.id === pin.id)) shown.unshift(pin);
+    const focusCls = (t) => (S.pinnedOrder === t.id ? ' order-focus' : '');
+    const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${shown.map((t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id).replace('class="quest"', `class="quest${focusCls(t)}"`)).join('') || emptyQuests()}</div></div>`;
     const tab = panelTabFor(a.id);
     const needCount = Feed.openNeedsForAgent(S.needs, a.id).length;
     const tabBtn = (id, label) => {
@@ -1086,6 +1101,7 @@
     const dashHtml = window.OfficeDashboard.renderDashboard(cachedDash ? cachedDash.data : null);
     const doneHtml = a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : '';
     panel.innerHTML = `
+      <a class="icon-btn sm p-full" id="pFull" href="/agent/${esc(a.id)}" aria-label="Полный экран" title="Полный экран">⛶</a>
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
         <div class="p-portrait">${portrait(a, '-34 -104 68 76')}</div>
@@ -1114,6 +1130,8 @@
       </div>
       ${a.vacant ? '' : `<div class="task-dock"><span class="hint">Ctrl+Enter — отправить</span><button class="btn gold" type="submit" form="taskForm" id="taskSubmit">${ico('send')}Дать задачу</button><div class="msg" id="formMsg"></div></div>`}`;
     $('#pClose').onclick = () => select(null);
+    const full = $('#pFull');
+    if (full) full.onclick = (e) => { e.preventDefault(); openDesk(a.id, true); };
     panel.querySelectorAll('.agent-tab').forEach((btn) => {
       btn.onclick = () => {
         if (btn.getAttribute('aria-selected') === 'true') return;
@@ -1492,6 +1510,7 @@
     });
   }
   function setHierarchy(open) {
+    if (open && window.Processes) Processes.setOpen(false);
     const h = $('#hier');
     if (open && innerWidth <= 900) $('#panel').classList.remove('open');
     h.classList.toggle('open', open);
@@ -1507,7 +1526,7 @@
   }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
-    const active = staff.filter((a) => a.status === 'working').length;
+    const active = staff.filter((a) => (a.activity ? a.activity === 'working' : a.status === 'working')).length;
     const done = S.agents.reduce((s, a) => s + (a.completed || 0), 0);
     const energy = Math.min(100, Math.round(20 + (active / Math.max(1, staff.length)) * 50 + Math.min(30, done * 3)));
     $('#stTasks').textContent = S.tasks.length;
@@ -1523,6 +1542,7 @@
       j.classList.toggle('collapsed'); localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
     };
     $('#btnJournal').onclick = () => {
+      if (window.Processes) Processes.setOpen(false);
       blip(600);
       const fromHier = $('#hier').classList.contains('open');
       if (fromHier) setHierarchy(false);
@@ -1581,6 +1601,22 @@
     return `<div class="sec awaits" data-anchor="awaits"><h4>Ждёт от вас</h4><div class="awaits-list">${list.map((n) => needCardHTML(n, true)).join('')}</div></div>`;
   }
   const NEED_LABEL = { low: 'несрочно', normal: 'обычно', high: 'срочно', stale: 'требует проверки', closed: 'закрыто' };
+  function safeActionUrl(value) {
+    const url = String(value ?? '').trim();
+    if (!url || url.length > 500) return '';
+    if (!/^(https|grokbot):\/\/\S+$/i.test(url)) return '';
+    return url;
+  }
+  function needActionHTML(n) {
+    const url = safeActionUrl(n && n.actionUrl);
+    if (!url) return '';
+    const https = /^https:\/\//i.test(url);
+    const label = String((n && n.actionLabel) ?? '').trim() || 'Решить';
+    const hint = String((n && n.actionHint) ?? '').trim();
+    const extra = https ? ' target="_blank" rel="noopener noreferrer"' : '';
+    const hintHtml = !https && hint ? `<div class="need-action-hint">${esc(hint)}</div>` : '';
+    return `<div class="need-action-wrap"><a class="need-action" href="${esc(url)}"${extra}>${esc(label)}</a>${hintHtml}</div>`;
+  }
   function needCardHTML(n, withClose) {
     const view = Feed.needUrgencyView(n);
     const close = withClose && !n.closedAt
@@ -1590,6 +1626,7 @@
       ${close}
       <div class="need-what">${esc(n.what)}</div>
       <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span></div>
+      ${needActionHTML(n)}
     </article>`;
   }
   async function closeNeed(id) {
@@ -1625,7 +1662,7 @@
     if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
     const box = $('#needsList');
     if (!box) return;
-    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.stale, n.checkedAt].join('\u0001')).join('\n');
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.stale, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint].join('\u0001')).join('\n');
     if (box.dataset.sig === sig) return;
     const top = box.scrollTop;
     box.innerHTML = list.length
@@ -1676,6 +1713,143 @@
     };
   }
 
+  function openOrder(id) {
+    const t = S.tasks.find((x) => x.id === id);
+    if (!t) return;
+    const agentId = t.agentId || t.agent;
+    S.pinnedOrder = id;
+    document.body.dataset.openOrder = id;
+    if (S.selected !== agentId) select(agentId);
+    else {
+      renderPanel({ preserveScroll: false });
+      S.panelSig = panelContentSig(S.selected);
+      updateAgents();
+    }
+    const mark = () => {
+      const panel = $('#panel');
+      const q = panel && panel.querySelector(`.quest.order-focus, .quest[data-anchor="q:${CSS.escape(id)}"]`);
+      if (!q) return;
+      q.classList.add('order-focus');
+      const body = panel.querySelector('.p-body');
+      if (body) body.scrollTop = Math.max(0, q.offsetTop - 12);
+    };
+    requestAnimationFrame(mark);
+  }
+  window.Office = { openOrder };
+
+  function routeAgentId() {
+    const match = location.pathname.match(/^\/agent\/([^/]+)\/?$/);
+    if (!match) return '';
+    try { return decodeURIComponent(match[1]); } catch (_) { return match[1]; }
+  }
+  function ensureDesk() {
+    let root = $('#desk');
+    if (root) return root;
+    root = document.createElement('div');
+    root.id = 'desk';
+    root.hidden = true;
+    $('#app').appendChild(root);
+    return root;
+  }
+  function nameOfAgent(id) {
+    if (!id || id === 'owner') return 'Владелец';
+    const a = S.byId.get(id);
+    return a ? titled(a) : id;
+  }
+  function financeLocked(agent) {
+    return window.OfficeDesk.isFinance(agent) && !getPassword();
+  }
+  async function syncAnalysis(agentId) {
+    const agent = S.byId.get(agentId);
+    if (!agent) return;
+    if (financeLocked(agent)) {
+      S.analyses.set(agentId, { locked: true, text: '', updatedAt: null });
+      return;
+    }
+    const headers = {};
+    if (getPassword()) headers['x-app-password'] = getPassword();
+    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/analysis`, { headers, cache: 'no-store' });
+    if (res.status === 401) {
+      S.analyses.set(agentId, { locked: true, text: '', updatedAt: null });
+      return;
+    }
+    if (!res.ok) return;
+    const body = await res.json().catch(() => ({}));
+    S.analyses.set(agentId, { locked: false, text: body.text || '', updatedAt: body.updatedAt || null });
+  }
+  function renderDesk() {
+    const id = S.deskId;
+    const agent = id && S.byId.get(id);
+    const root = ensureDesk();
+    if (!agent) { closeDesk(); return; }
+    const draftEl = $('#deskTaskText');
+    const draftText = draftEl ? draftEl.value : '';
+    const cached = S.analyses.get(id) || { locked: financeLocked(agent), text: '', updatedAt: null };
+    const locked = financeLocked(agent) || cached.locked;
+    const tasks = window.Feed.ordersForAgent(S.tasks, id);
+    root.classList.add('open');
+    root.hidden = false;
+    root.innerHTML = `<div class="desk-bar">
+        <h1>${agent.number ? `${esc(numLabel(agent))} ` : ''}${esc(plainName(agent))}</h1>
+        <a href="/agent/${esc(agent.id)}">/agent/${esc(agent.id)}</a>
+        <button type="button" class="icon-btn sm" id="deskClose" aria-label="Закрыть пульт">${ico('x')}</button>
+      </div>${window.OfficeDesk.render({
+        agent,
+        tasks,
+        now: Date.now(),
+        locked,
+        analysis: cached,
+        nameOf: nameOfAgent,
+      })}`;
+    $('#deskClose').onclick = () => {
+      closeDesk();
+      if (routeAgentId() === id) history.pushState({ desk: null }, '', '/');
+    };
+    const unlock = $('#deskUnlock');
+    if (unlock) unlock.onclick = () => { pending = () => { syncAnalysis(id).then(renderDesk); }; openModal(); };
+    const form = $('#deskTaskForm');
+    if (form) form.onsubmit = (e) => { e.preventDefault(); submitDeskTask(id); };
+    const area = $('#deskTaskText');
+    if (area && draftText) area.value = draftText;
+  }
+  async function submitDeskTask(agentId) {
+    const text = ($('#deskTaskText').value || '').trim();
+    const msg = $('#deskMsg');
+    if (!text) { msg.className = 'msg err'; msg.textContent = 'Напиши, что нужно сделать.'; return; }
+    if (!getPassword()) { pending = () => submitDeskTask(agentId); openModal(); return; }
+    msg.className = 'msg'; msg.textContent = 'Отправляю…';
+    try {
+      const res = await fetch('/api/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+        body: JSON.stringify({ agent: agentId, text, fromAgentId: 'owner' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { localStorage.removeItem('appPassword'); pending = () => submitDeskTask(agentId); openModal('Пароль не подошёл. Попробуй ещё раз.'); msg.textContent = ''; return; }
+      if (!res.ok) { msg.className = 'msg err'; msg.textContent = data.error || `Ошибка ${res.status}`; return; }
+      msg.className = 'msg ok'; msg.textContent = 'Задача записана.';
+      $('#deskTaskText').value = '';
+      await loadState();
+    } catch (_) {
+      msg.className = 'msg err'; msg.textContent = 'Нет связи с сервером';
+    }
+  }
+  function openDesk(id, push) {
+    if (!S.byId.has(id)) return;
+    S.deskId = id;
+    if (push && routeAgentId() !== id) history.pushState({ desk: id }, '', `/agent/${encodeURIComponent(id)}`);
+    renderDesk();
+    syncAnalysis(id).then(() => { if (S.deskId === id) renderDesk(); }).catch(() => {});
+  }
+  function closeDesk() {
+    S.deskId = null;
+    const root = $('#desk');
+    if (!root) return;
+    root.classList.remove('open');
+    root.hidden = true;
+    root.innerHTML = '';
+  }
+
   // ── Загрузка состояния ───────────────────────────────────────────────────
   async function loadState() {
     const res = await fetch('/api/state', { cache: 'no-store' });
@@ -1718,11 +1892,19 @@
         renderPanel({ preserveScroll: true });
       }
     }
+    document.dispatchEvent(new CustomEvent('officestate', { detail: data }));
+    if (S.deskId) renderDesk();
     if (!S.loaded) {
       S.loaded = true;
       goHome(false);
-      const pre = params.get('agent');
-      if (pre && S.byId.has(pre)) setTimeout(() => select(pre), 300);
+      const route = routeAgentId();
+      const pre = route || params.get('agent');
+      if (pre && S.byId.has(pre)) {
+        setTimeout(() => {
+          select(pre);
+          if (route) openDesk(route, false);
+        }, 300);
+      }
     }
   }
   function noteFreshOrders() {
@@ -1738,6 +1920,11 @@
 
   // ── Старт ────────────────────────────────────────────────────────────────
   initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initNeeds(); initRoster();
+  addEventListener('popstate', () => {
+    const route = routeAgentId();
+    if (route && S.byId.has(route)) openDesk(route, false);
+    else closeDesk();
+  });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeOverlay());
   addEventListener('resize', () => {
     if (innerWidth <= 900 && $('#hier').classList.contains('open') && $('#panel').classList.contains('open')) {
