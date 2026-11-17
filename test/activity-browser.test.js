@@ -10,6 +10,7 @@ const path = require('path');
 process.env.UPLOAD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'kremlin-activity-ui-'));
 process.env.APP_PASSWORD = 'pw-aui';
 process.env.AGENT_TOKEN = 'tok-aui';
+process.env.AGENT_STATUS_TOKEN = 'status-aui';
 process.env.GROK_WEBHOOK_URL = '';
 process.env.GROK_WEBHOOK_KEY = '';
 process.env.PUBLIC_URL = 'http://127.0.0.1';
@@ -296,6 +297,45 @@ test('на 390px с тачем линия видна, панель нажима�
     await page.waitForFunction((orderId) => !document.querySelector(`#delegations [data-order-id="${orderId}"]`), { timeout: 10000 }, id);
     const devSleep = await page.$eval('#agents .agent[data-id="dev"]', (el) => el.classList.contains('sleep'));
     assert.equal(devSleep, false);
+  } finally {
+    await page.close();
+  }
+});
+
+test('живой working виден на карте быстрее чем за 3 секунды', { timeout: 60000 }, async () => {
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForFunction(() => {
+      const fig = document.querySelector('#agents .agent[data-id="blog"]');
+      const chip = document.querySelector('#roster .chip[data-id="blog"]');
+      return fig && fig.classList.contains('sleep')
+        && chip && chip.classList.contains('sleep')
+        && window.LiveStream && LiveStream.connected();
+    }, { timeout: 10000 });
+    const started = Date.now();
+    const posted = await api('/api/agent-status', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer status-aui' },
+      body: JSON.stringify({ agentId: 'Technology Blog · Кремль', status: 'working', doing: 'Черчу схему' }),
+    });
+    assert.equal(posted.status, 200, JSON.stringify(posted.body));
+    await page.waitForFunction(() => {
+      const fig = document.querySelector('#agents .agent[data-id="blog"]');
+      const chip = document.querySelector('#roster .chip[data-id="blog"]');
+      return fig && fig.classList.contains('pulse') && chip && chip.classList.contains('pulse');
+    }, { timeout: 3000 });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 3000, `карта обновилась за ${elapsed} мс`);
+    const chipTitle = await page.$eval('#roster .chip[data-id="blog"]', (el) => el.getAttribute('title') || '');
+    assert.match(chipTitle, /чем занят/);
+    assert.match(chipTitle, /Черчу схему/);
+    await page.$eval('#roster .chip[data-id="blog"]', (el) => el.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    await page.click('#roster .chip[data-id="blog"]');
+    await page.waitForSelector('#panel.open .status-line .now');
+    const line = await page.$eval('#panel .status-line', (el) => el.innerText);
+    assert.match(line, /чем занят/);
+    assert.match(line, /Черчу схему/);
+    assert.match(line, /уже/);
   } finally {
     await page.close();
   }

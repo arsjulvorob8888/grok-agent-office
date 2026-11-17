@@ -12,6 +12,11 @@ const { buildDashboard } = require('./lib/agent-dashboard');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
 const { senderName } = require('./public/js/sender-label');
+const live = require('./lib/live-status');
+const streamHub = require('./lib/stream');
+
+// Поток «состояние изменилось». Живой TTL агента в этот хаб не кладёт секретов.
+const hub = streamHub.createHub();
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -613,6 +618,9 @@ function resolveNeedsByEnv(env = process.env, now = new Date().toISOString()) {
       });
     }
   }
+  if (closed) {
+    try { hub.publish(); } catch (_) { /* поток не обязателен для ответа */ }
+  }
   return closed;
 }
 
@@ -871,6 +879,14 @@ const needsResolveTimer = setInterval(() => {
   } catch (err) { console.error(err); }
 }, NEEDS_RESOLVE_MS);
 if (typeof needsResolveTimer.unref === 'function') needsResolveTimer.unref();
+// Истёкший живой ход снимается в памяти и будит карту. В базу агента это не пишется.
+const liveSweep = setInterval(() => {
+  try {
+    const gone = live.expire(state.agents, live.now());
+    if (gone.length) hub.publish();
+  } catch (err) { console.error(err); }
+}, 15000);
+if (typeof liveSweep.unref === 'function') liveSweep.unref();
 
 store.init(state, {
   uploadDir: UPLOAD_DIR,
@@ -919,7 +935,7 @@ function publicState(opts = {}) {
       vacant: !!a.vacant,
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
-      ...activityFor(a, state.tasks, Date.now(), activeWindowMs(), activityExtras()),
+      ...activityFor(a, state.tasks, live.now(), activeWindowMs(), activityExtras()),
       ...(a.analysis !== undefined ? { analysis: a.analysis } : {}),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
@@ -1873,6 +1889,13 @@ app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.on('finish', () => {
     try { poryadokSync.noteRequestFinished(); } catch (_) { /* ответ уже ушёл */ }
+    try {
+      const method = req.method;
+      if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
+      if (res.statusCode >= 200 && res.statusCode < 300 && String(req.originalUrl || req.url || '').startsWith('/api/')) {
+        hub.publish();
+      }
+    } catch (_) { /* поток не должен ломать ответ */ }
   });
   store.ready.then(() => next(), next);
 });
@@ -2765,12 +2788,34 @@ registerHeartbeat(app, {
   requireAgentToken,
   findAgent,
   orders: () => state.tasks,
-  onSeen: async (agent) => {
+  now: () => live.now(),
+  onSeen: async (agent, at) => {
+    // Продлевает только живой TTL в памяти. В базу по-прежнему уходит пульс, без поля live.
+    live.extend(agent, typeof at === 'number' ? at : live.now());
     store.noteAgent(agent);
     await store.flush();
   },
   activityExtras,
 });
+
+// Живой статус не вызывает noteAgent: agent.live не попадает в agent_state.
+live.register(app, {
+  agents: () => state.agents,
+  addFeed(agent, text, at) {
+    addMessage({
+      agentId: agent.id,
+      role: 'system',
+      text,
+      attachments: [],
+      createdAt: new Date(at).toISOString(),
+      source: 'live',
+    });
+  },
+  activityView(agent) {
+    return activityFor(agent, state.tasks, live.now(), activeWindowMs(), activityExtras());
+  },
+});
+streamHub.registerStream(app, hub);
 
 // Рутина сообщает старт и финиш. Пока finishedAt пустой, агент не спит,
 // даже если старт был раньше окна ACTIVITY_WINDOW_MIN.
@@ -2867,7 +2912,7 @@ app.post('/api/agents/:id/routine', requireAgentToken, async (req, res) => {
   }
   store.noteRoutine(routine);
   await store.flush();
-  const view = activityFor(agent, state.tasks, Date.now(), activeWindowMs(), activityExtras());
+  const view = activityFor(agent, state.tasks, live.now(), activeWindowMs(), activityExtras());
   res.json({ ok: true, routine: publicRoutine(routine), ...view });
 });
 
@@ -2906,6 +2951,15 @@ app.listen = function listenWithPoryadokSync(...args) {
   if (server && server.listening) start();
   else if (server && typeof server.once === 'function') {
     server.once('listening', start);
+  }
+  // Пока поток открыт, server.close ждёт этот сокет. Рвём подписчиков сразу.
+  if (server && !server.__liveClose) {
+    const orig = server.close.bind(server);
+    server.close = function closeAndDropStreams(callback) {
+      try { hub.closeSockets(); } catch (_) { /* поток уже пуст */ }
+      return orig(callback);
+    };
+    server.__liveClose = true;
   }
   return server;
 };

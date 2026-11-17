@@ -26,6 +26,8 @@
 .chip.sleep .chip-zzz{display:block}
 .chip-task{display:none;max-width:100%;font-size:9px;font-weight:800;line-height:1.15;color:#86efac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chip.pulse .chip-task:not(:empty){display:block}
+.status-line .k{flex:none;color:#94a3b8;font-weight:800;letter-spacing:.04em}
+.status-line .ago{flex:none;color:#94a3b8;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 
 #delegations{pointer-events:auto}
 .deleg-hit{fill:none;stroke:transparent;stroke-linecap:round;pointer-events:stroke}

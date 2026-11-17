@@ -594,10 +594,24 @@
     } else if (lm) { setPeek(null); showTip(e, lm.dataset.name); }
     else { setPeek(null); hideTip(); }
   }
+  function agoText(iso) {
+    if (window.LiveStream && LiveStream.ago) return LiveStream.ago(iso);
+    return '';
+  }
+  function busyTip(a) {
+    if (!a || activityMode(a) !== 'working') return '';
+    const what = a.doing || a.currentTask || '';
+    const age = agoText(a.doingSince || a.lastSeenAt);
+    const bits = [];
+    if (what) bits.push(`чем занят: ${what}`);
+    if (age) bits.push(age);
+    return bits.join(' · ');
+  }
   function deputyTipText(a) {
     const kids = roomGuests(a.id);
-    if (!kids.length) return 'Заместителей нет';
-    return `Заместители: ${kids.length}\n${kids.map((k) => plainName(k)).join('\n')}`;
+    const base = !kids.length ? 'Заместителей нет' : `Заместители: ${kids.length}\n${kids.map((k) => plainName(k)).join('\n')}`;
+    const busy = busyTip(a);
+    return busy ? `${base}\n${busy}` : base;
   }
   function showDeputyTip(a, x, y) {
     tip.textContent = deputyTipText(a);
@@ -1286,6 +1300,13 @@
     if (mode === 'waiting') return 'waiting';
     return 'idle';
   }
+  function statusNowHTML(a) {
+    const working = activityMode(a) === 'working';
+    const what = String((a && (a.doing || (working ? a.currentTask : '') || a.now)) || '').trim();
+    if (!working || !what) return `<span class="now">${esc(a && a.now || '')}</span>`;
+    const age = agoText(a.doingSince || a.lastSeenAt);
+    return `<span class="now"><span class="k">чем занят</span> ${esc(what)}</span>${age ? `<span class="ago">уже ${esc(age)}</span>` : ''}`;
+  }
   function taskBadge(t) {
     if (t.orderStatus === 'failed') return ['fail', 'Не выполнен'];
     if (t.orderStatus === 'done' || t.status === 'выполнена') return ['done', 'Выполнена'];
@@ -1415,7 +1436,7 @@
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
     const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
-    return [a.id, a.name, a.role, a.status, a.activity, a.currentTask, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
+    return [a.id, a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
 
   function renderPanel(opts = {}) {
@@ -1474,7 +1495,7 @@
         ${panelNeedsHTML(a)}
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
           <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${deliveryPhrase(a) ? 'queued' : activityDot(a)}">${esc(deliveryPhrase(a) || activityLabel(a))}</span><span class="now">${deliveryPhrase(a) ? '' : esc(a.now || '')}</span></div>
+        <div class="status-line" data-anchor="status"><span class="status-pill ${deliveryPhrase(a) ? 'queued' : activityDot(a)}">${esc(deliveryPhrase(a) || activityLabel(a))}</span>${deliveryPhrase(a) ? '<span class="now"></span>' : statusNowHTML(a)}</div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
@@ -2270,8 +2291,12 @@
       }
     }
   }
+  function pollWait() {
+    const base = window.LiveStream && LiveStream.connected() ? 30000 : CONFIG.pollMs;
+    return document.hidden ? base * 3 : base;
+  }
   function poll() {
-    loadState().catch(() => {}).finally(() => setTimeout(poll, document.hidden ? CONFIG.pollMs * 3 : CONFIG.pollMs));
+    loadState().catch(() => {}).finally(() => setTimeout(poll, pollWait()));
   }
   setInterval(() => { refreshNeeds().catch(() => {}); }, 30000);
 
@@ -2515,12 +2540,13 @@
     }
     if (!S.userMoved && !S.selected) goHome(false); else { clampCam(); applyCam(); }
   });
+  if (window.LiveStream) LiveStream.start(() => { loadState().catch(() => {}); });
   // Кварталы строятся после первой загрузки, чтобы не застраивать участки агентов.
   loadState().then(() => {
     $('#blocks').innerHTML = M.buildBlocks(S.agents.filter(onMap).map((a) => ({ x: a.x, y: a.y, tall: Math.min(tallOf(a), 200) + 20 })));
   }).catch(() => {
     $('#blocks').innerHTML = M.buildBlocks([]);
     toast('Нет связи с сервером', 'Проверь, что приложение запущено. Повторю попытку.', 'x', true);
-  }).finally(() => setTimeout(poll, CONFIG.pollMs));
+  }).finally(() => setTimeout(poll, pollWait()));
   window.OfficeLayout = { pos: MAP_POS, roomHostId };
 })();

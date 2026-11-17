@@ -263,7 +263,10 @@ test('бейдж, цепочка и тихий конверт при reduced-mot
     assert.equal(working.status, 200);
     await page.waitForFunction(() => {
       const badge = document.querySelector('.order-badge[data-id="qa"]');
-      return badge && badge.textContent.includes('в работе') && badge.querySelector('.ob-bar i');
+      if (!badge || !badge.textContent.includes('в работе') || !badge.querySelector('.ob-bar i')) return false;
+      if (badge.classList.contains('hide')) return false;
+      const r = badge.getBoundingClientRect();
+      return r.top > 40 && r.left >= 0 && r.right <= window.innerWidth + 1 && r.width > 40;
     }, { timeout: 10000 });
     const bar = await page.$eval('.order-badge[data-id="qa"] .ob-bar i', (el) => el.style.width);
     assert.equal(bar, '55%');

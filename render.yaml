@@ -11,6 +11,8 @@ services:
         sync: false
       - key: AGENT_TOKEN
         generateValue: true
+      - key: AGENT_STATUS_TOKEN
+        sync: false
       - key: KREMLIN_WEBHOOK_URL
         sync: false
       - key: KREMLIN_WEBHOOK_KEY

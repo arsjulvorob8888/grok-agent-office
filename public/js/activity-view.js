@@ -97,6 +97,11 @@
       else cap.removeAttribute('title');
       const z = chip.querySelector('.chip-zzz');
       if (z) z.title = working ? '' : (mode === 'waiting' ? 'Ждёт' : 'Спит');
+      if (!chip.dataset.baseTitle) chip.dataset.baseTitle = chip.getAttribute('title') || '';
+      const age = a.doingSince && window.LiveStream ? LiveStream.ago(a.doingSince) : '';
+      const what = a.doing || (working ? a.currentTask : '') || '';
+      const busy = what ? `чем занят: ${what}${age ? ` · ${age}` : ''}` : (age ? `уже ${age}` : '');
+      chip.title = busy ? `${chip.dataset.baseTitle} · ${busy}` : chip.dataset.baseTitle;
     });
     const seen = new Set();
     for (const a of agents) {
@@ -116,8 +121,9 @@
       if (a.currentTask) cap.title = a.currentTask;
       else cap.removeAttribute('title');
       const name = a.id === 'grok' ? 'Путин' : (a.name || a.id);
+      const age = a.doingSince && window.LiveStream ? LiveStream.ago(a.doingSince) : '';
       const label = working
-        ? `${name} работает${a.currentTask ? `: ${a.currentTask}` : ''}`
+        ? `${name} работает${a.currentTask ? `: ${a.currentTask}` : ''}${age ? `, уже ${age}` : ''}`
         : (mode === 'waiting' ? `${name} ждёт` : `${name} спит`);
       el.setAttribute('aria-label', label);
       const at = /translate\(\s*([-\d.]+)[ ,]([-\d.]+)/.exec(drawn.getAttribute('transform') || '');
@@ -167,13 +173,13 @@
   }
 
   async function fallback() {
-    if (Date.now() - lastEvent < 6000) return;
+    if (Date.now() - lastEvent < 25000) return;
     const res = await fetch('/api/state', { cache: 'no-store' });
     if (!res.ok) return;
     lastEvent = Date.now();
     take(await res.json());
   }
-  setInterval(() => { fallback().catch(() => {}); }, 4000);
+  setInterval(() => { fallback().catch(() => {}); }, 30000);
 
   window.ActivityView = { paint, place, take };
 })();
