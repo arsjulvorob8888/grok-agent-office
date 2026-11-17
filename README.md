@@ -94,7 +94,7 @@ APP_PASSWORD=secret AGENT_TOKEN=dev-token PORT=3000 npm start
 }
 ```
 
-- `agent` — обязательный идентификатор: `grok`, `army`, `poker`, `devops`, `dev`, `qa`, `temshik`, `blog`, `finance`, `invest`, `analyst`, `advisor`, `social`, `routines` или новый id. `trading`, `biz` и `lang` в архиве: `POST /api/task` им отвечает ошибкой, чтение статуса и переписки по id работает. У `advisor` в состоянии есть `grokAgentId`. Помощники (`invest`, `analyst`) работают с теми же `/api/task`, `/api/status` и `/api/messages`, что и остальные.
+- `agent` — обязательный идентификатор: `grok`, `army`, `poker`, `devops`, `dev`, `qa`, `temshik`, `blog`, `finance`, `invest`, `analyst`, `advisor`, `social`, `routines` или новый id. `trading`, `biz` и `lang` в архиве: `POST /api/task` им отвечает ошибкой, чтение статуса и переписки по id работает. У агентов ростера, включая архивных `trading`, `biz` и `lang`, в состоянии есть `grokAgentId`. У `finance`, `invest` и `analyst` он общий. Помощники (`invest`, `analyst`) работают с теми же `/api/task`, `/api/status` и `/api/messages`, что и остальные.
 - `status` — одно из: `working`, `idle`, `waiting`.
 - `now` — текст в облачке («чем занят сейчас»).
 - `done` — необязательная строка; добавляется в историю агента (хранятся последние 10).

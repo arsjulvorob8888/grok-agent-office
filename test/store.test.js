@@ -625,6 +625,98 @@ describe('хранилище', { concurrency: 1 }, () => {
       await dropSchema(schema);
     }
   });
+
+  test('grokAgentId посевного агента берётся из кода и обновляется после рестарта', { skip: process.env.DATABASE_URL ? false : 'DATABASE_URL не задан' }, async () => {
+    const expected = {
+      grok: '8b9d4ad0-4222-49a8-84b4-b125d3b7ec01',
+      army: 'b174ea11-d3ab-4ad7-ab65-8feacca27cf4',
+      poker: 'e15adfa3-6299-4980-a224-1b7adea71c45',
+      devops: 'd2ed048e-12e7-4b0e-b42c-36225ed71745',
+      dev: '8117cf6a-c57d-42cc-ba6f-2421fe7af6ad',
+      temshik: '6a1deccc-2411-4fd1-8da7-e7ba9fce6df2',
+      finance: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+      invest: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+      analyst: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+      qa: '892a92c9-8133-48d2-b22d-c77e653309af',
+      blog: '118a97ac-2030-4f25-b684-ac19252fb4aa',
+      advisor: '961b2d3d-5f80-4891-b87a-c6913bbf2971',
+      social: 'a1bd53f2-5655-446b-8207-393e61fc20e1',
+      routines: 'd6b45571-e211-4218-a1e2-1c0918973ddc',
+      trading: '504035c8-ccd8-467b-9e34-f16305493533',
+      biz: 'a64c9436-36bc-4122-af1b-89d56950b0c1',
+      lang: '5f09e2b6-ec92-44ef-bcbd-b1f848daed18',
+    };
+    const stale = '11111111-1111-4111-8111-111111111111';
+    const schema = `g_${crypto.randomBytes(4).toString('hex')}`;
+    const env = { DATABASE_URL: process.env.DATABASE_URL, STORE_SCHEMA: schema };
+    const ids = Object.keys(expected);
+    const first = await startOffice(env);
+    try {
+      assert.match(first.text(), /Postgres подключен/);
+      const state = await json(first.base, '/api/state');
+      assert.equal(state.body.agents.find((agent) => agent.id === 'finance').name, 'Финансы');
+    } finally {
+      await stopOffice(first);
+    }
+
+    const { Pool } = require('pg');
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+    try {
+      const planted = await pool.query(
+        `UPDATE ${schema}.agent_state
+         SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+         WHERE id = ANY($1::text[])`,
+        [ids, JSON.stringify({
+          grokAgentId: stale,
+          name: 'Чужое имя',
+          district: 'Чужой район',
+          now: 'Строка из базы',
+          status: 'waiting',
+        })],
+      );
+      assert.equal(planted.rowCount, ids.length);
+    } finally {
+      await pool.end();
+    }
+
+    const second = await startOffice(env);
+    const check = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+    try {
+      assert.match(second.text(), /Postgres подключен/);
+      const state = await json(second.base, '/api/state');
+      for (const [id, grokAgentId] of Object.entries(expected)) {
+        const agent = state.body.agents.find((item) => item.id === id);
+        assert.ok(agent, id);
+        assert.equal(agent.grokAgentId, grokAgentId, id);
+        assert.notEqual(agent.name, 'Чужое имя', id);
+        assert.notEqual(agent.district, 'Чужой район', id);
+        assert.equal(agent.now, 'Строка из базы', id);
+        assert.equal(agent.status, 'waiting', id);
+      }
+      const finance = state.body.agents.find((agent) => agent.id === 'finance');
+      const invest = state.body.agents.find((agent) => agent.id === 'invest');
+      const analyst = state.body.agents.find((agent) => agent.id === 'analyst');
+      assert.equal(finance.name, 'Финансы');
+      assert.equal(finance.district, 'Китай-город · Ильинка');
+      assert.equal(invest.number, '7.1');
+      assert.equal(analyst.number, '7.2');
+      assert.equal(invest.parentId, 'finance');
+      assert.equal(analyst.parentId, 'finance');
+      const saved = await check.query(
+        `SELECT id, payload->>'grokAgentId' AS grok_agent_id FROM ${schema}.agent_state WHERE id = ANY($1::text[])`,
+        [ids],
+      );
+      assert.equal(saved.rows.length, ids.length);
+      for (const row of saved.rows) {
+        assert.notEqual(row.grok_agent_id, stale, row.id);
+        if (row.grok_agent_id != null) assert.equal(row.grok_agent_id, expected[row.id], row.id);
+      }
+    } finally {
+      await check.end();
+      await stopOffice(second);
+      await dropSchema(schema);
+    }
+  });
 });
 
 async function dropSchema(schema) {
