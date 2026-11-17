@@ -613,6 +613,7 @@ test('после listen Кремль сам шлёт открытые пункт
       assert.equal(task.status, 'В ожидании', task.externalId);
     }
     assert.equal(hit.body.tasks.some((task) => task.externalId === 'kremlin-need-need-test-qa'), false);
+    assert.equal(hit.body.tasks.some((task) => task.externalId === 'kremlin-need-need-test-question'), false);
 
     const income = hit.body.goals.find((goal) => goal.externalId === 'kremlin-goal-income');
     const worth = hit.body.goals.find((goal) => goal.externalId === 'kremlin-goal-networth');
@@ -711,6 +712,7 @@ test('пункт и смена статуса приказа запускают 
     assert.equal(academyLive.status, 'Выполнено');
     assert.equal(academyLive.title, 'Одобрить Академию агентов: нажать «Да» в чатах Программирования и Тестировщика');
     assert.equal(closedHit.body.tasks.some((task) => task.externalId === 'kremlin-need-need-test-qa'), false);
+    assert.equal(closedHit.body.tasks.some((task) => task.externalId === 'kremlin-need-need-test-question'), false);
 
     const yesNo = await (await post('/api/needs', {
       what: 'Одобрить публикацию',
@@ -736,6 +738,47 @@ test('пункт и смена статуса приказа запускают 
     });
     assert.equal(
       answeredHit.body.tasks.find((task) => task.externalId === `kremlin-need-${yesNo.id}`).status,
+      'Выполнено',
+    );
+
+    const textNeed = await (await post('/api/needs', {
+      what: 'Ответить текстом',
+      where: 'Чат',
+      fromAgentId: 'finance',
+      urgency: 'normal',
+      kind: 'money',
+      answerable: true,
+    })).json();
+    await waitUntil(() => receiver.hits.some((item) => item.body && item.body.tasks.some((task) => task.externalId === `kremlin-need-${textNeed.id}` && task.status === 'В ожидании')));
+    const beforePartial = receiver.hits.length;
+    const partialRes = await post(`/api/needs/${textNeed.id}/answer`, { text: 'часть суммы', partial: true });
+    assert.equal(partialRes.status, 201);
+    const partialBody = await partialRes.json();
+    assert.equal(partialBody.closedAt, null);
+    const partialHit = await waitUntil(() => {
+      const hit = receiver.hits.slice(beforePartial).find((item) => {
+        const task = item.body && item.body.tasks.find((row) => row.externalId === `kremlin-need-${textNeed.id}`);
+        return task && task.status === 'В ожидании';
+      });
+      return hit || null;
+    });
+    assert.equal(
+      partialHit.body.tasks.find((task) => task.externalId === `kremlin-need-${textNeed.id}`).status,
+      'В ожидании',
+    );
+    assert.equal(partialHit.body.tasks.some((task) => task.externalId === 'kremlin-need-need-test-question'), false);
+    const beforeFull = receiver.hits.length;
+    const fullRes = await post(`/api/needs/${textNeed.id}/answer`, { text: 'вся сумма' });
+    assert.equal(fullRes.status, 201);
+    const fullHit = await waitUntil(() => {
+      const hit = receiver.hits.slice(beforeFull).find((item) => {
+        const task = item.body && item.body.tasks.find((row) => row.externalId === `kremlin-need-${textNeed.id}`);
+        return task && task.status === 'Выполнено';
+      });
+      return hit || null;
+    });
+    assert.equal(
+      fullHit.body.tasks.find((task) => task.externalId === `kremlin-need-${textNeed.id}`).status,
       'Выполнено',
     );
 

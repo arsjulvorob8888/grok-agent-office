@@ -104,19 +104,24 @@
     <p class="need-page-meta" id="needWho"></p>
     <p class="need-page-meta" id="needWhere"></p>
     <div class="need-md" id="needDetails"></div>
+    <div class="need-answers" id="needAnswers"></div>
     <div class="need-external" id="needExternal"></div>
     <form id="needAnswerForm" hidden>
       <div id="needYesNo" hidden>
         <button type="button" class="btn gold" id="needYes">Да</button>
         <button type="button" class="btn ghost" id="needNo">Нет</button>
       </div>
-      <div id="needTextAnswer">
+      <div id="needTextAnswer" hidden>
         <label for="needAnswer">Ваш ответ</label>
         <textarea id="needAnswer" maxlength="5000" placeholder="Ваш ответ"></textarea>
-        <button type="submit" class="btn gold">Отправить</button>
+        <label class="need-partial" for="needPartial">
+          <input type="checkbox" id="needPartial">
+          <span>Ответ частичный, оставить пункт открытым</span>
+        </label>
+        <button type="submit" class="btn gold" id="needSend">Отправить</button>
       </div>
-      <p class="need-answer-msg" id="needAnswerMsg"></p>
     </form>
+    <p class="need-answer-msg" id="needAnswerMsg"></p>
   </main>
 
   <div id="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">

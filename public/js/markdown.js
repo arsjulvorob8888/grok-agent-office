@@ -7,7 +7,7 @@
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   'use strict';
 
-  const GROK_HINT = 'Откройте в Grok — браузер эту ссылку не откроет';
+  const GROK_HINT = 'откройте чат агента в Grok';
 
   function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -15,8 +15,8 @@
     }[c]));
   }
 
-  function isHttp(url) {
-    return /^https?:\/\/\S+$/i.test(url) && !/[\s<>"']/.test(url);
+  function isHttps(url) {
+    return /^https:\/\/\S+$/i.test(url) && !/[\s<>"']/.test(url);
   }
 
   function isGrok(url) {
@@ -29,7 +29,7 @@
 
   function anchorOrText(url, labelHtml) {
     const u = String(url || '').trim();
-    if (isHttp(u)) {
+    if (isHttps(u)) {
       return `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${labelHtml}</a>`;
     }
     if (isGrok(u)) return grokHtml(u);

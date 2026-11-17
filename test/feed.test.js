@@ -64,7 +64,12 @@ test('пункт «нужно» видит автор, недавнее закр
   assert.deepEqual(ids('grok'), ['need-academy']);
   assert.deepEqual(ids('army'), []);
   assert.deepEqual(ids('poker'), []);
+  needs.push(
+    { id: 'need-test-qa', kind: 'test', fromAgentId: 'qa', what: 'ТЕСТ: да', closedAt: null },
+    { id: 'need-test-question', kind: 'test', answerMode: 'text', fromAgentId: 'qa', what: 'ТЕСТ: вопрос с ответом текстом', closedAt: null },
+  );
   assert.deepEqual(Feed.needsForGeneral(needs).map((n) => n.id), ['need-finance', 'need-academy']);
+  assert.deepEqual(Feed.testNeeds(needs).map((n) => n.id), ['need-test-qa', 'need-test-question']);
   assert.equal(Feed.openNeedCount(needs, 'devops'), 0);
   assert.equal(Feed.openNeedCount(needs, 'finance'), 1);
   assert.equal(Feed.openNeedCount(needs, 'grok'), 1);
