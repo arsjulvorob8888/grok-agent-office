@@ -2,279 +2,87 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Офис агентов Grok</title>
-<style>
-body{margin:0;background:#1d2230;font-family:Segoe UI,Arial,sans-serif;color:#eee}
-h1{margin:16px 24px 4px;font-size:22px}
-.sub{margin:0 24px 10px;color:#9aa3b5;font-size:13px}
-#floor{position:relative;margin:0 24px;height:620px;border-radius:14px;overflow:hidden;
-background:repeating-linear-gradient(45deg,#2a3142 0 40px,#262c3b 40px 80px)}
-.desk{position:absolute;width:150px;text-align:center;cursor:pointer}
-.desk .table{width:150px;height:46px;background:#6b4f3a;border-radius:8px;margin-top:-6px;box-shadow:0 6px 0 #4a3628}
-.desk .pc{width:50px;height:34px;background:#111;border:3px solid #444;border-radius:4px;margin:0 auto -4px;position:relative;z-index:2}
-.desk .pc.on{background:#173;box-shadow:0 0 14px #3f9}
-.name{font-weight:600;margin-top:10px}
-.role{font-size:12px;color:#aab}
-.bub{position:absolute;left:50%;transform:translateX(-50%);top:-62px;background:#fff;color:#222;font-size:12px;
-padding:6px 9px;border-radius:10px;box-shadow:0 2px 6px #0006;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;z-index:3}
-.bub:after{content:'';position:absolute;bottom:-6px;left:50%;margin-left:-6px;border:6px solid transparent;border-top-color:#fff;border-bottom:0}
-.man{width:40px;height:70px;margin:0 auto;position:relative}
-.man .head{width:30px;height:30px;border-radius:50%;margin:0 auto;position:relative}
-.man .head:before,.man .head:after{content:'';position:absolute;top:11px;width:5px;height:5px;background:#111;border-radius:50%}
-.man .head:before{left:8px}.man .head:after{right:8px}
-.man .body{width:36px;height:36px;border-radius:12px 12px 4px 4px;margin:2px auto 0}
-.working .man{animation:bob .6s infinite alternate}
-.idle .man{animation:breath 2.5s infinite alternate}
-.waiting .man .head{animation:look 1.6s infinite alternate}
-@keyframes bob{to{transform:translateY(-4px)}}
-@keyframes breath{to{transform:scale(1.03)}}
-@keyframes look{from{transform:rotate(-12deg)}to{transform:rotate(12deg)}}
-.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
-#panel{margin:14px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
-.card{background:#262c3b;border-radius:12px;padding:12px 14px;font-size:13px;cursor:pointer;border:2px solid transparent}
-.card.sel{border-color:#7ab}
-.card b{font-size:15px}
-.card ul{margin:6px 0 0 16px;padding:0;color:#ccd}
-svg#links{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
-.pk{fill:#ffd54a}
-#inspector{display:none;margin:0 24px 14px;background:#262c3b;border-radius:12px;padding:16px 18px;border:2px solid #3a4458}
-#inspector.open{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-@media (max-width:800px){#inspector.open{grid-template-columns:1fr}}
-#inspector h2{margin:0 0 8px;font-size:18px}
-#inspector .muted{color:#9aa3b5;font-size:13px;margin-bottom:8px}
-#inspector ul{margin:6px 0 0 18px;padding:0;color:#ccd;font-size:13px}
-#task-form{display:flex;flex-direction:column;gap:8px}
-#task-form label{font-weight:600;font-size:14px}
-#task-form textarea{min-height:90px;resize:vertical;border-radius:8px;border:1px solid #445;background:#1d2230;color:#eee;padding:8px 10px;font:inherit}
-#task-form button{align-self:flex-start;background:#f7931e;color:#111;border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer}
-#task-form button:disabled{opacity:.6;cursor:wait}
-#form-msg{font-size:13px;min-height:1.2em}
-#form-msg.err{color:#f88}
-#form-msg.ok{color:#8d8}
-.pw-bar{margin:0 24px 10px;font-size:13px;color:#9aa3b5}
-.pw-bar button{margin-left:8px;background:#3a4458;color:#eee;border:0;border-radius:6px;padding:4px 8px;cursor:pointer}
-#modal{display:none;position:fixed;inset:0;background:#0008;z-index:20;align-items:center;justify-content:center}
-#modal.show{display:flex}
-#modal .box{background:#262c3b;padding:22px 24px;border-radius:12px;width:min(360px,90vw)}
-#modal h3{margin:0 0 8px}
-#modal p{margin:0 0 12px;color:#9aa3b5;font-size:13px}
-#modal input{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #445;background:#1d2230;color:#eee;font:inherit}
-#modal .row{margin-top:12px;display:flex;gap:8px;justify-content:flex-end}
-#modal button{border:0;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:600}
-#modal .ok{background:#f7931e;color:#111}
-#modal .cancel{background:#3a4458;color:#eee}
-.task-item{font-size:12px;color:#ccd;margin:4px 0;padding:6px 8px;background:#1d2230;border-radius:6px}
-.task-item .st{color:#9aa3b5}
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0d1017">
+<title>Агенты · Москва — штаб GROK</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c8102e'/%3E%3Cpath d='M16 5l3.2 6.6 7.3.9-5.3 5 1.3 7.2L16 21.3l-6.5 3.4 1.3-7.2-5.3-5 7.3-.9z' fill='%23f5c451'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/app.css">
 </head>
-<body>
-<h1>Офис агентов Grok</h1>
-<p class="sub">Статусы обновляются каждые 5 секунд. Нажмите на агента, чтобы посмотреть историю и дать задачу.</p>
-<div class="pw-bar">Пароль доступа: <span id="pw-state">не задан</span><button type="button" id="pw-btn">Ввести пароль</button></div>
-<div id="floor"><svg id="links"></svg></div>
-<div id="inspector"></div>
-<div id="panel"></div>
-<div id="modal">
-  <div class="box">
-    <h3>Пароль доступа</h3>
-    <p>Пароль хранится только в этом браузере и отправляется в заголовке при постановке задачи.</p>
-    <input id="pw-input" type="password" autocomplete="current-password" placeholder="Пароль">
-    <div class="row">
-      <button type="button" class="cancel" id="pw-cancel">Отмена</button>
-      <button type="button" class="ok" id="pw-save">Сохранить</button>
+<body class="day">
+<div id="app">
+  <svg id="map" aria-label="Карта Москвы с агентами" role="img">
+    <defs>
+      <pattern id="landGrid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" class="grid-line"/></pattern>
+      <pattern id="cobble" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M0 3h6M3 0v6" stroke="#5a3a2e" stroke-width=".5" opacity=".5"/></pattern>
+      <radialGradient id="vignette" cx="50%" cy="50%" r="75%"><stop offset="60%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity=".55"/></radialGradient>
+      <radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+      <filter id="edge" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="14"/></filter>
+      <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6"/></filter>
+    </defs>
+    <g id="world">
+      <g id="mapBase"></g>
+      <g id="mapLabels"></g>
+      <g id="cars"></g>
+      <g id="blocks"></g>
+      <g id="links"></g>
+      <g id="landmarks"></g>
+      <g id="agents"></g>
+      <g id="fx"></g>
+    </g>
+  </svg>
+  <div id="overlay" aria-hidden="false"></div>
+  <div class="vignette"></div>
+
+  <header class="hud">
+    <div class="brand">
+      <div class="brand-mark"><svg viewBox="0 0 32 32"><path d="M16 4l3.4 7 7.6.9-5.6 5.2 1.4 7.6L16 21l-6.8 3.7 1.4-7.6L5 11.9l7.6-.9z"/></svg></div>
+      <div class="brand-text"><b>Агенты · Москва</b><span>Штаб GROK</span></div>
     </div>
+    <div class="stats">
+      <div class="stat" title="Всего задач в журнале"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z M15 3v4h4 M9 12h7 M9 16h5"/></svg><span class="stat-label">Задачи</span><b id="stTasks">0</b></div>
+      <div class="stat" title="Агенты, которые сейчас работают"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4-7 8-7s7 2.5 8 7"/></svg><span class="stat-label">В работе</span><b id="stActive">0/0</b></div>
+      <div class="stat energy" title="Энергия города: растёт от активных агентов и выполненных задач"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg><span class="stat-label">Энергия</span><div class="bar"><i id="stEnergyBar"></i></div><b id="stEnergy">0%</b></div>
+    </div>
+    <div class="hud-actions">
+      <button class="icon-btn" id="btnJournal" title="Журнал заданий" aria-label="Журнал заданий"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z M8 4v13 M11 9h5 M11 13h5"/></svg></button>
+      <button class="icon-btn" id="btnHome" title="Вся карта" aria-label="Показать всю карту"><svg viewBox="0 0 24 24"><path d="M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5"/></svg></button>
+      <button class="icon-btn" id="btnTheme" title="День / ночь" aria-label="День или ночь"><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+      <button class="icon-btn" id="btnSound" title="Звук выключен" aria-label="Звук"><svg class="i-off" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z M17 9l5 6 M22 9l-5 6"/></svg><svg class="i-on" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z M17 8.5a5 5 0 0 1 0 7 M19.5 6a8.5 8.5 0 0 1 0 12"/></svg></button>
+      <button class="icon-btn" id="btnKey" title="Пароль доступа" aria-label="Пароль доступа"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9 M16 7l3 3 M14 9l2 2"/></svg></button>
+    </div>
+  </header>
+
+  <aside id="journal" class="card glass">
+    <div class="card-head"><h3>Журнал заданий</h3><span class="pill" id="jCount">0</span><button class="icon-btn sm" id="jClose" aria-label="Свернуть"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>
+    <div class="quest-list" id="jList"></div>
+  </aside>
+
+  <nav id="roster" aria-label="Агенты"></nav>
+
+  <div id="minimap" class="glass" title="Мини-карта: нажми, чтобы перелететь">
+    <svg viewBox="0 0 1600 1100" preserveAspectRatio="xMidYMid meet"><use href="#mapBase"/><g id="miniDots"></g><rect id="miniView" class="mini-view" x="0" y="0" width="100" height="100" rx="8"/></svg>
+  </div>
+
+  <aside id="panel" class="glass" aria-live="polite"></aside>
+  <div id="toasts"></div>
+  <div id="tooltip"></div>
+
+  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <form class="modal-box glass" id="pwForm">
+      <div class="modal-star"><svg viewBox="0 0 32 32"><path d="M16 4l3.4 7 7.6.9-5.6 5.2 1.4 7.6L16 21l-6.8 3.7 1.4-7.6L5 11.9l7.6-.9z"/></svg></div>
+      <h3 id="mTitle">Пропуск в штаб</h3>
+      <p>Введи пароль доступа (<code>APP_PASSWORD</code> из Render). Он хранится только в этом браузере.</p>
+      <input type="password" id="pwInput" autocomplete="current-password" placeholder="Пароль" required>
+      <div class="modal-actions"><button type="button" class="btn ghost" id="pwCancel">Отмена</button><button type="submit" class="btn gold">Войти</button></div>
+      <button type="button" class="link-btn" id="pwForget">Забыть сохранённый пароль</button>
+    </form>
   </div>
 </div>
-<script>
-const ST={working:['#3f9','Работает'],idle:['#999','Свободен'],waiting:['#fc3','Ждёт тебя']};
-const floor=document.getElementById('floor');
-const svg=document.getElementById('links');
-const panel=document.getElementById('panel');
-const inspector=document.getElementById('inspector');
-const modal=document.getElementById('modal');
-const pwInput=document.getElementById('pw-input');
-const pwState=document.getElementById('pw-state');
-let AGENTS=[];
-let TASKS=[];
-let selected=null;
-let draft='';
-let busy=false;
-
-function esc(s){
-  return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-function short(s,n){
-  s=String(s??'');
-  return s.length>n?s.slice(0,n-1)+'…':s;
-}
-function getPassword(){return localStorage.getItem('appPassword')||'';}
-function setPassword(v){
-  if(v) localStorage.setItem('appPassword',v);
-  else localStorage.removeItem('appPassword');
-  refreshPwState();
-}
-function refreshPwState(){
-  pwState.textContent=getPassword()?'сохранён в этом браузере':'не задан';
-}
-function showModal(){
-  modal.classList.add('show');
-  pwInput.value=getPassword();
-  setTimeout(()=>pwInput.focus(),50);
-}
-function hideModal(){modal.classList.remove('show');}
-
-document.getElementById('pw-btn').onclick=showModal;
-document.getElementById('pw-cancel').onclick=hideModal;
-document.getElementById('pw-save').onclick=()=>{
-  setPassword(pwInput.value);
-  hideModal();
-};
-pwInput.addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('pw-save').click();});
-modal.addEventListener('click',e=>{if(e.target===modal)hideModal();});
-
-function renderInspector(){
-  const keep=document.getElementById('task-text');
-  if(keep && document.activeElement===keep) draft=keep.value;
-  const a=AGENTS.find(z=>z.id===selected);
-  if(!a){inspector.className='';inspector.innerHTML='';return;}
-  const [,lbl]=ST[a.status]||['#999',a.status];
-  const history=a.done&&a.done.length?a.done.map(x=>'<li>'+esc(x)+'</li>').join(''):'<li>Пока нет выполненных дел</li>';
-  const mine=TASKS.filter(t=>t.agent===a.id).slice(0,8);
-  const tasksHtml=mine.length?mine.map(t=>{
-    const res=t.result?'<div>Результат: '+esc(t.result)+'</div>':'';
-    const fwd=t.forwardStatus!=null?' · HTTP '+esc(t.forwardStatus):'';
-    return '<div class="task-item"><b>'+esc(short(t.text,80))+'</b><div class="st">'+esc(t.status)+fwd+'</div>'+res+'</div>';
-  }).join(''):'<div class="muted">Задач ещё не было</div>';
-  inspector.className='open';
-  inspector.innerHTML=`
-    <div>
-      <h2>${esc(a.name)}</h2>
-      <div class="muted">${esc(a.role)} · ${esc(lbl)}</div>
-      <div>Сейчас: ${esc(a.now)}</div>
-      <div style="margin-top:10px"><b>История</b></div>
-      <ul>${history}</ul>
-      <div style="margin-top:12px"><b>Последние задачи</b></div>
-      ${tasksHtml}
-    </div>
-    <form id="task-form">
-      <label for="task-text">Дать задачу</label>
-      <textarea id="task-text" name="text" required placeholder="Что должен сделать ${esc(a.name)}?"></textarea>
-      <button type="submit" ${busy?'disabled':''}>Отправить</button>
-      <div id="form-msg"></div>
-    </form>`;
-  const ta=document.getElementById('task-text');
-  ta.value=draft;
-  document.getElementById('task-form').onsubmit=onSubmitTask;
-}
-
-async function onSubmitTask(e){
-  e.preventDefault();
-  const a=AGENTS.find(z=>z.id===selected);
-  if(!a) return;
-  const text=document.getElementById('task-text').value.trim();
-  const msg=document.getElementById('form-msg');
-  if(!text){msg.className='err';msg.textContent='Введите текст задачи';return;}
-  if(!getPassword()){msg.className='err';msg.textContent='Сначала введите пароль доступа';showModal();return;}
-  busy=true;renderInspector();
-  try{
-    const res=await fetch('/api/task',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-app-password':getPassword()},
-      body:JSON.stringify({agent:a.id,text})
-    });
-    const data=await res.json().catch(()=>({}));
-    if(res.status===401){
-      setPassword('');
-      showModal();
-      throw new Error(data.error||'Неверный пароль');
-    }
-    if(!res.ok) throw new Error(data.error||('Ошибка '+res.status));
-    draft='';
-    await loadState();
-    const formMsg=document.getElementById('form-msg');
-    if(formMsg){formMsg.className='ok';formMsg.textContent=data.status||'Задача записана';}
-  }catch(err){
-    busy=false;renderInspector();
-    const formMsg=document.getElementById('form-msg');
-    if(formMsg){formMsg.className='err';formMsg.textContent=err.message||'Не удалось отправить';}
-    return;
-  }
-  busy=false;renderInspector();
-  const formMsg=document.getElementById('form-msg');
-  if(formMsg){formMsg.className='ok';formMsg.textContent='Задача отправлена';}
-}
-
-function render(){
-  floor.querySelectorAll('.desk').forEach(e=>e.remove());
-  panel.innerHTML='';
-  svg.innerHTML='';
-  const W=floor.clientWidth,sx=W/900;
-  AGENTS.forEach(a=>{a._x=a.x*sx+75;a._y=a.y+60});
-  AGENTS.forEach(a=>(a.links||[]).forEach(t=>{
-    const b=AGENTS.find(z=>z.id==t);if(!b)return;
-    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
-    p.setAttribute('d',`M${a._x},${a._y} L${b._x},${b._y}`);
-    p.setAttribute('id','l'+a.id+t);
-    p.setAttribute('stroke','#5b7');
-    p.setAttribute('stroke-width',2);
-    p.setAttribute('stroke-dasharray','6 6');
-    p.setAttribute('fill','none');
-    svg.appendChild(p);
-    const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
-    c.setAttribute('r',5);
-    c.setAttribute('class','pk');
-    c.innerHTML=`<animateMotion dur="${2+Math.random()*2}s" begin="-1.2s" repeatCount="indefinite"><mpath href="#l${a.id+t}"/></animateMotion>`;
-    svg.appendChild(c);
-  }));
-  AGENTS.forEach(a=>{
-    const [col,lbl]=ST[a.status]||['#999',a.status];
-    const d=document.createElement('div');
-    d.className='desk '+a.status;
-    d.style.left=(a.x*sx)+'px';
-    d.style.top=a.y+'px';
-    d.innerHTML=`<div class="bub">${esc(short(a.now,80))}</div><div class="man"><div class="head" style="background:${esc(a.color)};border:3px solid ${esc(a.accent)}"></div>
-     <div class="body" style="background:${esc(a.color)}"></div></div><div class="pc ${a.status=='working'?'on':''}"></div><div class="table"></div>
-     <div class="name"><span class="dot" style="background:${col}"></span>${esc(a.name)}</div><div class="role">${esc(a.role)}</div>`;
-    d.onclick=()=>sel(a.id);
-    floor.appendChild(d);
-    const card=document.createElement('div');
-    card.className='card'+(selected===a.id?' sel':'');
-    card.id='c'+a.id;
-    const done=(a.done||[]).map(x=>'<li>'+esc(x)+'</li>').join('');
-    card.innerHTML=`<b>${esc(a.name)}</b> · <span style="color:${col}">${esc(lbl)}</span><div style="color:#aab">${esc(a.role)}</div>
-     <div style="margin-top:6px">Сейчас: ${esc(a.now)}</div><ul>${done}</ul>`;
-    card.onclick=()=>sel(a.id);
-    panel.appendChild(card);
-  });
-  renderInspector();
-}
-
-function sel(id){
-  selected=id;
-  draft='';
-  document.querySelectorAll('.card').forEach(c=>c.classList.toggle('sel',c.id==='c'+id));
-  renderInspector();
-  const el=document.getElementById('c'+id);
-  if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'});
-}
-
-async function loadState(){
-  const res=await fetch('/api/state');
-  if(!res.ok) throw new Error('Не удалось получить состояние');
-  const data=await res.json();
-  AGENTS=data.agents||[];
-  TASKS=data.tasks||[];
-  render();
-}
-
-refreshPwState();
-
-addEventListener('resize',render);
-loadState().catch(err=>{
-  panel.innerHTML='<div class="card">Не удалось загрузить офис: '+esc(err.message)+'</div>';
-});
-setInterval(()=>{loadState().catch(()=>{});},5000);
-</script>
+<script src="/js/figures.js"></script>
+<script src="/js/map.js"></script>
+<script src="/js/app.js"></script>
 </body>
 </html>
