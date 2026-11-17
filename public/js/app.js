@@ -24,6 +24,7 @@
     panelSig: '', taskStatus: new Map(), cam: { k: 1, tx: 0, ty: 0 }, userMoved: false,
     els: new Map(), // id -> {g, tag, bubble, link, packets}
     sound: localStorage.getItem('soundOn') === '1',
+    hierFold: new Set(),
   };
   const drafts = new Map();
   const MAX_FILES = 5;
@@ -215,7 +216,9 @@
     const ros = $('#roster').getBoundingClientRect();
     let left = 0, right = w, top = hud.bottom + 8, bottom = (ros.height ? ros.top : h) - 8;
     const j = $('#journal');
-    if (!mob && w > 900 && !j.classList.contains('collapsed') && getComputedStyle(j).display !== 'none') left = j.getBoundingClientRect().right + 8;
+    const hier = $('#hier');
+    if (!mob && w > 900 && hier && hier.classList.contains('open')) left = hier.getBoundingClientRect().right + 8;
+    else if (!mob && w > 900 && !j.classList.contains('collapsed') && getComputedStyle(j).display !== 'none') left = j.getBoundingClientRect().right + 8;
     if (S.selected && $('#panel').classList.contains('open')) {
       // Берём итоговые размеры панели, а не текущие (панель может ещё выезжать).
       const p = $('#panel');
@@ -392,7 +395,7 @@
     const compact = k < 0.6;
     const order = [...S.agents].sort((a, b) => prio(b) - prio(a));
     // Панели интерфейса — препятствия для табличек.
-    const placed = ['.hud', '#roster', '#minimap', '#journal', '#panel.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
+    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
     const hit = (r) => placed.some((p) => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
     for (const a of order) {
       const e = S.els.get(a.id);
@@ -654,6 +657,7 @@
     if (!S.selected) {
       panel.classList.remove('open');
       updateAgents();
+      if ($('#hier').classList.contains('open')) renderHierarchy(true);
       if (prev) setTimeout(() => { if (!S.selected) goHome(); }, 50);
       return;
     }
@@ -662,6 +666,7 @@
     S.panelSig = panelContentSig(S.selected);
     panel.classList.add('open');
     updateAgents();
+    if ($('#hier').classList.contains('open')) renderHierarchy(true);
     const a = S.byId.get(S.selected);
     const k = Math.max(innerWidth <= 700 ? 0.95 : 1.15, Math.min(S.cam.k, 1.6));
     setTimeout(() => flyTo(a.x, a.y + figTop(a) / 2 + 10, k), 30);
@@ -999,6 +1004,82 @@
       btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(btn.dataset.full, btn.dataset.name); };
     });
   }
+  function taskWord(n) {
+    const n10 = n % 10, n100 = n % 100;
+    if (n10 === 1 && n100 !== 11) return 'задача';
+    if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return 'задачи';
+    return 'задач';
+  }
+  function openTaskCount(id) {
+    return S.tasks.filter((t) => t.agent === id && t.status !== 'выполнена').length;
+  }
+  function treeChildren(a) {
+    const explicit = S.agents.filter((x) => x.parentId === a.id);
+    if (a.id !== CONFIG.mainId) return explicit.sort(cmpNum);
+    const seen = new Set(explicit.map((x) => x.id));
+    const implicit = S.agents.filter((x) => x.id !== a.id && !x.parentId && !seen.has(x.id));
+    return [...explicit, ...implicit].sort(cmpNum);
+  }
+  function orgNode(a) {
+    const kids = treeChildren(a);
+    const shut = S.hierFold.has(a.id);
+    const n = openTaskCount(a.id);
+    const st = STATUS_TEXT[a.status] || a.status || '';
+    return `<div class="org-item">
+      <div class="org-row">
+        <button type="button" class="org-twist${kids.length ? '' : ' leaf'}${shut ? ' shut' : ''}" data-fold="${esc(a.id)}" aria-label="${shut ? 'Развернуть' : 'Свернуть'}">${kids.length ? '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>' : ''}</button>
+        <button type="button" class="org-card${S.selected === a.id ? ' sel' : ''}" data-id="${esc(a.id)}">
+          <span class="top"><span class="dot ${esc(a.status)}"></span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>${n ? `<span class="pill">${n}</span>` : ''}</span>
+          <span class="meta">${esc(st)}${n ? ` · ${n} ${taskWord(n)}` : ''}</span>
+        </button>
+      </div>
+      ${kids.length && !shut ? `<div class="org-kids">${kids.map(orgNode).join('')}</div>` : ''}
+    </div>`;
+  }
+  function hierSig() {
+    const fold = [...S.hierFold].sort().join(',');
+    return S.agents.map((a) => [a.id, a.number, a.parentId, a.status, a.name, openTaskCount(a.id)].join(':')).join('|') + '#' + fold + '#' + (S.selected || '');
+  }
+  function renderHierarchy(force) {
+    const tree = $('#hTree');
+    if (!tree || !$('#hier').classList.contains('open')) return;
+    const sig = hierSig();
+    if (!force && tree.dataset.sig === sig) return;
+    const top = tree.scrollTop;
+    tree.dataset.sig = sig;
+    const root = S.byId.get(CONFIG.mainId) || S.agents.find((a) => !a.parentId);
+    tree.innerHTML = root ? orgNode(root) : '<div class="empty"><b>Агентов нет</b></div>';
+    tree.scrollTop = top;
+    const count = S.agents.filter((a) => !a.vacant).length;
+    const pill = $('#hCount');
+    if (pill) pill.textContent = String(count);
+    tree.querySelectorAll('.org-twist:not(.leaf)').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        if (S.hierFold.has(btn.dataset.fold)) S.hierFold.delete(btn.dataset.fold);
+        else S.hierFold.add(btn.dataset.fold);
+        renderHierarchy(true);
+      };
+    });
+    tree.querySelectorAll('.org-card').forEach((btn) => {
+      btn.onclick = () => {
+        select(btn.dataset.id);
+        if (innerWidth <= 900) setHierarchy(false);
+      };
+    });
+  }
+  function setHierarchy(open) {
+    const h = $('#hier');
+    h.classList.toggle('open', open);
+    document.body.classList.toggle('hier-on', open);
+    const b = $('#btnHier');
+    b.classList.toggle('on', open);
+    b.setAttribute('aria-pressed', open ? 'true' : 'false');
+    if (open) {
+      $('#journal').classList.remove('mobile-open');
+      renderHierarchy(true);
+    }
+  }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
     const active = staff.filter((a) => a.status === 'working').length;
@@ -1018,11 +1099,24 @@
     };
     $('#btnJournal').onclick = () => {
       blip(600);
-      if (innerWidth <= 900) { j.classList.toggle('mobile-open'); j.classList.remove('collapsed'); }
-      else { j.classList.toggle('collapsed'); localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open'); }
+      const fromHier = $('#hier').classList.contains('open');
+      if (fromHier) setHierarchy(false);
+      if (innerWidth <= 900) {
+        if (fromHier) j.classList.add('mobile-open');
+        else j.classList.toggle('mobile-open');
+        j.classList.remove('collapsed');
+      } else if (fromHier) {
+        j.classList.remove('collapsed');
+        localStorage.setItem('journal', 'open');
+      } else {
+        j.classList.toggle('collapsed');
+        localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
+      }
       $('#btnJournal').classList.toggle('on', innerWidth <= 900 ? j.classList.contains('mobile-open') : !j.classList.contains('collapsed'));
     };
     $('#btnHome').onclick = () => { blip(520); select(null); goHome(); };
+    $('#btnHier').onclick = () => { blip(640); setHierarchy(!$('#hier').classList.contains('open')); };
+    $('#hClose').onclick = () => setHierarchy(false);
   }
 
   // ── Загрузка состояния ───────────────────────────────────────────────────
@@ -1054,7 +1148,7 @@
       }
     }
     S.taskStatus = next;
-    updateAgents(); renderJournal(); renderHUD();
+    updateAgents(); renderJournal(); renderHierarchy(); renderHUD();
     if (S.selected) {
       const sig = panelContentSig(S.selected);
       if (sig !== S.panelSig) {

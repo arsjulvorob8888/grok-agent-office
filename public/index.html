@@ -47,6 +47,7 @@
       <div class="stat energy" title="Энергия города: растёт от активных агентов и выполненных задач"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg><span class="stat-label">Энергия</span><div class="bar"><i id="stEnergyBar"></i></div><b id="stEnergy">0%</b></div>
     </div>
     <div class="hud-actions">
+      <button class="icon-btn" id="btnHier" title="Иерархия" aria-label="Иерархия" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M12 7.2V12H6.2V15.6M12 12h5.8v3.6"/></svg></button>
       <button class="icon-btn" id="btnJournal" title="Журнал заданий" aria-label="Журнал заданий"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z M8 4v13 M11 9h5 M11 13h5"/></svg></button>
       <button class="icon-btn" id="btnHome" title="Вся карта" aria-label="Показать всю карту"><svg viewBox="0 0 24 24"><path d="M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5"/></svg></button>
       <button class="icon-btn" id="btnTheme" title="День / ночь" aria-label="День или ночь"><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
@@ -54,6 +55,12 @@
       <button class="icon-btn" id="btnKey" title="Пароль доступа" aria-label="Пароль доступа"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9 M16 7l3 3 M14 9l2 2"/></svg></button>
     </div>
   </header>
+
+  <aside id="hier" class="card glass" aria-label="Иерархия агентов">
+    <div class="card-head"><h3>Иерархия</h3><span class="pill" id="hCount">0</span><button class="icon-btn sm" id="hClose" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <p class="hier-note">Главный агент, направления и помощники. Нажми строку — карта подъедет к агенту.</p>
+    <div class="org-tree" id="hTree"></div>
+  </aside>
 
   <aside id="journal" class="card glass">
     <div class="card-head"><h3>Журнал заданий</h3><span class="pill" id="jCount">0</span><button class="icon-btn sm" id="jClose" aria-label="Свернуть"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>

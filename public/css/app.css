@@ -96,6 +96,8 @@ body.night .car-body{fill:#ffe9a8;filter:drop-shadow(0 0 3px #ffcf5a)}
 /* ── Связи и пакеты ───────────────────────────── */
 .link{fill:none;stroke-width:2.4;stroke-dasharray:2 9;stroke-linecap:round;opacity:.35;transition:opacity .4s}
 .link.sub{stroke-width:2.2;stroke-dasharray:5 4;opacity:.8}
+body.hier-on .link{opacity:.92;stroke-width:3}
+body.hier-on .link.sub{opacity:1;stroke-dasharray:none;stroke-width:3.2}
 .link.hot{opacity:.95;stroke-width:3;animation:flow 1.2s linear infinite}
 .link.sel{opacity:.9}
 @keyframes flow{to{stroke-dashoffset:-22}}
@@ -219,6 +221,27 @@ body.night #btnTheme .i-moon{display:block}
 
 /* ── Журнал ──────────────────────────────────── */
 .card{border-radius:18px}
+#hier{display:none;position:absolute;left:12px;top:calc(var(--hud-h) + 24px);width:340px;max-height:calc(100% - var(--hud-h) - 150px);flex-direction:column;z-index:5;overflow:hidden}
+#hier.open{display:flex}
+body.hier-on #journal{display:none}
+.hier-note{margin:0;padding:8px 14px 0;font-size:12px;line-height:1.4;color:var(--muted)}
+.org-tree{flex:1;min-height:0;overflow:auto;padding:8px 10px 14px;scrollbar-width:thin}
+.org-kids{margin-left:16px;padding-left:10px;border-left:1px solid rgba(245,196,81,.38)}
+.org-row{display:flex;align-items:stretch;gap:2px;margin:5px 0}
+.org-twist{width:32px;min-height:44px;flex:none;border:0;border-radius:10px;background:transparent;color:var(--gold);cursor:pointer;display:grid;place-items:center;padding:0}
+.org-twist svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+.org-twist.shut svg{transform:rotate(-90deg)}
+.org-twist.leaf{visibility:hidden;pointer-events:none}
+.org-card{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04);padding:8px 10px;cursor:pointer;color:inherit;font:inherit;min-height:44px}
+.org-card:hover{background:rgba(255,255,255,.08);border-color:rgba(245,196,81,.35)}
+.org-card.sel{border-color:rgba(245,196,81,.7);background:rgba(245,196,81,.12)}
+.org-card .top{display:flex;align-items:center;gap:7px;width:100%;min-width:0}
+.org-card .dot{width:8px;height:8px;border-radius:50%;background:#64748b;flex:none}
+.org-card .dot.working{background:var(--ok);box-shadow:0 0 0 3px rgba(34,197,94,.25)}
+.org-card .dot.waiting{background:var(--warn);box-shadow:0 0 0 3px rgba(245,158,11,.25)}
+.org-card .nm{font-weight:800;font-size:13px;line-height:1.25;min-width:0}
+.org-card .meta{font-size:11px;color:var(--muted);padding-left:15px}
+.org-card .pill{margin-left:auto;flex:none}
 #journal{position:absolute;left:12px;top:calc(var(--hud-h) + 24px);width:320px;max-height:calc(100% - var(--hud-h) - 140px);display:flex;flex-direction:column;z-index:4;overflow:hidden;transition:transform .35s cubic-bezier(.2,.8,.2,1),opacity .3s}
 #journal.collapsed{max-height:56px}
 #journal.collapsed #jClose svg{transform:rotate(180deg)}
@@ -397,6 +420,8 @@ body.night #btnTheme .i-moon{display:block}
 @media (max-width:900px){
   #journal{display:none;left:8px;right:8px;width:auto;top:auto;bottom:96px;max-height:52vh}
   #journal.mobile-open{display:flex}
+  #hier{left:8px;right:8px;width:auto;top:auto;bottom:96px;max-height:62vh;border-radius:22px 22px 0 0}
+  body.hier-on #journal{display:none}
 }
 @media (max-width:700px){
   :root{--hud-h:96px}
@@ -423,6 +448,7 @@ body.night #btnTheme .i-moon{display:block}
   .chip .st{right:6px}
   .chip .cn{font-size:9.5px;max-width:58px}
   #minimap{width:120px;height:86px;right:8px;bottom:96px;top:auto;padding:4px;border-radius:13px}
+  #hier{bottom:88px;max-height:58vh}
   #panel{left:0;right:0;top:auto;bottom:0;width:auto;height:min(64vh,600px);border-radius:22px 22px 0 0;transform:translateY(calc(100% + 20px))}
   #panel.open{transform:none}
   #panel:before{content:"";position:absolute;left:50%;top:7px;width:40px;height:4px;margin-left:-20px;border-radius:4px;background:rgba(255,255,255,.25);z-index:3}
