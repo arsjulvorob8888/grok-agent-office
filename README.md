@@ -138,7 +138,7 @@ curl -sS "$PUBLIC_URL/api/health/delivery" \
   -H "Authorization: Bearer $AGENT_TOKEN"
 ```
 
-Ответ: `{ "webhookUrlSet", "webhookKeySet", "lastDelivery", "queued", "delivered" }`. `lastDelivery` — `null` или `{ "at", "outboxId", "status" }` при HTTP-ответе и `{ "at", "outboxId", "error" }` при обрыве или таймауте.
+Ответ: `{ "webhookUrlSet", "webhookKeySet", "agentWebhooks", "putinWebhookSet", "lastDelivery", "queued", "delivered" }`. `agentWebhooks` — число агентов со своим вебхуком, `putinWebhookSet` — задан ли общий вебхук Путина. Адресов и ключей нет. `lastDelivery` — `null` или `{ "at", "outboxId", "status" }` при HTTP-ответе и `{ "at", "outboxId", "error" }` при обрыве или таймауте.
 
 ## Как видно, кто кому отдал приказ
 
@@ -435,7 +435,7 @@ curl -sS "$PUBLIC_URL/api/messages?agentId=dev&since=2026-11-17T14:00:00.000Z" \
 | `GET`, `PUT` | `/api/delivery/putin` | заголовок `x-app-password` | Общий вебхук Путина, тот же формат. В окне Путина это блок «Общий вебхук» |
 | `POST` | `/api/delivery/putin/test` | заголовок `x-app-password` | Проверка общего вебхука |
 | `POST` | `/api/outbox/retry` | заголовок `x-app-password` | Один проход по неотправленным. Уже `delivered` не повторяет. Если нет ни адреса агента, ни общего вебхука, ни `KREMLIN_WEBHOOK_URL` — `409` |
-| `GET` | `/api/health/delivery` | `Authorization: Bearer <AGENT_TOKEN>`, `x-agent-token` или `x-app-password` | `webhookUrlSet`, `webhookKeySet`, `lastDelivery`, `queued`, `delivered`. Секретов в ответе нет. Без авторизации — `401` |
+| `GET` | `/api/health/delivery` | `Authorization: Bearer <AGENT_TOKEN>`, `x-agent-token` или `x-app-password` | `webhookUrlSet`, `webhookKeySet`, `agentWebhooks`, `putinWebhookSet`, `lastDelivery`, `queued`, `delivered`. Только числа и флаги, без адресов и ключей. Без авторизации — `401` |
 | `POST` | `/api/upload` | `x-app-password` или `x-agent-token` | Загрузить до 5 файлов (поле `files`) и получить их id и ссылки |
 | `GET` | `/api/files/:id` | открытый, id не угадать | Скачать или открыть вложение |
 | `POST` | `/api/status` | заголовок `x-agent-token` | Агент сообщает статус, историю и результат |

@@ -33,13 +33,15 @@
 {
   "webhookUrlSet": true,
   "webhookKeySet": false,
+  "agentWebhooks": 0,
+  "putinWebhookSet": false,
   "lastDelivery": { "at": "2026-11-17T12:00:00.000Z", "status": 200, "outboxId": "ob-1" },
   "queued": 0,
   "delivered": 1
 }
 ```
 
-`lastDelivery` — `null`, пока попыток не было. При сетевой ошибке вместо `status` поле `error`. Значений URL и ключа в ответе нет.
+`lastDelivery` — `null`, пока попыток не было. При сетевой ошибке вместо `status` поле `error`. `agentWebhooks` — сколько агентов хранят свой вебхук. `putinWebhookSet` — задан ли общий вебхук Путина. Адресов и ключей в ответе нет.
 
 ## Сценарии
 

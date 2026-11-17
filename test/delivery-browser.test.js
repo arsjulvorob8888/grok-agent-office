@@ -154,6 +154,30 @@ async function exercise(viewport, shot) {
     assert.equal(keyField.value, '');
     const titles = await page.$$eval('[data-delivery-root] h4', (nodes) => nodes.map((node) => node.textContent));
     assert.deepEqual(titles, ['Общий вебхук', 'Доставка']);
+    await page.waitForSelector('#panel.open .dash-expand', { timeout: 4000 });
+    const alone = await page.evaluate(() => ({
+      delivery: document.querySelectorAll('[data-delivery-root]').length,
+      expand: document.querySelectorAll('.dash-expand').length,
+      inDash: document.querySelectorAll('#agentDash [data-delivery-root]').length,
+    }));
+    assert.equal(alone.delivery, 1);
+    assert.equal(alone.expand, 1);
+    assert.equal(alone.inDash, 0);
+    await page.click('#panel.open .dash-expand');
+    await page.waitForSelector('#agentDash:not([hidden]) #dashTitle', { timeout: 4000 });
+    const together = await page.evaluate(() => ({
+      delivery: document.querySelectorAll('[data-delivery-root]').length,
+      expand: document.querySelectorAll('.dash-expand').length,
+      inDash: document.querySelectorAll('#agentDash [data-delivery-root]').length,
+      dashText: document.querySelector('#agentDash').innerText,
+    }));
+    assert.equal(together.delivery, 1);
+    assert.equal(together.expand, 1);
+    assert.equal(together.inDash, 0);
+    assert.equal(together.dashText.includes('URL вебхука'), false);
+    assert.equal(together.dashText.includes('Общий вебхук'), false);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#agentDash[hidden]', { timeout: 4000 });
     const opened = await visibleText(page);
     assert.match(opened, /Ключ задан, последние символы GGGG/);
     assert.match(opened, /PPPP/);

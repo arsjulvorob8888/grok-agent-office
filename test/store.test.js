@@ -402,7 +402,7 @@ describe('хранилище', { concurrency: 1 }, () => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
     try {
       const version = await pool.query(`SELECT version FROM ${schema}.schema_version ORDER BY version`);
-      assert.deepEqual(version.rows.map((row) => row.version), [1, 2, 3, 4, 5]);
+      assert.deepEqual(version.rows.map((row) => row.version), [1, 2, 3, 4, 5, 6]);
       await pool.query(`UPDATE ${schema}.needs SET what = $1 WHERE id = $2`, ['Отредактировано вручную', 'need-finance']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-social']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-academy']);

@@ -1921,9 +1921,12 @@ function deliveryAuthorized(req) {
 app.get('/api/health/delivery', (req, res) => {
   if (!deliveryAuthorized(req)) return res.status(401).json({ error: 'Нужна авторизация' });
   const list = state.outbox || [];
+  const hooks = delivery.publicWebhookSummary(state);
   res.json({
     webhookUrlSet: webhookUrl() !== '',
     webhookKeySet: String(process.env.KREMLIN_WEBHOOK_KEY || '').trim() !== '',
+    agentWebhooks: hooks.agentWebhooks,
+    putinWebhookSet: hooks.putinWebhookSet,
     lastDelivery: lastDeliveryView(),
     queued: list.filter((item) => item && item.status === 'queued').length,
     delivered: list.filter((item) => item && item.status === 'delivered').length,

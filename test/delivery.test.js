@@ -297,6 +297,88 @@ test('проверка вебхука бьёт в локальный серве�
   assert.equal(bare.headers['x-webhook-key'], undefined);
 });
 
+test('проверка нового URL без ключа не уносит сохранённый ключ', async () => {
+  const savedKey = 'fixture-saved-key-ZZZZ';
+  const ownUrl = `${hookOrigin}/own-hook`;
+  const foreignUrl = `${hookOrigin}/foreign-hook`;
+  const saved = await call('/api/agents/poker/delivery', {
+    method: 'PUT',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: ownUrl, key: savedKey }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.keyTail, 'ZZZZ');
+  const before = hits.length;
+  const foreign = await call('/api/agents/poker/delivery/test', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: foreignUrl }),
+  });
+  assert.equal(foreign.status, 200);
+  assert.equal(foreign.body.status, 200);
+  assert.equal(JSON.stringify(foreign.body).includes(savedKey), false);
+  const hit = hits[hits.length - 1];
+  assert.equal(hits.length, before + 1);
+  assert.equal(hit.url, '/foreign-hook');
+  assert.equal(hit.headers.authorization, undefined);
+  assert.equal(hit.headers['x-webhook-key'], undefined);
+  assert.equal(JSON.stringify(hit.headers).includes(savedKey), false);
+  assert.equal(JSON.stringify(hit.body).includes(savedKey), false);
+  const own = await call('/api/agents/poker/delivery/test', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: ownUrl }),
+  });
+  assert.equal(own.status, 200);
+  const ownHit = hits[hits.length - 1];
+  assert.equal(ownHit.url, '/own-hook');
+  assert.equal(ownHit.headers['x-webhook-key'], savedKey);
+});
+
+test('здоровье доставки считает вебхуки и не отдаёт адреса', async () => {
+  assert.equal((await call('/api/health/delivery')).status, 401);
+  const agentsBefore = Object.keys(office.state.webhookTargets).filter((id) => id !== 'putin').length;
+  const socialUrl = `${hookOrigin}/social-hook`;
+  const socialKey = 'fixture-social-key-SSSS';
+  const putinUrl = `${hookOrigin}/putin-health-hook`;
+  const savedAgent = await call('/api/agents/social/delivery', {
+    method: 'PUT',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: socialUrl, key: socialKey }),
+  });
+  assert.equal(savedAgent.status, 200);
+  const savedPutin = await call('/api/delivery/putin', {
+    method: 'PUT',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: putinUrl, key: PUTIN_KEY }),
+  });
+  assert.equal(savedPutin.status, 200);
+  const health = await call('/api/health/delivery', { headers: { 'x-app-password': 'pw-delivery' } });
+  assert.equal(health.status, 200);
+  assert.equal(health.body.agentWebhooks, agentsBefore + 1);
+  assert.equal(health.body.putinWebhookSet, true);
+  assert.equal(Number.isInteger(health.body.agentWebhooks), true);
+  const raw = JSON.stringify(health.body);
+  assert.equal(raw.includes(socialKey), false);
+  assert.equal(raw.includes(PUTIN_KEY), false);
+  assert.equal(raw.includes('social-hook'), false);
+  assert.equal(raw.includes('putin-health-hook'), false);
+  assert.equal(raw.includes(socialUrl), false);
+  const cleared = await call('/api/delivery/putin', {
+    method: 'PUT',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: '' }),
+  });
+  assert.equal(cleared.status, 200);
+  const after = await call('/api/health/delivery', {
+    headers: { authorization: 'Bearer tok-delivery' },
+  });
+  assert.equal(after.status, 200);
+  assert.equal(after.body.putinWebhookSet, false);
+  assert.equal(after.body.agentWebhooks, agentsBefore + 1);
+  assert.equal(JSON.stringify(after.body).includes(socialKey), false);
+});
+
 test('задача идёт агенту, потом Путину, потом в env', async () => {
   process.env.KREMLIN_WEBHOOK_URL = `${hookOrigin}/env-hook`;
   process.env.KREMLIN_WEBHOOK_KEY = ENV_KEY;
