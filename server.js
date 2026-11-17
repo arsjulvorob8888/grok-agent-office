@@ -9,6 +9,7 @@ const store = require('./lib/store');
 const { activityFor, activeWindowMs } = require('./lib/activity');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
+const { senderName } = require('./public/js/sender-label');
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -1323,7 +1324,8 @@ function publicTask(t) {
 }
 
 function agentLabel(id) {
-  if (!id || id === 'owner') return 'Владелец';
+  const owner = senderName(id);
+  if (owner) return owner;
   const agent = findAgent(id);
   return agent ? agent.name : id;
 }

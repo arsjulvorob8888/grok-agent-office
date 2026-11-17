@@ -71,6 +71,7 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const M = window.MoscowMap;
   const Feed = window.OfficeFeed;
+  const Sender = window.OfficeSender;
 
   const svg = $('#map'), world = $('#world'), overlay = $('#overlay');
   const S = {
@@ -1324,7 +1325,8 @@
   }
 
   function whoName(id) {
-    if (!id || id === 'owner') return 'Владелец';
+    const owner = Sender.senderName(id);
+    if (owner) return owner;
     const a = S.byId.get(id);
     return a ? titled(a) : id;
   }
@@ -1377,7 +1379,7 @@
     if (!msgs.length) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
     return msgs.map((m) => {
       if (m.role === 'system') {
-        return `<div class="msg-row system"><div class="msg-sys">${linkify(m.text)}</div></div>`;
+        return `<div class="msg-row system"><div class="msg-sys">${linkify(Sender.displayOrderSender(m.text))}</div></div>`;
       }
       const speaker = S.byId.get(m.agentId) || agent;
       const who = m.role === 'owner' ? 'Вы' : titled(speaker);
