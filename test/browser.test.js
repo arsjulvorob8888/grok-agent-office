@@ -1300,85 +1300,277 @@ test('страница вопроса архивного репетитора н
   }
 });
 
-test('страница вопроса на 390px показывает текст после пароля и отправляет ответ', { timeout: 30000 }, async () => {
+function moscowClock(iso) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Moscow',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const hour = (parts.find((part) => part.type === 'hour') || {}).value;
+  const minute = (parts.find((part) => part.type === 'minute') || {}).value;
+  return `${hour}:${minute} МСК`;
+}
+
+test('страница вопроса с деталями показывает поле текста, а не «Да»/«Нет»', { timeout: 45000 }, async () => {
+  const answer = 'отложить <img src=x onerror=alert(1)>';
+  for (const viewport of [{ width: 390, height: 844, desktop: false }, { width: 1280, height: 800, desktop: true }]) {
+    const page = await openPage(viewport, { path: '/needs/need-finance', desktop: viewport.desktop });
+    try {
+      if (!viewport.desktop) {
+        await page.evaluate(() => localStorage.removeItem('appPassword'));
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => {
+          const title = document.querySelector('#needTitle')?.textContent || '';
+          const modal = document.querySelector('#modal')?.classList.contains('show');
+          return modal && /финансовых вопросов/.test(title);
+        }, { timeout: 8000 });
+        assert.equal(await page.$eval('#needDetails', (el) => el.innerHTML), '');
+        assert.equal(await page.$eval('#needAnswerForm', (el) => el.hidden), true);
+        assert.equal(await page.evaluate(() => document.body.innerHTML.includes('Сколько отложить')), false);
+        await page.type('#pwInput', 'pw-ui');
+        await page.click('#pwForm button[type=submit]');
+      }
+      await page.waitForFunction(() => (document.querySelector('#needDetails')?.textContent || '').includes('Сколько отложить'), { timeout: 8000 });
+      const view = await page.evaluate(() => {
+        const pageEl = document.querySelector('#needPage');
+        const link = document.querySelector('#needDetails a');
+        const grok = document.querySelector('#needDetails .md-grok');
+        const send = document.querySelector('#needSend');
+        const sendBox = send.getBoundingClientRect();
+        const area = document.querySelector('#needAnswer');
+        return {
+          vw: window.innerWidth,
+          who: document.querySelector('#needWho').textContent,
+          href: link ? link.getAttribute('href') : '',
+          grokText: grok ? grok.textContent : '',
+          grokLinks: document.querySelectorAll('a[href^="grokbot:"], a[href*="grokbot:"]').length,
+          script: !!document.querySelector('#needDetails script'),
+          html: document.querySelector('#needDetails').innerHTML,
+          form: document.querySelector('#needAnswerForm').hidden,
+          yesHidden: document.querySelector('#needYesNo').hidden,
+          textHidden: document.querySelector('#needTextAnswer').hidden,
+          area: area.tagName,
+          send: send.textContent,
+          sendH: sendBox.height,
+          partial: document.querySelector('label[for="needPartial"]').textContent.replace(/\s+/g, ' ').trim(),
+          overflow: pageEl.scrollWidth <= pageEl.clientWidth + 1,
+          externalLink: !!document.querySelector('#needExternal a'),
+        };
+      });
+      assert.equal(view.vw, viewport.width);
+      assert.match(view.who, /7\.\s*Финансы/);
+      assert.equal(view.href, 'https://example.com/budget');
+      assert.equal(view.grokLinks, 0);
+      assert.match(view.grokText, /grokbot:\/\/app\/v1\/agent\?id=demo/);
+      assert.match(view.grokText, /откройте чат агента в Grok/);
+      assert.equal(view.script, false);
+      assert.match(view.html, /&lt;script&gt;/);
+      assert.equal(view.form, false);
+      assert.equal(view.yesHidden, true);
+      assert.equal(view.textHidden, false);
+      assert.equal(view.area, 'TEXTAREA');
+      assert.equal(view.send, 'Отправить');
+      assert.ok(view.sendH >= 40, String(view.sendH));
+      assert.equal(view.partial, 'Ответ частичный, оставить пункт открытым');
+      assert.equal(view.overflow, true);
+      assert.equal(view.externalLink, false);
+      if (!viewport.desktop) {
+        await page.type('#needAnswer', answer);
+        await page.click('#needPartial');
+        await page.click('#needSend');
+        await page.waitForFunction(() => (document.querySelector('#needAnswerMsg')?.textContent || '').includes('Частичный ответ записан'), { timeout: 8000 });
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        assert.equal(new URL(page.url()).pathname, '/needs/need-finance');
+        const saved = await api('/api/needs/need-finance', { headers: { 'x-app-password': 'pw-ui' } });
+        assert.equal(saved.body.closedAt, null);
+        assert.equal(saved.body.answerMode, 'text');
+        assert.equal(saved.body.answers.at(-1).text, answer);
+        assert.equal(saved.body.answers.at(-1).by, 'owner');
+        const shown = await page.evaluate(() => {
+          const item = document.querySelector('.need-answer');
+          return {
+            html: item.innerHTML,
+            text: item.querySelector('p').textContent,
+            time: item.querySelector('time').textContent,
+            img: !!item.querySelector('img'),
+            form: document.querySelector('#needAnswerForm').hidden,
+          };
+        });
+        assert.equal(shown.text, answer);
+        assert.equal(shown.time, moscowClock(saved.body.answers.at(-1).at));
+        assert.match(shown.html, /&lt;img/);
+        assert.equal(shown.img, false);
+        assert.equal(shown.form, false);
+        const task = (await api('/api/state', { headers: { 'x-app-password': 'pw-ui' } })).body.tasks
+          .find((item) => item.agent === 'finance' && item.text.includes(answer));
+        assert.equal(task.text, `Ответ Арсения на «Ответить на шесть финансовых вопросов»: ${answer}`);
+        const pub = (await api('/api/state')).body.needs.find((item) => item.id === 'need-finance');
+        assert.equal(pub.answers, undefined);
+        assert.equal(pub.details, undefined);
+      } else {
+        await page.waitForFunction(() => (document.querySelector('.need-answer p')?.textContent || '').includes('отложить'), { timeout: 8000 });
+        const shown = await page.$eval('.need-answer time', (el) => el.textContent);
+        assert.match(shown, /^\d{2}:\d{2} МСК$/);
+      }
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+test('одобрение показывает только «Да» и «Нет»', { timeout: 30000 }, async () => {
+  const created = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({
+      what: 'Одобрить черновик страницы',
+      where: 'Сайт',
+      fromAgentId: 'blog',
+      urgency: 'low',
+      kind: 'approval',
+    }),
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.answerMode, 'yesno');
+  for (const viewport of [{ width: 390, height: 844, desktop: false }, { width: 1280, height: 800, desktop: true }]) {
+    const page = await browser.newPage();
+    try {
+      await page.setViewport({
+        width: viewport.width,
+        height: viewport.height,
+        isMobile: !viewport.desktop,
+        hasTouch: !viewport.desktop,
+        deviceScaleFactor: 1,
+      });
+      await page.evaluateOnNewDocument(() => localStorage.setItem('appPassword', 'pw-ui'));
+      await page.goto(`${base}/needs/${created.body.id}`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#needYesNo:not([hidden])', { timeout: 8000 });
+      const view = await page.evaluate(() => ({
+        vw: window.innerWidth,
+        yes: document.querySelector('#needYes').textContent,
+        no: document.querySelector('#needNo').textContent,
+        textHidden: document.querySelector('#needTextAnswer').hidden,
+        area: document.querySelector('#needAnswer').getBoundingClientRect().height,
+      }));
+      assert.equal(view.vw, viewport.width);
+      assert.equal(view.yes, 'Да');
+      assert.equal(view.no, 'Нет');
+      assert.equal(view.textHidden, true);
+      assert.equal(view.area, 0);
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+test('после «Да» страница возвращает на карту, закрытый пункт без кнопок и повтор — 409', { timeout: 30000 }, async () => {
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
-    await page.evaluateOnNewDocument(() => {
-      localStorage.removeItem('appPassword');
-    });
-    await page.goto(`${base}/needs/need-finance`, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => {
-      const title = document.querySelector('#needTitle')?.textContent || '';
-      const modal = document.querySelector('#modal')?.classList.contains('show');
-      return modal && /финансовых вопросов/.test(title);
-    }, { timeout: 8000 });
-    assert.equal(await page.$eval('#mTitle', (el) => el.textContent), 'Пропуск в штаб');
-    assert.equal(await page.$eval('#needDetails', (el) => el.innerHTML), '');
+    await page.evaluateOnNewDocument(() => localStorage.removeItem('appPassword'));
+    await page.goto(`${base}/needs/need-test-qa`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#needYesNo:not([hidden])', { timeout: 8000 });
+    assert.equal(await page.$eval('#needTextAnswer', (el) => el.hidden), true);
+    assert.equal(await page.$('#modal.show'), null);
+    await page.click('#needYes');
+    await page.waitForFunction(() => document.querySelector('#needAnswerMsg')?.textContent === 'Ответ записан', { timeout: 8000 });
     assert.equal(await page.$eval('#needAnswerForm', (el) => el.hidden), true);
-    const leaked = await page.evaluate(() => document.body.innerHTML.includes('Сколько отложить'));
-    assert.equal(leaked, false);
+    assert.match(page.url(), /\/needs\/need-test-qa$/);
+    const shown = Date.now();
+    await page.waitForFunction(() => location.pathname === '/', { timeout: 5000 });
+    const elapsed = Date.now() - shown;
+    assert.ok(elapsed >= 1500, String(elapsed));
+    assert.ok(elapsed < 4500, String(elapsed));
+    await page.waitForSelector('#needsList [data-id="need-social"]', { timeout: 8000 });
+    assert.equal(await page.$('#needsList [data-id="need-test-qa"]'), null);
+    const listed = await api('/api/needs');
+    assert.equal(listed.body.needs.some((item) => item.id === 'need-test-qa'), false);
+  } finally {
+    await page.close();
+  }
 
-    await page.type('#pwInput', 'pw-ui');
-    await page.click('#pwForm button[type=submit]');
-    await page.waitForFunction(() => (document.querySelector('#needDetails')?.textContent || '').includes('Сколько отложить'), { timeout: 8000 });
-    await page.waitForFunction(() => (document.querySelector('#needWho')?.textContent || '').includes('Финансы'), { timeout: 8000 });
+  const before = await api('/api/needs/need-test-qa');
+  assert.equal(before.body.answer, 'yes');
+  assert.equal(before.body.closedBy, 'owner');
+  assert.ok(before.body.closedAt);
+  const again = await api('/api/needs/need-test-qa/answer', {
+    method: 'POST',
+    body: JSON.stringify({ answer: 'no' }),
+  });
+  assert.equal(again.status, 409);
+  assert.equal(again.body.error, 'Пункт уже закрыт');
+  const after = await api('/api/needs/need-test-qa');
+  assert.equal(after.body.closedAt, before.body.closedAt);
+  assert.equal(after.body.closedBy, 'owner');
+  assert.equal(after.body.answer, 'yes');
 
-    const view = await page.evaluate(() => {
-      const pageEl = document.querySelector('#needPage');
-      const link = document.querySelector('#needDetails a');
-      const grok = document.querySelector('#needDetails .md-grok');
-      const send = document.querySelector('#needAnswerForm button');
-      const sendBox = send.getBoundingClientRect();
+  const closed = await browser.newPage();
+  try {
+    await closed.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+    await closed.goto(`${base}/needs/need-test-qa`, { waitUntil: 'domcontentloaded' });
+    await closed.waitForFunction(() => (document.querySelector('.need-answer p')?.textContent || '') === 'Да', { timeout: 8000 });
+    const view = await closed.evaluate(() => {
+      const visible = [...document.querySelectorAll('#needPage button')].filter((btn) => {
+        if (btn.closest('[hidden]')) return false;
+        const box = btn.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+      });
       return {
-        vw: window.innerWidth,
-        who: document.querySelector('#needWho').textContent,
-        where: document.querySelector('#needWhere').textContent,
-        html: document.querySelector('#needDetails').innerHTML,
-        href: link ? link.getAttribute('href') : '',
-        grokText: grok ? grok.textContent : '',
-        grokLink: !!document.querySelector('#needDetails a[href^="grokbot:"]'),
-        script: !!document.querySelector('#needDetails script'),
         form: document.querySelector('#needAnswerForm').hidden,
-        label: document.querySelector('#needYes').textContent,
-        sendH: sendBox.height,
-        overflow: pageEl.scrollWidth <= pageEl.clientWidth + 1,
+        yes: document.querySelector('#needYesNo').hidden,
+        text: document.querySelector('#needTextAnswer').hidden,
+        buttons: visible.map((btn) => btn.textContent),
+        answer: document.querySelector('.need-answer p').textContent,
+        time: document.querySelector('.need-answer time').textContent,
+        back: document.querySelector('.need-back').getAttribute('href'),
+        backText: document.querySelector('.need-back').textContent,
       };
     });
-    assert.equal(view.vw, 390);
-    assert.match(view.who, /7\.\s*Финансы/);
-    assert.match(view.where, /Чат Путина или Финансов/);
-    assert.equal(view.href, 'https://example.com/budget');
-    assert.equal(view.grokLink, false);
-    assert.match(view.grokText, /grokbot:\/\/app\/v1\/agent\?id=demo/);
-    assert.match(view.grokText, /Откройте в Grok/);
-    assert.equal(view.script, false);
-    assert.match(view.html, /&lt;script&gt;/);
-    assert.equal(view.form, false);
-    assert.equal(view.label, 'Да');
-    assert.ok(view.sendH >= 40, String(view.sendH));
-    assert.equal(view.overflow, true);
-    const external = await page.$eval('#needExternal', (el) => el.textContent);
-    assert.match(external, /grokbot:\/\/app\/v1\/agent\?id=8b9d4ad0/);
-    assert.equal(await page.$('#needExternal a'), null);
+    assert.equal(view.form, true);
+    assert.equal(view.yes, true);
+    assert.equal(view.text, true);
+    assert.deepEqual(view.buttons, []);
+    assert.equal(view.answer, 'Да');
+    assert.equal(view.time, moscowClock(before.body.answeredAt || before.body.answers.at(-1).at));
+    assert.equal(view.back, '/');
+    assert.match(view.backText, /Кремль/);
+  } finally {
+    await closed.close();
+  }
+});
 
-    await page.click('#needYes');
-    await page.waitForFunction(() => (document.querySelector('#needAnswerMsg')?.textContent || '').includes('закрыт'), { timeout: 8000 });
-    assert.equal(await page.$eval('#needAnswerBadge', (el) => el.hidden), false);
-
-    const saved = await api('/api/state', { headers: { 'x-app-password': 'pw-ui' } });
-    const finance = saved.body.needs.find((n) => n.id === 'need-finance');
-    assert.equal(finance.answerStatus, 'answered');
-    assert.equal(finance.answer, 'yes');
-    assert.ok(finance.closedAt);
-    assert.equal(finance.closedBy, 'owner');
-    const task = saved.body.tasks.find((t) => t.agent === 'finance' && t.text.includes(': Да'));
-    assert.equal(task.text, 'Ответ Арсения на «Ответить на шесть финансовых вопросов»: Да');
-    const pub = await api('/api/state');
-    const hidden = pub.body.needs.find((n) => n.id === 'need-finance');
-    assert.equal(hidden.answers, undefined);
-    assert.equal(hidden.details, undefined);
-    assert.equal(JSON.stringify(hidden).includes('Сколько отложить'), false);
+test('частичный текстовый тест копится и не уходит с страницы', { timeout: 30000 }, async () => {
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+    await page.evaluateOnNewDocument(() => localStorage.removeItem('appPassword'));
+    await page.goto(`${base}/needs/need-test-question`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#needTextAnswer:not([hidden])', { timeout: 8000 });
+    assert.equal(await page.$eval('#needYesNo', (el) => el.hidden), true);
+    assert.equal(await page.$('#modal.show'), null);
+    assert.equal(await page.$eval('#needTitle', (el) => el.textContent), 'ТЕСТ: вопрос с ответом текстом');
+    await page.type('#needAnswer', 'первая часть');
+    await page.click('#needPartial');
+    await page.click('#needSend');
+    await page.waitForFunction(() => (document.querySelector('#needAnswerMsg')?.textContent || '').includes('Частичный ответ записан'), { timeout: 8000 });
+    await page.type('#needAnswer', 'вторая часть');
+    await page.click('#needPartial');
+    await page.click('#needSend');
+    await page.waitForFunction(() => document.querySelectorAll('.need-answer').length === 2, { timeout: 8000 });
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    assert.equal(new URL(page.url()).pathname, '/needs/need-test-question');
+    const texts = await page.$$eval('.need-answer p', (els) => els.map((el) => el.textContent));
+    assert.deepEqual(texts, ['первая часть', 'вторая часть']);
+    const saved = await api('/api/needs/need-test-question');
+    assert.equal(saved.body.closedAt, null);
+    assert.equal(saved.body.answers.length, 2);
+    assert.equal((await api('/api/state')).body.tasks.some((item) => String(item.text || '').includes('первая часть')), false);
+    await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#needsList .needs-test', { timeout: 8000 });
+    const tests = await page.$eval('#needsList .needs-test', (el) => el.textContent);
+    assert.match(tests, /ТЕСТ: вопрос с ответом текстом/);
+    assert.match(tests, /Тестовые/);
   } finally {
     await page.close();
   }
