@@ -77,11 +77,12 @@ async function openPage(viewport, extra = {}) {
     if (url.includes('fonts.gstatic.com') || url.includes('fonts.googleapis.com')) req.abort();
     else req.continue();
   });
+  const narrow = viewport.width < 700;
   await page.setViewport({
     width: viewport.width,
     height: viewport.height,
-    isMobile: !extra.desktop,
-    hasTouch: !extra.desktop,
+    isMobile: narrow,
+    hasTouch: narrow,
     deviceScaleFactor: 1,
   });
   await page.goto(`${base}${extra.path || '/'}`, { waitUntil: 'domcontentloaded' });
@@ -163,7 +164,9 @@ test('прокрутка панели на 390px сохраняется посл
 
   const page = await openPage({ width: 390, height: 844 }, { path: '/?agent=dev' });
   try {
-    await page.waitForSelector('#panel.open .qr', { timeout: 8000 });
+    await page.waitForSelector('#panel.open .agent-tab[data-tab="journal"]', { timeout: 8000 });
+    await page.click('.agent-tab[data-tab="journal"]');
+    await page.waitForSelector('#panel.open .tab-panel[data-tab-panel="journal"]:not([hidden]) .qr', { timeout: 8000 });
     await page.waitForSelector('#panel.open .chat-log .msg-row', { timeout: 4000 });
     const before = await page.evaluate(() => {
       const panel = document.querySelector('#panel');
@@ -241,7 +244,9 @@ test('бейдж, цепочка и тихий конверт при reduced-mot
       const badge = document.querySelector('.order-badge[data-id="qa"]');
       return badge && badge.textContent.includes('принял');
     }, { timeout: 8000 });
-    await page.waitForSelector('#panel.open .order-chain', { timeout: 8000 });
+    await page.waitForSelector('#panel.open .agent-tab[data-tab="journal"]', { timeout: 8000 });
+    await page.click('.agent-tab[data-tab="journal"]');
+    await page.waitForSelector('#panel.open .tab-panel[data-tab-panel="journal"]:not([hidden]) .order-chain', { timeout: 8000 });
     const chain = await page.$eval('#panel .order-chain', (el) => el.textContent);
     assert.match(chain, /1\.\s*Путин/);
     assert.doesNotMatch(chain, /Главный агент/);
@@ -249,10 +254,12 @@ test('бейдж, цепочка и тихий конверт при reduced-mot
     const hist = await page.$eval('#panel .order-hist', (el) => el.textContent);
     assert.match(hist, /отправлен/);
     assert.match(hist, /принял/);
-    const chat = await page.$eval('#panel .chat-log', (el) => el.textContent);
+    await page.click('.agent-tab[data-tab="chat"]');
+    await page.waitForSelector('#panel.open .tab-panel[data-tab-panel="chat"]:not([hidden]) .chat-log');
+    const chat = await page.$eval('#panel .tab-panel[data-tab-panel="chat"] .chat-log', (el) => el.textContent);
     assert.match(chat, /Приказ:/);
     assert.match(chat, /Принял заказ/);
-    const sysCount = await page.$$eval('#panel .msg-row.system', (nodes) => nodes.length);
+    const sysCount = await page.$$eval('#panel .tab-panel[data-tab-panel="chat"] .msg-row.system', (nodes) => nodes.length);
     assert.equal(sysCount, 2);
 
     const working = await api(`/api/orders/${created.body.id}`, {
@@ -1014,6 +1021,8 @@ test('панель DevOps: журнал приказов на десктопе �
         localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
       });
       await page.goto(`${base}/?theme=day&agent=devops`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#panel.open[data-agent="devops"] .agent-tab[data-tab="journal"]', { timeout: 8000 });
+      await page.click('.agent-tab[data-tab="journal"]');
       await page.waitForSelector('#panel.open[data-agent="devops"] [data-anchor="tasks"] .quest[data-dir="in"]', { timeout: 8000 });
       const info = await page.evaluate(() => {
         const tasks = document.querySelector('[data-anchor="tasks"]');
@@ -1192,6 +1201,183 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.ok(state.needs.some((n) => n.fromAgentId === 'trading' && n.what === 'Архивный пункт трейдинга'));
     assert.ok(state.needs.some((n) => n.fromAgentId === 'lang' && n.what === 'Архивный пункт репетитора'));
     assert.equal(state.tasks.some((t) => t.agent === 'lang'), false);
+  } finally {
+    await page.close();
+  }
+});
+
+const POKER_DASHBOARD = {
+  title: 'Сводка Spin&Go',
+  blocks: [
+    { type: 'kpi', label: 'Винрейт', value: 12.4, unit: '%', target: 15, delta: 1.2, trend: 'up' },
+    { type: 'kpi', label: 'Сессии', value: 28, unit: 'шт', trend: 'flat' },
+    {
+      type: 'chart',
+      title: 'Сессии по дням',
+      kind: 'bar',
+      labels: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт'],
+      series: [{ name: 'Сессии', data: [1, 3, 2, 4, 3] }],
+    },
+    { type: 'forecast', label: 'Прогноз недели', value: 18, unit: '%', horizon: '7 дней', confidence: 0.8 },
+    { type: 'markdown', text: '## Итог\nНеделя **в плюсе**.\n\n- держим риск\n\n[отчёт](https://example.com/report)' },
+    { type: 'links', items: [{ label: 'Журнал сессий', url: 'https://example.com/trades' }] },
+  ],
+};
+
+async function publishPokerDashboard() {
+  const posted = await api('/api/agents/poker/dashboard', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify(POKER_DASHBOARD),
+  });
+  assert.equal(posted.status, 201, JSON.stringify(posted.body));
+  const need = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({
+      what: 'Подтвердить лимит на неделю',
+      where: 'Чат Покера',
+      fromAgentId: 'poker',
+      urgency: 'high',
+    }),
+  });
+  assert.equal(need.status, 201);
+}
+
+async function readDashboard(page) {
+  await page.waitForSelector('#panel.open .kpi-card', { timeout: 8000 });
+  await page.waitForSelector('#panel.open .dash-chart svg rect', { timeout: 4000 });
+  await page.waitForFunction(() => {
+    const r = document.querySelector('#panel').getBoundingClientRect();
+    return r.top >= 0 && r.top < window.innerHeight - 80 && r.bottom <= window.innerHeight + 1;
+  }, { timeout: 4000 });
+  return page.evaluate(() => {
+    const panel = document.querySelector('#panel');
+    const tabs = document.querySelector('.agent-tabs');
+    const buttons = [...tabs.querySelectorAll('.agent-tab')];
+    const cards = [...document.querySelectorAll('#panel-dashboard .kpi-card')].map((el) => el.getBoundingClientRect());
+    const svg = document.querySelector('.dash-chart svg').getBoundingClientRect();
+    const chart = document.querySelector('.dash-chart').getBoundingClientRect();
+    const selected = document.querySelector('.agent-tab[aria-selected="true"]');
+    return {
+      vw: window.innerWidth,
+      tab: selected ? selected.dataset.tab : '',
+      labels: buttons.map((el) => el.textContent.replace(/\d/g, '').replace(/\s+/g, ' ').trim()),
+      buttonsInside: buttons.every((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 36 && r.height > 24 && r.left >= -1 && r.right <= window.innerWidth + 1 && r.top >= 0 && r.bottom <= window.innerHeight;
+      }),
+      kpi: [...document.querySelectorAll('.kpi-card')].map((el) => el.textContent).join('\n'),
+      forecast: document.querySelector('.forecast').textContent,
+      markdown: document.querySelector('.md').innerHTML,
+      svgW: svg.width,
+      chartW: chart.width,
+      panelRight: panel.getBoundingClientRect().right,
+      stacked: cards.length >= 2 && cards[1].top >= cards[0].bottom - 2,
+      sideBySide: cards.length >= 2 && Math.abs(cards[0].top - cards[1].top) < 8 && cards[1].left >= cards[0].right - 2,
+      chartOverflow: svg.right > chart.right + 2 || svg.left < chart.left - 2,
+    };
+  });
+}
+
+async function switchDashboardTabs(page) {
+  await page.click('.agent-tab[data-tab="chat"]');
+  await page.waitForSelector('#panel-chat:not([hidden]) .chat-log');
+  assert.equal(await page.$eval('#panel-dashboard', (el) => el.hidden), true);
+  await page.click('.agent-tab[data-tab="journal"]');
+  await page.waitForSelector('#panel-journal:not([hidden])');
+  const journal = await page.$eval('#panel-journal', (el) => el.textContent);
+  assert.match(journal, /Журнал|Заданий пока нет|Текущий приказ/);
+  await page.click('.agent-tab[data-tab="needs"]');
+  await page.waitForSelector('#panel-needs:not([hidden]) .need-item');
+  const need = await page.$eval('#panel-needs', (el) => el.textContent);
+  assert.match(need, /Подтвердить лимит на неделю/);
+  await page.click('.agent-tab[data-tab="dashboard"]');
+  await page.waitForSelector('#panel-dashboard:not([hidden]) .kpi-card');
+  const safe = await page.evaluate(() => {
+    const html = window.OfficeDashboard.renderMarkdown('<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n[x](javascript:alert(1))\n[ок](https://example.com/ok)');
+    const box = document.createElement('div');
+    box.innerHTML = html;
+    return {
+      scripts: box.querySelectorAll('script').length,
+      badAttrs: [...box.querySelectorAll('*')].some((el) => [...el.attributes].some((a) => /^on/i.test(a.name))),
+      hrefs: [...box.querySelectorAll('a')].map((a) => a.getAttribute('href')),
+      text: box.textContent,
+    };
+  });
+  assert.equal(safe.scripts, 0);
+  assert.equal(safe.badAttrs, false);
+  assert.deepEqual(safe.hrefs, ['https://example.com/ok']);
+  assert.match(safe.text, /<script>/);
+  assert.match(safe.text, /javascript:alert/);
+}
+
+test('дашборд направления на ширине 390', { timeout: 30000 }, async () => {
+  await publishPokerDashboard();
+  const page = await openPage({ width: 390, height: 844 }, { path: '/?agent=poker&theme=day' });
+  try {
+    const view = await readDashboard(page);
+    assert.equal(view.vw, 390);
+    assert.equal(view.tab, 'dashboard');
+    assert.deepEqual(view.labels, ['Дашборд', 'Переписка', 'Журнал', 'Ждёт от вас']);
+    assert.equal(view.buttonsInside, true, 'вкладки не помещаются в 390px');
+    assert.match(view.kpi, /Винрейт/);
+    assert.match(view.kpi, /12\.4/);
+    assert.match(view.forecast, /Прогноз недели/);
+    assert.match(view.forecast, /80%/);
+    assert.match(view.markdown, /<strong>в плюсе<\/strong>/);
+    assert.equal(view.stacked, true, 'KPI не встали столбиком');
+    assert.equal(view.chartOverflow, false);
+    assert.ok(view.svgW > 120, `график слишком узкий: ${view.svgW}`);
+    assert.ok(view.svgW <= view.chartW + 1, `svg шире контейнера: ${view.svgW} > ${view.chartW}`);
+    assert.ok(view.panelRight <= view.vw + 1);
+    await switchDashboardTabs(page);
+    await page.evaluate(() => {
+      const dash = document.querySelector('#panel-dashboard .dash');
+      dash.style.background = '#141820';
+      dash.style.padding = '8px 4px 12px';
+      dash.style.borderRadius = '12px';
+    });
+    const shot = await page.$('#panel-dashboard .dash');
+    await shot.screenshot({ path: '/tmp/dashboard-390.png' });
+  } finally {
+    await page.close();
+  }
+});
+
+test('дашборд направления на десктопе', { timeout: 30000 }, async () => {
+  await publishPokerDashboard();
+  const page = await openPage({ width: 1280, height: 800 }, { path: '/?agent=poker&theme=night' });
+  try {
+    const view = await readDashboard(page);
+    assert.equal(view.vw, 1280);
+    assert.equal(view.tab, 'dashboard');
+    assert.match(view.kpi, /Сессии/);
+    assert.match(view.markdown, /<a href="https:\/\/example.com\/report"/);
+    assert.equal(view.chartOverflow, false);
+    assert.ok(view.svgW > 200, `график не растянулся: ${view.svgW}`);
+    assert.ok(view.svgW <= view.chartW + 1);
+    assert.equal(view.sideBySide, true, 'на широкой панели KPI должны стоять в ряд');
+    const empty = await openPage({ width: 1280, height: 800 }, { path: '/?agent=blog&theme=day' });
+    try {
+      await empty.waitForSelector('#panel.open .dash-empty', { timeout: 8000 });
+      const text = await empty.$eval('.dash-empty', (el) => el.textContent);
+      assert.match(text, /Агент ещё не опубликовал дашборд/);
+      assert.match(text, /Пример шаблона/);
+      await empty.click('.dash-example summary');
+      const example = await empty.$eval('.dash-example', (el) => el.textContent);
+      assert.match(example, /"type": "kpi"/);
+    } finally {
+      await empty.close();
+    }
+    await page.evaluate(() => {
+      const dash = document.querySelector('#panel-dashboard .dash');
+      dash.style.background = '#141820';
+      dash.style.padding = '8px 4px 12px';
+      dash.style.borderRadius = '12px';
+    });
+    const shot = await page.$('#panel-dashboard .dash');
+    await shot.screenshot({ path: '/tmp/dashboard-desktop.png' });
   } finally {
     await page.close();
   }

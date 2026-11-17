@@ -31,9 +31,14 @@
     needs: [],
     seenNeeds: new Set(),
     needsReady: false,
+    dashboards: new Map(),
+    analyses: new Map(),
+    deskId: null,
     panelScrollTo: '',
     archivedIds: new Set(),
   };
+  let panelTab = 'dashboard';
+  let panelTabAgent = null;
   const drafts = new Map();
   const MAX_FILES = 5;
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -863,10 +868,22 @@
     }
     if (prev !== S.selected) blip(prev ? 820 : 700);
     if (innerWidth <= 900 && $('#hier').classList.contains('open')) setHierarchy(false);
+    if (scrollTo === 'awaits') {
+      panelTabAgent = S.selected;
+      panelTab = 'needs';
+    }
     S.panelScrollTo = scrollTo || '';
     renderPanel({ preserveScroll: prev === S.selected && !scrollTo });
     S.panelSig = panelContentSig(S.selected);
     panel.classList.add('open');
+    const openId = S.selected;
+    syncDashboard(openId).then(() => {
+      if (S.selected !== openId) return;
+      const nextSig = panelContentSig(openId);
+      if (nextSig === S.panelSig) return;
+      S.panelSig = nextSig;
+      renderPanel({ preserveScroll: true });
+    }).catch(() => {});
     updateAgents();
     if ($('#hier').classList.contains('open')) renderHierarchy(true);
     const a = S.byId.get(S.selected);
@@ -994,7 +1011,44 @@
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
     const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
-    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
+    const cached = S.dashboards.get(a.id);
+    const dashKey = `${a.dashboardUpdatedAt || ''}|${cached ? JSON.stringify(cached.data) : ''}`;
+    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey, dashKey].join('\u0003');
+  }
+
+  function panelTabFor(agentId) {
+    if (panelTabAgent !== agentId) {
+      panelTabAgent = agentId;
+      panelTab = 'dashboard';
+    }
+    return panelTab;
+  }
+  const dashInflight = new Map();
+  async function syncDashboard(agentId) {
+    const a = S.byId.get(agentId);
+    if (!a) return;
+    const stamp = a.dashboardUpdatedAt || '';
+    const cached = S.dashboards.get(agentId);
+    if (cached && cached.stamp === stamp) return;
+    const key = `${agentId}:${stamp}`;
+    if (dashInflight.has(key)) return dashInflight.get(key);
+    const job = (async () => {
+      if (!stamp) {
+        S.dashboards.set(agentId, { stamp: '', data: null });
+        return;
+      }
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/dashboard`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const body = await res.json().catch(() => ({}));
+      const current = S.byId.get(agentId);
+      if (!current || (current.dashboardUpdatedAt || '') !== stamp) return;
+      S.dashboards.set(agentId, { stamp, data: body.dashboard || null });
+    })();
+    dashInflight.set(key, job);
+    try { await job; } finally { dashInflight.delete(key); }
+  }
+  function agentNeedsHTML(agent) {
+    return panelNeedsHTML(agent) || '<div class="empty"><b>Пусто</b>Этот агент сейчас ничего не ждёт.</div>';
   }
 
   function renderPanel(opts = {}) {
@@ -1042,7 +1096,18 @@
     if (pin && !shown.some((t) => t.id === pin.id)) shown.unshift(pin);
     const focusCls = (t) => (S.pinnedOrder === t.id ? ' order-focus' : '');
     const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${shown.map((t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id).replace('class="quest"', `class="quest${focusCls(t)}"`)).join('') || emptyQuests()}</div></div>`;
+    const tab = panelTabFor(a.id);
+    const needCount = Feed.openNeedsForAgent(S.needs, a.id).length;
+    const tabBtn = (id, label) => {
+      const count = id === 'needs' && needCount ? `<span class="tab-count">${needCount}</span>` : '';
+      return `<button type="button" class="agent-tab" role="tab" data-tab="${id}" id="tab-${id}" aria-selected="${tab === id ? 'true' : 'false'}" aria-controls="panel-${id}">${label}${count}</button>`;
+    };
+    const hidden = (id) => (tab === id ? '' : ' hidden');
+    const cachedDash = S.dashboards.get(a.id);
+    const dashHtml = window.OfficeDashboard.renderDashboard(cachedDash ? cachedDash.data : null);
+    const doneHtml = a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : '';
     panel.innerHTML = `
+      <a class="icon-btn sm p-full" id="pFull" href="/agent/${esc(a.id)}" aria-label="Полный экран" title="Полный экран">⛶</a>
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
         <div class="p-portrait">${portrait(a, '-34 -104 68 76')}</div>
@@ -1050,19 +1115,37 @@
           <h2>${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</h2><div class="role">${esc(a.role || '')}</div>${parent ? `<button type="button" class="parent-link" data-parent="${esc(parent.id)}">Помощник · ${esc(titled(parent))}</button>` : ''}</div>
       </div>
       <div class="p-body">
-        ${panelNeedsHTML(a)}
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
           <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>
-        ${currentOrderHTML(a)}`}
+        <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>`}
+        <div class="agent-tabs" role="tablist" aria-label="Разделы агента">
+          ${tabBtn('dashboard', 'Дашборд')}${tabBtn('chat', 'Переписка')}${tabBtn('journal', 'Журнал')}${tabBtn('needs', 'Ждёт от вас')}
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-dashboard" data-tab-panel="dashboard" aria-labelledby="tab-dashboard"${hidden('dashboard')}>${dashHtml}</div>
+        <div class="tab-panel" role="tabpanel" id="panel-chat" data-tab-panel="chat" data-anchor="chat" aria-labelledby="tab-chat"${hidden('chat')}>
+          <div class="chat-log" data-scroll-key="chat">${a.vacant ? '<div class="empty"><b>Переписки нет</b>Сначала дай направлению имя.</div>' : chatHTML(a)}</div>
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-journal" data-tab-panel="journal" aria-labelledby="tab-journal"${hidden('journal')}>
+          ${a.vacant ? '' : currentOrderHTML(a)}
+          ${a.vacant ? '<div class="empty"><b>Журнал пуст</b>У свободного участка ещё нет приказов.</div>' : taskBlock}
+          ${a.vacant ? '' : doneHtml}
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-needs" data-tab-panel="needs" aria-labelledby="tab-needs"${hidden('needs')}>${agentNeedsHTML(a)}</div>
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
-        ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
-        ${a.vacant ? '' : taskBlock}
-        ${a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : ''}
       </div>
       ${a.vacant ? '' : `<div class="task-dock"><span class="hint">Ctrl+Enter — отправить</span><button class="btn gold" type="submit" form="taskForm" id="taskSubmit">${ico('send')}Дать задачу</button><div class="msg" id="formMsg"></div></div>`}`;
     $('#pClose').onclick = () => select(null);
+    const full = $('#pFull');
+    if (full) full.onclick = (e) => { e.preventDefault(); openDesk(a.id, true); };
+    panel.querySelectorAll('.agent-tab').forEach((btn) => {
+      btn.onclick = () => {
+        if (btn.getAttribute('aria-selected') === 'true') return;
+        panelTabAgent = a.id;
+        panelTab = btn.dataset.tab;
+        renderPanel({ preserveScroll: true });
+      };
+    });
     const parentBtn = panel.querySelector('.parent-link');
     if (parentBtn) parentBtn.onclick = () => select(parentBtn.dataset.parent);
     const f = $('#taskForm');
@@ -1652,6 +1735,119 @@
   }
   window.Office = { openOrder };
 
+  function routeAgentId() {
+    const match = location.pathname.match(/^\/agent\/([^/]+)\/?$/);
+    if (!match) return '';
+    try { return decodeURIComponent(match[1]); } catch (_) { return match[1]; }
+  }
+  function ensureDesk() {
+    let root = $('#desk');
+    if (root) return root;
+    root = document.createElement('div');
+    root.id = 'desk';
+    root.hidden = true;
+    $('#app').appendChild(root);
+    return root;
+  }
+  function nameOfAgent(id) {
+    if (!id || id === 'owner') return 'Владелец';
+    const a = S.byId.get(id);
+    return a ? titled(a) : id;
+  }
+  function financeLocked(agent) {
+    return window.OfficeDesk.isFinance(agent) && !getPassword();
+  }
+  async function syncAnalysis(agentId) {
+    const agent = S.byId.get(agentId);
+    if (!agent) return;
+    if (financeLocked(agent)) {
+      S.analyses.set(agentId, { locked: true, text: '', updatedAt: null });
+      return;
+    }
+    const headers = {};
+    if (getPassword()) headers['x-app-password'] = getPassword();
+    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/analysis`, { headers, cache: 'no-store' });
+    if (res.status === 401) {
+      S.analyses.set(agentId, { locked: true, text: '', updatedAt: null });
+      return;
+    }
+    if (!res.ok) return;
+    const body = await res.json().catch(() => ({}));
+    S.analyses.set(agentId, { locked: false, text: body.text || '', updatedAt: body.updatedAt || null });
+  }
+  function renderDesk() {
+    const id = S.deskId;
+    const agent = id && S.byId.get(id);
+    const root = ensureDesk();
+    if (!agent) { closeDesk(); return; }
+    const draftEl = $('#deskTaskText');
+    const draftText = draftEl ? draftEl.value : '';
+    const cached = S.analyses.get(id) || { locked: financeLocked(agent), text: '', updatedAt: null };
+    const locked = financeLocked(agent) || cached.locked;
+    const tasks = Feed.ordersForAgent(S.tasks, id);
+    root.classList.add('open');
+    root.hidden = false;
+    root.innerHTML = `<div class="desk-bar">
+        <h1>${agent.number ? `${esc(numLabel(agent))} ` : ''}${esc(plainName(agent))}</h1>
+        <a href="/agent/${esc(agent.id)}">/agent/${esc(agent.id)}</a>
+        <button type="button" class="icon-btn sm" id="deskClose" aria-label="Закрыть пульт">${ico('x')}</button>
+      </div>${window.OfficeDesk.render({
+        agent,
+        tasks,
+        now: Date.now(),
+        locked,
+        analysis: cached,
+        nameOf: nameOfAgent,
+      })}`;
+    $('#deskClose').onclick = () => {
+      closeDesk();
+      if (routeAgentId() === id) history.pushState({ desk: null }, '', '/');
+    };
+    const unlock = $('#deskUnlock');
+    if (unlock) unlock.onclick = () => { pending = () => { syncAnalysis(id).then(renderDesk); }; openModal(); };
+    const form = $('#deskTaskForm');
+    if (form) form.onsubmit = (e) => { e.preventDefault(); submitDeskTask(id); };
+    const area = $('#deskTaskText');
+    if (area && draftText) area.value = draftText;
+  }
+  async function submitDeskTask(agentId) {
+    const text = ($('#deskTaskText').value || '').trim();
+    const msg = $('#deskMsg');
+    if (!text) { msg.className = 'msg err'; msg.textContent = 'Напиши, что нужно сделать.'; return; }
+    if (!getPassword()) { pending = () => submitDeskTask(agentId); openModal(); return; }
+    msg.className = 'msg'; msg.textContent = 'Отправляю…';
+    try {
+      const res = await fetch('/api/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+        body: JSON.stringify({ agent: agentId, text, fromAgentId: 'owner' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { localStorage.removeItem('appPassword'); pending = () => submitDeskTask(agentId); openModal('Пароль не подошёл. Попробуй ещё раз.'); msg.textContent = ''; return; }
+      if (!res.ok) { msg.className = 'msg err'; msg.textContent = data.error || `Ошибка ${res.status}`; return; }
+      msg.className = 'msg ok'; msg.textContent = 'Задача записана.';
+      $('#deskTaskText').value = '';
+      await loadState();
+    } catch (_) {
+      msg.className = 'msg err'; msg.textContent = 'Нет связи с сервером';
+    }
+  }
+  function openDesk(id, push) {
+    if (!S.byId.has(id)) return;
+    S.deskId = id;
+    if (push && routeAgentId() !== id) history.pushState({ desk: id }, '', `/agent/${encodeURIComponent(id)}`);
+    renderDesk();
+    syncAnalysis(id).then(() => { if (S.deskId === id) renderDesk(); }).catch(() => {});
+  }
+  function closeDesk() {
+    S.deskId = null;
+    const root = $('#desk');
+    if (!root) return;
+    root.classList.remove('open');
+    root.hidden = true;
+    root.innerHTML = '';
+  }
+
   // ── Загрузка состояния ───────────────────────────────────────────────────
   async function loadState() {
     const res = await fetch('/api/state', { cache: 'no-store' });
@@ -1669,6 +1865,7 @@
     S.agents = agents; S.tasks = data.tasks || []; S.messages = data.messages || [];
     S.byId = new Map(agents.map((a) => [a.id, a]));
     syncNeeds(data.needs);
+    if (S.selected) await syncDashboard(S.selected);
     const sig = agentSig(agents);
     if (sig !== S.sig) { S.sig = sig; buildAgents(); }
     noteFreshOrders();
@@ -1694,11 +1891,18 @@
       }
     }
     document.dispatchEvent(new CustomEvent('officestate', { detail: data }));
+    if (S.deskId) renderDesk();
     if (!S.loaded) {
       S.loaded = true;
       goHome(false);
-      const pre = params.get('agent');
-      if (pre && S.byId.has(pre)) setTimeout(() => select(pre), 300);
+      const route = routeAgentId();
+      const pre = route || params.get('agent');
+      if (pre && S.byId.has(pre)) {
+        setTimeout(() => {
+          select(pre);
+          if (route) openDesk(route, false);
+        }, 300);
+      }
     }
   }
   function noteFreshOrders() {
@@ -1865,6 +2069,11 @@
 
   // ── Старт ────────────────────────────────────────────────────────────────
   initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initNeeds(); initRoster(); initNeedPage();
+  addEventListener('popstate', () => {
+    const route = routeAgentId();
+    if (route && S.byId.has(route)) openDesk(route, false);
+    else closeDesk();
+  });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeOverlay());
   addEventListener('resize', () => {
     if (innerWidth <= 900 && $('#hier').classList.contains('open') && $('#panel').classList.contains('open')) {

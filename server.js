@@ -8,6 +8,8 @@ const multer = require('multer');
 const { activityFor } = require('./lib/activity');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
+const { createDashboardStore } = require('./lib/dashboards');
+const { createAnalysisStore } = require('./lib/analysis');
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -658,6 +660,15 @@ if (typeof needsResolveTimer.unref === 'function') needsResolveTimer.unref();
 const poryadokSync = createPoryadokSync({ getState: () => state });
 poryadokSync.start();
 
+// Версии дашборда: Postgres при DATABASE_URL, иначе память. Опрос /api/state
+// читает только время последней записи и не тащит блоки.
+const dashboards = createDashboardStore();
+const analyses = createAnalysisStore();
+
+function isFinanceAgent(agent) {
+  return !!(agent && (agent.id === 'finance' || agent.parentId === 'finance'));
+}
+
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
   const ba = Buffer.from(a);
@@ -694,6 +705,8 @@ function publicState(opts = {}) {
       vacant: !!a.vacant,
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
+      dashboardUpdatedAt: dashboards.updatedAt(a.id),
+      analysisUpdatedAt: analyses.get(a.id) ? analyses.get(a.id).updatedAt : null,
       ...activityFor(a, state.tasks),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
@@ -1464,6 +1477,57 @@ function needCloser(req) {
 const app = express();
 app.disable('x-powered-by');
 // Текст задачи и id вложений — это JSON до 1 МБ. Сами файлы принимает multer: 10 МБ и не больше 5.
+// Тело дашборда читаем до общего json-парсера, чтобы отсечь размер ~200 КБ своим 400.
+function readDashboardBody(req, res, next) {
+  const chunks = [];
+  let size = 0;
+  let failed = false;
+  req.on('data', (chunk) => {
+    if (failed) return;
+    size += chunk.length;
+    if (size > dashboards.maxBytes) {
+      failed = true;
+      res.status(400).json({ error: 'Тело дашборда больше 200 КБ' });
+      return;
+    }
+    chunks.push(chunk);
+  });
+  req.on('end', () => {
+    if (failed || res.headersSent) return;
+    let raw = Buffer.concat(chunks).toString('utf8').trim();
+    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1).trim();
+    if (!raw) return res.status(400).json({ error: 'Нужно JSON-тело' });
+    try {
+      req.body = JSON.parse(raw);
+    } catch (_) {
+      return res.status(400).json({ error: 'Некорректный JSON' });
+    }
+    next();
+  });
+  req.on('error', () => {
+    if (!res.headersSent) res.status(400).json({ error: 'Не удалось прочитать тело' });
+  });
+}
+
+app.post('/api/agents/:id/dashboard', requireAgentToken, readDashboardBody, async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim();
+    if (!findAgent(agentId)) return res.status(404).json({ error: 'Агент не найден' });
+    const dashboard = dashboards.parse(req.body);
+    const saved = await dashboards.save(agentId, dashboard);
+    res.status(201).json({
+      ok: true,
+      versions: saved.versions,
+      updatedAt: saved.storedAt,
+      dashboard: saved.dashboard,
+    });
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось сохранить дашборд' });
+  }
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use((_req, res, next) => {
   res.on('finish', () => {
@@ -1476,8 +1540,38 @@ app.get('/healthz', (_req, res) => {
   res.status(200).type('text/plain').send('ok');
 });
 
-app.get('/api/state', (req, res) => {
-  res.json(publicState({ includePrivate: hqPasswordOk(req) }));
+app.get('/api/state', async (req, res) => {
+  try {
+    await dashboards.ready();
+    res.json(publicState({ includePrivate: hqPasswordOk(req) }));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Не удалось собрать состояние' });
+  }
+});
+
+app.get('/api/agents/:id/dashboard/history', async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim();
+    if (!findAgent(agentId)) return res.status(404).json({ error: 'Агент не найден' });
+    res.json(await dashboards.history(agentId));
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось прочитать историю дашборда' });
+  }
+});
+
+app.get('/api/agents/:id/dashboard', async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim();
+    if (!findAgent(agentId)) return res.status(404).json({ error: 'Агент не найден' });
+    res.json(await dashboards.current(agentId));
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось прочитать дашборд' });
+  }
 });
 
 app.get('/api/needs', (req, res) => {
@@ -1953,9 +2047,50 @@ registerHeartbeat(app, {
   orders: () => state.tasks,
 });
 
+function agentStub(res, title) {
+  res.status(404).type('html').send(
+    `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:sans-serif;background:#0d1017;color:#eef1f7"><main style="max-width:36rem;padding:24px"><h1>${title}</h1><p><a href="/" style="color:#f5c451">На карту</a></p></main></body></html>`,
+  );
+}
+
+app.get('/agent/:id', (req, res) => {
+  const id = String(req.params.id || '').trim();
+  const agent = findAgent(id);
+  if (!agent) return agentStub(res, 'Агент не найден');
+  if (agent.archived) return agentStub(res, 'Агент в архиве');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.get('/needs/:id', (req, res, next) => {
   if (!req.params.id || req.params.id.includes('/')) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/api/agents/:id/analysis', (req, res) => {
+  const agent = findAgent(String(req.params.id || '').trim());
+  if (!agent) return res.status(404).json({ error: 'Агент не найден' });
+  if (agent.archived) return res.status(404).json({ error: 'Агент в архиве' });
+  const send = () => {
+    const row = analyses.get(agent.id);
+    res.json({ agentId: agent.id, text: row ? row.text : '', updatedAt: row ? row.updatedAt : null });
+  };
+  if (isFinanceAgent(agent)) return requireAppPassword(req, res, send);
+  return send();
+});
+
+app.put('/api/agents/:id/analysis', requireUserOrAgent, (req, res) => {
+  try {
+    const agent = findAgent(String(req.params.id || '').trim());
+    if (!agent) return res.status(404).json({ error: 'Агент не найден' });
+    if (agent.archived) return res.status(404).json({ error: 'Агент в архиве' });
+    const parsed = analyses.parse(req.body || {});
+    analyses.set(agent.id, parsed);
+    res.json({ ok: true, agentId: agent.id, text: parsed.text, updatedAt: parsed.updatedAt });
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось сохранить анализ' });
+  }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -1997,6 +2132,7 @@ if (require.main === module) {
 module.exports = {
   app,
   state,
+  dashboards,
   migrateOwnerNeeds,
   isNeedStale,
   resolveNeedsByEnv,
