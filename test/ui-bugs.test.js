@@ -60,6 +60,7 @@ if (!CHROME || !puppeteer) {
         const box = r.getBoundingClientRect();
         return {
           count: chips.length,
+          ids: chips.map((el) => el.dataset.id),
           scrollbar: cs.scrollbarWidth,
           touch: cs.touchAction,
           overflow: cs.overflowX,
@@ -67,7 +68,8 @@ if (!CHROME || !puppeteer) {
           lastClipped: last.right > box.right + 1,
         };
       });
-      assert.ok(before.count >= 14, `агентов в полосе ${before.count}`);
+      assert.equal(before.count, 11, `в полосе только главные здания, сейчас ${before.count}`);
+      assert.equal(before.ids.includes('invest') || before.ids.includes('analyst') || before.ids.includes('advisor'), false);
       assert.ok(before.max > 40, 'полоса не переполнена, листать нечего');
       assert.notEqual(before.scrollbar, 'none');
       assert.equal(before.touch, 'pan-x');

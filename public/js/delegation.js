@@ -28,11 +28,20 @@
     return Math.max(0.05, Math.hypot(m.a, m.b));
   }
 
-  function roof(agent) {
+  function roof(agent, byId) {
     if (!agent) return null;
-    const main = agent.id === 'grok' || agent.tier === 'main';
+    let host = agent;
+    const layout = window.OfficeLayout;
+    if (layout && byId) {
+      const hostId = layout.roomHostId(agent);
+      if (hostId && byId.get(hostId)) host = byId.get(hostId);
+    }
+    const pos = layout && layout.pos && layout.pos[host.id];
+    const x = pos ? pos[0] : host.x;
+    const y = pos ? pos[1] : host.y;
+    const main = host.id === 'grok' || host.tier === 'main';
     const lift = main ? 78 : 86;
-    return { x: agent.x, y: agent.y - lift };
+    return { x, y: y - lift };
   }
 
   function curve(x0, y0, x1, y1, bendSign) {
@@ -78,8 +87,8 @@
       const fromId = !t.fromAgentId || t.fromAgentId === 'owner' ? 'grok' : t.fromAgentId;
       const from = byId.get(fromId) || byId.get('grok');
       if (!from || from.archived) continue;
-      const a = roof(from);
-      const b = roof(to);
+      const a = roof(from, byId);
+      const b = roof(to, byId);
       if (!a || !b) continue;
       const key = [from.id, to.id].sort().join('>');
       const n = pairCount.get(key) || 0;

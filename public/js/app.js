@@ -3,15 +3,15 @@
   'use strict';
 
   // ── Настройки клиента ────────────────────────────────────────────────────
-  // Сам ростер (имена, цвета, обязанности, место на карте) приходит с сервера:
-  // см. SEED_AGENTS в server.js. 7-е направление — Финансы, помощники 7.1 и 7.2.
-  // Архивные агенты приходят в /api/state с archived, но на карту не рисуются.
+  // Ростер приходит с сервера. На карте только главные здания: заместители
+  // (parentId) сидят в помещении родителя, советник — в помещении Кремля
+  // (ROOM_OF, у него нет parentId, но он в links у grok). Иерархия не меняется.
   const CONFIG = {
     pollMs: 4000,
     mainId: 'grok',
     xpPerTask: 100, // опыт за выполненную задачу
     xpPerSent: 10, // опыт за полученную задачу
-    figScale: { main: 1.15, dept: 0.92, extra: 0.8, sub: 0.68 },
+    figScale: 0.84,
   };
 
   const NS = 'http://www.w3.org/2000/svg';
@@ -33,6 +33,9 @@
     needsReady: false,
     panelScrollTo: '',
     archivedIds: new Set(),
+    peekId: null,
+    roomId: null,
+    roomSig: '',
   };
   const drafts = new Map();
   const MAX_FILES = 5;
@@ -120,8 +123,38 @@
     return 0;
   };
   const tallOf = (a) => M.TALL[a.kind] || M.TALL.generic;
-  const figScaleOf = (a) => CONFIG.figScale[tierOf(a)];
-  const figFeet = (a) => (tierOf(a) === 'main' ? 38 : 32);
+  const figScaleOf = () => CONFIG.figScale;
+  const figFeet = () => 32;
+  // Витрина карты. Координаты только для рисунка, серверные x/y не трогаем в API.
+  // Зазор подобран так, чтобы таблички не пересекались на десктопе и на 390px.
+  const MAP_POS = {
+    grok: [800, 540],
+    blog: [860, 150],
+    dev: [480, 150],
+    social: [1280, 170],
+    poker: [190, 500],
+    finance: [1300, 490],
+    routines: [150, 760],
+    army: [500, 860],
+    temshik: [860, 920],
+    devops: [1180, 900],
+    qa: [1500, 740],
+  };
+  // Кто сидит внутри чужого здания и на карте не рисуется.
+  const ROOM_OF = { advisor: 'grok' };
+  const roomHostId = (a) => {
+    if (!a) return null;
+    if (a.parentId) return a.parentId;
+    return ROOM_OF[a.id] || null;
+  };
+  const onMap = (a) => !!(a && !roomHostId(a));
+  const mapHost = (a) => {
+    const hostId = roomHostId(a);
+    return (hostId && S.byId.get(hostId)) || a;
+  };
+  function roomGuests(hostId) {
+    return S.agents.filter((a) => roomHostId(a) === hostId).sort(cmpNum);
+  }
   const figTop = (a) => figFeet(a) - 100 * figScaleOf(a);
   const kremlin = () => { const g = S.byId.get(CONFIG.mainId); return g ? [g.x, g.y + 22] : [800, 562]; };
 
@@ -142,26 +175,21 @@
     gA.innerHTML = ''; gL.innerHTML = ''; overlay.innerHTML = '';
     S.els.clear();
     const [kx, ky] = kremlin();
-    const sorted = [...S.agents].sort((a, b) => a.y - b.y);
+    const sorted = [...S.agents].filter(onMap).sort((a, b) => a.y - b.y);
     for (const a of sorted) {
       const tier = tierOf(a);
       const g = document.createElementNS(NS, 'g');
       g.setAttribute('class', `agent tier-${tier} st-${a.status}`);
       g.setAttribute('transform', `translate(${a.x},${a.y})`);
       g.dataset.id = a.id;
-      g.style.setProperty('--agent-glow', Figures.shade(a.color, 0.55));
-      const plot = tier === 'main'
-        ? `<ellipse class="plot-ring" cx="0" cy="${figFeet(a)}" rx="46" ry="14" stroke="#f5c451"/>`
-        : tier === 'sub'
-          ? `<ellipse class="plot" cx="0" cy="12" rx="48" ry="18" fill="${a.color}" fill-opacity=".2" stroke="${a.color}" stroke-opacity=".75" stroke-width="2"/>
-             <ellipse class="plot-ring" cx="0" cy="12" rx="56" ry="22" stroke="#f5c451"/>`
-          : `<ellipse class="plot" cx="0" cy="14" rx="${tier === 'extra' ? 70 : 82}" ry="${tier === 'extra' ? 30 : 34}" fill="${a.color}" fill-opacity=".17" stroke="${a.color}" stroke-opacity=".6" stroke-width="2.4" stroke-dasharray="${a.vacant ? '7 5' : 'none'}"/>
-           <ellipse class="plot-ring" cx="0" cy="14" rx="${tier === 'extra' ? 78 : 92}" ry="${tier === 'extra' ? 35 : 40}" stroke="#f5c451"/>`;
+      g.style.setProperty('--agent-glow', Figures.shade(a.color, 0.35));
+      const feet = figFeet();
+      const plot = `<ellipse class="ground" cx="0" cy="${feet + 2}" rx="34" ry="10"/>`;
       const bld = tier === 'main' ? M.building('putin', a.color) : M.building(a.kind || 'generic', a.color);
-      const beaconY = tier === 'main' ? figTop(a) - 30 : -Math.min(tallOf(a), 150) - 12;
+      const beaconY = -Math.min(tallOf(a), 120) - 8;
       g.innerHTML = `${plot}<g class="bld">${bld}</g>
-        <g class="beacon" transform="translate(0,${beaconY})"><circle r="9" fill="${a.color}" opacity=".7"/></g>
-        <g class="fig-wrap" transform="translate(${tier === 'main' ? 0 : 0},${figFeet(a)}) scale(${figScaleOf(a)})">${Figures.render(a.kind, a.color)}</g>`;
+        <g class="beacon" transform="translate(0,${beaconY})"><circle r="6" fill="${a.color}" opacity=".45"/></g>
+        <g class="fig-wrap" transform="translate(0,${feet}) scale(${figScaleOf()})">${Figures.render(a.kind, a.color)}</g>`;
       gA.appendChild(g);
 
       let link = null, packets = null;
@@ -189,7 +217,15 @@
       tag.className = `tag ${tier}`;
       tag.style.setProperty('--c', a.color);
       tag.dataset.id = a.id;
-      tag.onclick = (e) => { e.stopPropagation(); select(a.id); };
+      tag.onclick = (e) => {
+        e.stopPropagation();
+        if (eatClick) { eatClick = false; return; }
+        openRoom(a.id);
+      };
+      tag.addEventListener('pointerdown', (e) => armHold(e, a.id));
+      tag.addEventListener('pointerenter', () => setPeek(a.id));
+      tag.addEventListener('pointerleave', () => { if (S.peekId === a.id) setPeek(null); });
+      tag.addEventListener('contextmenu', (e) => e.preventDefault());
       overlay.appendChild(tag);
       const bubble = document.createElement('div');
       bubble.className = 'bubble hide';
@@ -217,15 +253,16 @@
     for (const a of S.agents) {
       const e = S.els.get(a.id);
       if (!e) continue;
-      const tier = tierOf(a), L = levelInfo(a);
+      const tier = tierOf(a);
       const act = activityClass(a);
       e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${act}${S.selected === a.id ? ' sel' : ''}`);
       e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}`;
-      e.tag.innerHTML = `<span class="lvl">${a.vacant ? '?' : L.lvl}</span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
+      e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
       e.w = 0;
       const show = !a.vacant && (a.status === 'working' || a.status === 'waiting') && a.now;
-      e.bubble.className = `bubble ${a.status}${show ? '' : ' hide'}`;
-      e.bubbleOn = !!show;
+      const peek = S.peekId === a.id || S.selected === a.id;
+      e.bubble.className = `bubble ${a.status}${show && peek ? '' : ' hide'}`;
+      e.bubbleOn = !!(show && peek);
       e.bubble.innerHTML = (a.status === 'working' ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(a.now || '');
       if (e.link) {
         const hot = a.status === 'working';
@@ -233,8 +270,9 @@
         e.packets.setAttribute('class', `packet${hot ? ' on' : ''}`);
       }
       paintOrderBadge(e, a);
-      paintAwaitBadge(e.awaitBadge, a.id);
+      paintAwaitBadge(e.awaitBadge, a.id, true);
     }
+    paintRoom();
     updateRoster();
     if (window.ActivityView) ActivityView.paint();
     doPlaceOverlay();
@@ -274,9 +312,22 @@
     e.badge.setAttribute('aria-label', aria);
     e.badge.title = aria;
   }
-  function paintAwaitBadge(el, agentId) {
+  function needsOnBadge(agentId, team) {
+    const ids = team ? [agentId, ...roomGuests(agentId).map((a) => a.id)] : [agentId];
+    const seen = new Set();
+    const open = [];
+    for (const id of ids) {
+      for (const n of Feed.openNeedsForAgent(S.needs, id)) {
+        if (seen.has(n.id)) continue;
+        seen.add(n.id);
+        open.push(n);
+      }
+    }
+    return open;
+  }
+  function paintAwaitBadge(el, agentId, team) {
     if (!el) return;
-    const open = Feed.openNeedsForAgent(S.needs, agentId);
+    const open = needsOnBadge(agentId, !!team);
     const count = open.length;
     const allStale = count > 0 && open.every((n) => n.stale);
     if (!count) {
@@ -336,7 +387,7 @@
     c.tx = w / 2 - cx * c.k; c.ty = h / 2 - cy * c.k;
   }
   function homeView() {
-    const core = S.agents.filter((a) => tierOf(a) !== 'extra');
+    const core = S.agents.filter((a) => onMap(a) && tierOf(a) !== 'extra');
     const list = core.length ? core : [{ x: 800, y: 540, kind: 'putin' }];
     const minx = Math.min(...list.map((a) => a.x)) - 105, maxx = Math.max(...list.map((a) => a.x)) + 105;
     const miny = Math.min(...list.map((a) => a.y - Math.min(tallOf(a), 150))) - 10, maxy = Math.max(...list.map((a) => a.y)) + 105;
@@ -390,7 +441,13 @@
       svg.setPointerCapture(e.pointerId);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       cancelAnimationFrame(flyRaf);
-      if (pts.size === 1) { moved = 0; start = { x: e.clientX, y: e.clientY, target: e.target }; }
+      if (pts.size === 1) {
+        moved = 0;
+        start = { x: e.clientX, y: e.clientY, target: e.target };
+        const held = e.target.closest && e.target.closest('.agent');
+        if (held) armHold(e, held.dataset.id);
+        else clearHold();
+      }
       if (pts.size === 2) {
         const [a, b] = [...pts.values()];
         pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), k: S.cam.k };
@@ -402,7 +459,8 @@
       p.x = e.clientX; p.y = e.clientY;
       if (pts.size === 1) {
         moved += Math.abs(dx) + Math.abs(dy);
-        if (moved > 5) { svg.classList.add('dragging'); S.cam.tx += dx; S.cam.ty += dy; S.userMoved = true; clampCam(); applyCam(); hideTip(); }
+        nudgeHold(e);
+        if (moved > 5) { clearHold(); svg.classList.add('dragging'); S.cam.tx += dx; S.cam.ty += dy; S.userMoved = true; clampCam(); applyCam(); hideTip(); }
       } else if (pts.size === 2 && pinch) {
         moved = 99;
         const [a, b] = [...pts.values()];
@@ -417,6 +475,7 @@
       if (pts.size < 2) pinch = null;
       if (pts.size === 0) {
         svg.classList.remove('dragging');
+        if (eatClick) { eatClick = false; clearHold(); return; }
         if (moved <= 5 && start) clickAt(start.target);
       }
     };
@@ -436,7 +495,7 @@
         if ($('#modal').classList.contains('show')) { e.preventDefault(); closeModal(); return; }
       }
       if (e.target.closest('input,textarea,select')) return;
-      if (e.key === 'Escape') select(null);
+      if (e.key === 'Escape') { if (roomOpen()) closeRoom(); else select(null); }
       if (e.key === '+' || e.key === '=') zoomAt(innerWidth / 2, innerHeight / 2, 1.2);
       if (e.key === '-') zoomAt(innerWidth / 2, innerHeight / 2, 1 / 1.2);
     });
@@ -450,12 +509,12 @@
   function clickAt(target) {
     if (window.Delegation && Delegation.click(target)) return;
     const ag = target.closest && target.closest('.agent');
-    if (ag) { select(ag.dataset.id); return; }
+    if (ag) { openRoom(ag.dataset.id); return; }
     const lm = target.closest && target.closest('.landmark');
     if (lm) {
       blip(740);
       const x = +lm.dataset.x, y = +lm.dataset.y;
-      if (lm.dataset.lm === 'kremlin') { select(CONFIG.mainId); return; }
+      if (lm.dataset.lm === 'kremlin') { openRoom(CONFIG.mainId); return; }
       flyTo(x, y, Math.max(S.cam.k, 1.5));
       toast(lm.dataset.name, landmarkNote(lm.dataset.lm), 'pin');
       return;
@@ -478,11 +537,75 @@
     const lm = !ag && e.target.closest && e.target.closest('.landmark');
     if (ag) {
       const a = S.byId.get(ag.dataset.id);
-      showTip(e, `${titled(a)} · ${a.district || ''}`);
-    } else if (lm) showTip(e, lm.dataset.name);
-    else hideTip();
+      if (a) { setPeek(a.id); showDeputyTip(a, e.clientX, e.clientY); }
+    } else if (lm) { setPeek(null); showTip(e, lm.dataset.name); }
+    else { setPeek(null); hideTip(); }
   }
-  function showTip(e, text) { tip.textContent = text; tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px'; tip.classList.add('show'); }
+  function deputyTipText(a) {
+    const kids = roomGuests(a.id);
+    if (!kids.length) return 'Заместителей нет';
+    return `Заместители: ${kids.length}\n${kids.map((k) => plainName(k)).join('\n')}`;
+  }
+  function showDeputyTip(a, x, y) {
+    tip.textContent = deputyTipText(a);
+    tip.classList.add('show', 'tip-list');
+    placeTip(x, y);
+  }
+  function placeTip(x, y) {
+    tip.style.left = '0px';
+    tip.style.top = '0px';
+    const w = tip.offsetWidth || 140;
+    const h = tip.offsetHeight || 28;
+    const pad = 8;
+    const left = Math.max(pad + w / 2, Math.min(innerWidth - pad - w / 2, x));
+    let top = y - 14;
+    if (top - h < pad) top = Math.min(innerHeight - pad, y + 18 + h);
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+  let holdTimer = 0;
+  let eatClick = false;
+  let holdAt = null;
+  function clearHold() {
+    clearTimeout(holdTimer);
+    holdTimer = 0;
+  }
+  function armHold(e, id) {
+    clearHold();
+    if (!id || e.pointerType === 'mouse' || e.pointerType === 'pen') return;
+    holdAt = { x: e.clientX, y: e.clientY, id };
+    holdTimer = setTimeout(() => {
+      holdTimer = 0;
+      eatClick = true;
+      const a = S.byId.get(id);
+      if (a) showDeputyTip(a, holdAt.x, holdAt.y);
+    }, 500);
+  }
+  function nudgeHold(e) {
+    if (!holdTimer || !holdAt) return;
+    if (Math.hypot(e.clientX - holdAt.x, e.clientY - holdAt.y) > 12) clearHold();
+  }
+  function setPeek(id) {
+    S.peekId = id || null;
+    document.querySelectorAll('#overlay .act-marker').forEach((el) => {
+      el.classList.toggle('peek', !!id && el.dataset.id === id);
+    });
+    for (const a of S.agents) {
+      const e = S.els.get(a.id);
+      if (!e) continue;
+      const show = !a.vacant && (a.status === 'working' || a.status === 'waiting') && a.now;
+      const peek = S.peekId === a.id || S.selected === a.id;
+      e.bubble.className = `bubble ${a.status}${show && peek ? '' : ' hide'}`;
+      e.bubbleOn = !!(show && peek);
+      e.g.classList.toggle('peek', S.peekId === a.id);
+    }
+  }
+  function showTip(e, text) {
+    tip.textContent = text;
+    tip.classList.add('show');
+    tip.classList.remove('tip-list');
+    placeTip(e.clientX, e.clientY);
+  }
   function hideTip() { tip.classList.remove('show'); }
 
   // ── Таблички и облачка (HTML поверх карты) ───────────────────────────────
@@ -505,7 +628,7 @@
       e.w = e.tag.offsetWidth; e.h = e.tag.offsetHeight;
       const sx = a.x * k + tx, sy = (a.y + (tierOf(a) === 'main' ? 84 : 50)) * k + ty;
       const r = { x: sx - e.w / 2, y: sy, w: e.w, h: e.h };
-      const off = sx < -150 || sx > innerWidth + 150 || sy < -60 || sy > innerHeight + 60;
+      const off = sx - e.w / 2 < 2 || sx + e.w / 2 > innerWidth - 2 || sy < 2 || sy + e.h > innerHeight - 2;
       const hidden = off || hit(r);
       e.tag.classList.toggle('hide', hidden);
       e.tag.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,0)`;
@@ -596,7 +719,7 @@
   }
   function buildRoster() {
     const r = $('#roster');
-    const list = [...S.agents].sort(cmpNum);
+    const list = S.agents.filter(onMap).sort(cmpNum);
     let html = '', lastGroup = null;
     for (const a of list) {
       const t = tierOf(a);
@@ -605,7 +728,8 @@
       lastGroup = group;
       html += `<button class="chip ${t}${a.vacant ? ' vacant' : ''}" data-id="${esc(a.id)}" style="--c:${esc(a.color)}" title="${esc(titled(a))}">
         <span class="await-you is-off" data-id="${esc(a.id)}" hidden aria-hidden="true"></span>
-        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span></button>`;
+        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>
+        <span class="chip-events" hidden></span></button>`;
     }
     r.innerHTML = html;
     r.querySelectorAll('.chip').forEach((c) => (c.onclick = (e) => {
@@ -645,11 +769,27 @@
       c.classList.toggle('sleep', activityMode(a) === 'resting');
       c.querySelector('.st').className = `st ${a.status}`;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
-      paintAwaitBadge(c.querySelector('.await-you'), a.id);
+      paintAwaitBadge(c.querySelector('.await-you'), a.id, true);
+      paintGuestEvents(c, a);
     });
   }
+  function paintGuestEvents(chip, host) {
+    const box = chip.querySelector('.chip-events');
+    if (!box) return;
+    const lines = roomGuests(host.id).map((guest) => {
+      const text = String(guest.currentTask || '').trim();
+      if (!text) return '';
+      return `${plainName(host)} · ${plainName(guest)}: ${text}`;
+    }).filter(Boolean);
+    const sig = lines.join('\n');
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.innerHTML = lines.map((line) => `<span class="chip-event">${esc(line)}</span>`).join('');
+    }
+    box.hidden = lines.length === 0;
+  }
   function buildMiniDots() {
-    $('#miniDots').innerHTML = S.agents.map((a) => `<circle class="mini-dot" cx="${a.x}" cy="${a.y}" r="${tierOf(a) === 'main' ? 30 : tierOf(a) === 'sub' ? 14 : 22}" fill="${a.color}"/>`).join('');
+    $('#miniDots').innerHTML = S.agents.filter(onMap).map((a) => `<circle class="mini-dot" cx="${a.x}" cy="${a.y}" r="18" fill="${a.color}" opacity=".8"/>`).join('');
   }
   function updateMiniView() {
     const { k, tx, ty } = S.cam, r = $('#miniView');
@@ -872,8 +1012,111 @@
     updateAgents();
     if ($('#hier').classList.contains('open')) renderHierarchy(true);
     const a = S.byId.get(S.selected);
+    const host = mapHost(a);
     const k = Math.max(innerWidth <= 700 ? 0.95 : 1.15, Math.min(S.cam.k, 1.6));
-    setTimeout(() => flyTo(a.x, a.y + figTop(a) / 2 + 10, k), 30);
+    setTimeout(() => flyTo(host.x, host.y + figTop(host) / 2 + 10, k), 30);
+  }
+
+  function roomOpen() {
+    const room = $('#room');
+    return !!(room && room.classList.contains('open'));
+  }
+  function openRoom(id) {
+    const head = S.byId.get(id);
+    if (!head || roomHostId(head)) return;
+    S.roomId = id;
+    S.roomSig = '';
+    const room = $('#room');
+    room.hidden = false;
+    room.classList.add('open');
+    room.setAttribute('aria-hidden', 'false');
+    hideTip();
+    paintRoom();
+    blip(640);
+  }
+  function closeRoom() {
+    S.roomId = null;
+    S.roomSig = '';
+    const room = $('#room');
+    if (!room) return;
+    room.classList.remove('open');
+    room.hidden = true;
+    room.setAttribute('aria-hidden', 'true');
+  }
+  function roomInterior() {
+    return `<svg class="room-bg" viewBox="0 0 640 220" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <rect width="640" height="220" fill="#efe6d2"/>
+      <rect y="128" width="640" height="92" fill="#e4d3b4"/>
+      <path d="M0 128h640" stroke="#d7c4a2" stroke-width="3"/>
+      <g fill="#f7f1e4" stroke="#cbb892">
+        <rect x="36" y="28" width="92" height="70" rx="4"/>
+        <rect x="512" y="28" width="92" height="70" rx="4"/>
+      </g>
+      <g fill="#d5e6f2">
+        <rect x="46" y="38" width="72" height="48"/>
+        <rect x="522" y="38" width="72" height="48"/>
+      </g>
+      <path d="M82 38v48M46 62h72M558 38v48M522 62h72" stroke="#f7f1e4" stroke-width="3"/>
+      <rect x="250" y="18" width="140" height="8" rx="3" fill="#e7d7b0"/>
+      <circle cx="320" cy="46" r="14" fill="#f6e7b0" stroke="#e0c56a"/>
+      <rect x="314" y="60" width="12" height="10" fill="#c4b08a"/>
+      <ellipse cx="320" cy="176" rx="150" ry="28" fill="#c45a4a" opacity=".35"/>
+      <ellipse cx="320" cy="176" rx="108" ry="16" fill="#f3e2b0" opacity=".55"/>
+      <rect x="70" y="150" width="16" height="36" rx="3" fill="#6d8f62"/>
+      <circle cx="78" cy="142" r="16" fill="#7ea572"/>
+      <rect x="554" y="150" width="16" height="36" rx="3" fill="#6d8f62"/>
+      <circle cx="562" cy="142" r="16" fill="#7ea572"/>
+    </svg>`;
+  }
+  function seatHTML(a, head) {
+    const role = a.id === head.id ? 'Руководитель' : (a.parentId ? 'Заместитель' : 'В этом здании');
+    const st = STATUS_TEXT[a.status] || a.status || '';
+    return `<article class="room-seat" data-id="${esc(a.id)}">
+      <div class="room-sit">
+        <svg class="room-fig" viewBox="-40 -108 80 116" aria-hidden="true">${Figures.render(a.kind, a.color)}</svg>
+        <svg class="room-desk" viewBox="0 0 150 70" aria-hidden="true">
+          <ellipse cx="75" cy="64" rx="58" ry="6" fill="#000" opacity=".12"/>
+          <path d="M22 40h106v14H22z" fill="#c4a36a"/>
+          <path d="M22 40h106v5H22z" fill="#e6d2a4"/>
+          <path d="M30 28h12v16H30zM108 28h12v16h-12z" fill="#8b5e34"/>
+          <path d="M36 16h78v16H36z" fill="#a56b3c"/>
+        </svg>
+      </div>
+      <div class="room-meta">
+        <div class="room-role">${esc(role)}</div>
+        <div class="room-name">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</div>
+        <div class="room-status"><span class="status-pill ${esc(a.status)}">${esc(st)}</span><span class="now">${esc(a.now || '')}</span></div>
+        <button type="button" class="btn gold room-go" data-id="${esc(a.id)}">Открыть</button>
+      </div>
+    </article>`;
+  }
+  function paintRoom() {
+    const scroll = $('#roomScroll');
+    if (!scroll || !S.roomId) return;
+    const head = S.byId.get(S.roomId);
+    if (!head) { closeRoom(); return; }
+    const people = [head, ...roomGuests(head.id)];
+    const sig = people.map((a) => [a.id, a.number, a.name, a.status, a.now].join(':')).join('|');
+    if (scroll.dataset.sig === sig && S.roomSig === sig) return;
+    const top = scroll.scrollTop;
+    S.roomSig = sig;
+    scroll.dataset.sig = sig;
+    scroll.innerHTML = `<div class="room-top"><div class="room-kicker">Помещение</div><h2 id="roomTitle">${esc(titled(head))}</h2><div class="room-where">${esc(head.district || '')}</div></div>
+      <div class="room-stage">${roomInterior()}<div class="room-seats">${people.map((a) => seatHTML(a, head)).join('')}</div></div>`;
+    scroll.scrollTop = top;
+  }
+  function initRoom() {
+    const room = $('#room');
+    if (!room) return;
+    room.addEventListener('click', (e) => { if (e.target === room) closeRoom(); });
+    $('#roomX').onclick = () => closeRoom();
+    $('#roomScroll').addEventListener('click', (e) => {
+      const btn = e.target.closest('.room-go');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      closeRoom();
+      select(id);
+    });
   }
 
   const STATUS_TEXT = { working: 'Работает', idle: 'Свободен', waiting: 'Ждёт тебя' };
@@ -1289,9 +1532,10 @@
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
   function roofOf(agent) {
-    if (!agent) return kremlin();
-    const lift = agent.id === CONFIG.mainId ? 70 : Math.min(tallOf(agent), 150) * 0.62;
-    return [agent.x, agent.y - lift];
+    const host = mapHost(agent);
+    if (!host) return kremlin();
+    const lift = host.id === CONFIG.mainId ? 70 : Math.min(tallOf(host), 150) * 0.62;
+    return [host.x, host.y - lift];
   }
   function flyOrder(task) {
     if (!task) return;
@@ -1788,6 +2032,7 @@
     const agents = incoming.filter((a) => !a.archived);
     for (const a of agents) {
       a.x = Number.isFinite(a.x) ? a.x : 800; a.y = Number.isFinite(a.y) ? a.y : 540;
+      if (MAP_POS[a.id]) { a.x = MAP_POS[a.id][0]; a.y = MAP_POS[a.id][1]; }
       a.kind = a.kind || (a.id === CONFIG.mainId ? 'putin' : 'generic');
       a.status = ['working', 'idle', 'waiting'].includes(a.status) ? a.status : 'idle';
     }
@@ -2097,7 +2342,7 @@
   }
 
   // ── Старт ────────────────────────────────────────────────────────────────
-  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initNeeds(); initRoster(); initNeedPage();
+  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initNeeds(); initRoster(); initNeedPage(); initRoom();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeOverlay());
   addEventListener('resize', () => {
     if (innerWidth <= 900 && $('#hier').classList.contains('open') && $('#panel').classList.contains('open')) {
@@ -2107,9 +2352,10 @@
   });
   // Кварталы строятся после первой загрузки, чтобы не застраивать участки агентов.
   loadState().then(() => {
-    $('#blocks').innerHTML = M.buildBlocks(S.agents.map((a) => ({ x: a.x, y: a.y, tall: Math.min(tallOf(a), 200) + 20 })));
+    $('#blocks').innerHTML = M.buildBlocks(S.agents.filter(onMap).map((a) => ({ x: a.x, y: a.y, tall: Math.min(tallOf(a), 200) + 20 })));
   }).catch(() => {
     $('#blocks').innerHTML = M.buildBlocks([]);
     toast('Нет связи с сервером', 'Проверь, что приложение запущено. Повторю попытку.', 'x', true);
   }).finally(() => setTimeout(poll, CONFIG.pollMs));
+  window.OfficeLayout = { pos: MAP_POS, roomHostId };
 })();
