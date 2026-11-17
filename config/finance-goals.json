@@ -7,7 +7,7 @@
     "kpis": [
       {
         "name": "Доход в месяц",
-        "current": 235000,
+        "current": null,
         "target": null,
         "unit": "₽/мес"
       }
@@ -21,8 +21,8 @@
     "kpis": [
       {
         "name": "Чистый капитал",
-        "current": 6750000,
-        "target": 1000000000,
+        "current": null,
+        "target": null,
         "unit": "₽"
       }
     ]
