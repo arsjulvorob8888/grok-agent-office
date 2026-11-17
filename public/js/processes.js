@@ -36,8 +36,16 @@
     return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
   }
 
+  function archivedParty(id) {
+    if (!id || id === 'owner') return false;
+    const a = agents.find((x) => x.id === id);
+    return !!(a && a.archived);
+  }
+
   function active() {
-    return tasks.filter((t) => t && OPEN.has(t.orderStatus));
+    return tasks.filter((t) => t && OPEN.has(t.orderStatus)
+      && !archivedParty(t.agentId || t.agent)
+      && !archivedParty(t.fromAgentId));
   }
 
   function setOpen(open) {

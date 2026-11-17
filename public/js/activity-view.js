@@ -133,7 +133,7 @@
   }
 
   function take(data) {
-    agents = (data && data.agents) || [];
+    agents = ((data && data.agents) || []).filter((a) => a && !a.archived);
     paint();
   }
 

@@ -15,7 +15,7 @@ process.env.GROK_WEBHOOK_KEY = '';
 process.env.PUBLIC_URL = 'http://127.0.0.1';
 delete process.env.AGENT_ACTIVE_MINUTES;
 
-const { app } = require('../server.js');
+const { app, state } = require('../server.js');
 const puppeteer = require('puppeteer-core');
 
 function chromePath() {
@@ -122,6 +122,24 @@ async function waitReady(page, orderId) {
 }
 
 test('на широком экране пульс, сон, стрелка и «Процессы сейчас»', { timeout: 60000 }, async () => {
+  state.tasks.unshift({
+    id: 't-archive-hide',
+    agent: 'trading',
+    agentId: 'trading',
+    fromAgentId: 'biz',
+    parentOrderId: null,
+    text: 'ARCHIVE-HIDDEN старый приказ трейдинга',
+    status: 'отправлена',
+    orderStatus: 'in_progress',
+    progress: 40,
+    note: '',
+    createdAt: '2026-01-02T00:00:00.000Z',
+    forwardStatus: null,
+    result: null,
+    history: [],
+    attachments: [],
+    messageId: 'task:t-archive-hide',
+  });
   const text = 'ACTIVITY-DESKTOP проверка процессов на карте штаба прямо сейчас';
   const id = await seedOrder(text);
   const page = await openPage({ width: 1280, height: 800 });
@@ -174,6 +192,15 @@ test('на широком экране пульс, сон, стрелка и «�
     assert.match(listed, /Программирование/);
     assert.match(listed, /ACTIVITY-DESKTOP/);
     assert.match(listed, /Принял/);
+    assert.doesNotMatch(listed, /ARCHIVE-HIDDEN/);
+    assert.doesNotMatch(listed, /Трейдинг/);
+    assert.equal(await page.$('#agents .agent[data-id="trading"]'), null);
+    assert.equal(await page.$('#agents .agent[data-id="biz"]'), null);
+    assert.equal(await page.$('#roster .chip[data-id="trading"]'), null);
+    assert.equal(await page.$('#roster .chip[data-id="biz"]'), null);
+    assert.equal(await page.$('.act-marker[data-id="trading"]'), null);
+    assert.equal(await page.$('.act-marker[data-id="biz"]'), null);
+    assert.equal(await page.$('#delegations [data-order-id="t-archive-hide"]'), null);
     const readElapsed = () => page.$eval('#procList .proc-elapsed', (el) => el.textContent);
     const before = await readElapsed();
     assert.match(before, /^\d+:\d{2}(?::\d{2})?$/);

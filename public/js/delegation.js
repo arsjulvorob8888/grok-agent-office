@@ -74,10 +74,10 @@
     const parts = [];
     for (const t of orders) {
       const to = byId.get(t.agentId || t.agent);
-      if (!to) continue;
+      if (!to || to.archived) continue;
       const fromId = !t.fromAgentId || t.fromAgentId === 'owner' ? 'grok' : t.fromAgentId;
       const from = byId.get(fromId) || byId.get('grok');
-      if (!from) continue;
+      if (!from || from.archived) continue;
       const a = roof(from);
       const b = roof(to);
       if (!a || !b) continue;

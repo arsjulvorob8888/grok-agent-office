@@ -16,6 +16,7 @@ const hook = http.createServer((_req, res) => {
 
 let base;
 let server;
+let office;
 
 before(async () => {
   await new Promise((r) => hook.listen(0, '127.0.0.1', r));
@@ -26,7 +27,8 @@ before(async () => {
   process.env.GROK_WEBHOOK_KEY = 'hook-key';
   process.env.PUBLIC_URL = 'https://example.test';
   delete process.env.AGENT_ACTIVE_MINUTES;
-  const { app } = require('../server.js');
+  office = require('../server.js');
+  const { app } = office;
   server = await new Promise((r) => {
     const s = app.listen(0, '127.0.0.1', () => r(s));
   });
@@ -87,6 +89,15 @@ test('activityFor: приказ, пульс и граница окна', () => {
   const sender = activityFor({ id: 'grok' }, orders, now, windowMs);
   assert.equal(sender.activity, 'resting');
 
+  const archived = activityFor({
+    id: 'trading',
+    archived: true,
+    lastSeenAt: new Date(now).toISOString(),
+    heartbeatNote: 'не должен светиться',
+  }, orders.map((o) => ({ ...o, agentId: 'trading', agent: 'trading' })), now, windowMs);
+  assert.equal(archived.activity, 'resting');
+  assert.equal(archived.currentTask, null);
+
   const beat = { id: 'lang', lastSeenAt: new Date(now - windowMs).toISOString(), heartbeatNote: 'На линии' };
   assert.equal(activityFor(beat, [], now, windowMs).activity, 'working');
   assert.equal(activityFor(beat, [], now, windowMs).currentTask, 'На линии');
@@ -117,6 +128,17 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   });
   assert.equal(missing.status, 404);
   assert.match(missing.body.error, /Неизвестный агент/);
+
+  for (const id of ['trading', 'biz']) {
+    const archivedBeat = await json(`/api/agents/${id}/heartbeat`, {
+      method: 'POST',
+      headers: { 'x-agent-token': 'tok-act' },
+      body: JSON.stringify({ note: 'архив не пульсирует' }),
+    });
+    assert.ok(archivedBeat.status >= 400 && archivedBeat.status < 500, `${id} ${archivedBeat.status}`);
+    assert.equal(archivedBeat.status, 409);
+    assert.match(archivedBeat.body.error, /архив/i);
+  }
 
   const badNote = await json('/api/agents/dev/heartbeat', {
     method: 'POST',
@@ -232,7 +254,7 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   assert.equal(after.currentTask, null);
 
   process.env.AGENT_ACTIVE_MINUTES = '0.001';
-  const beat = await json('/api/agents/trading/heartbeat', {
+  const beat = await json('/api/agents/temshik/heartbeat', {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-act' },
     body: JSON.stringify({ note: 'минутный график' }),
@@ -241,7 +263,7 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   assert.equal(beat.body.activity, 'working');
   assert.equal(beat.body.currentTask, 'минутный график');
   await new Promise((r) => setTimeout(r, 250));
-  const cooled = agentOf((await json('/api/state')).body, 'trading');
+  const cooled = agentOf((await json('/api/state')).body, 'temshik');
   assert.equal(cooled.activity, 'resting');
   assert.equal(cooled.currentTask, null);
   assert.equal(cooled.lastSeenAt, beat.body.lastSeenAt);
@@ -249,15 +271,42 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   const hold = await json('/api/task', {
     method: 'POST',
     headers: { 'x-app-password': 'pw-act' },
-    body: JSON.stringify({ agent: 'trading', text: 'Держит приказ после пульса', fromAgentId: 'grok' }),
+    body: JSON.stringify({ agent: 'temshik', text: 'Держит приказ после пульса', fromAgentId: 'grok' }),
   });
   await json(`/api/orders/${hold.body.id}`, {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-act' },
     body: JSON.stringify({ status: 'accepted' }),
   });
-  const still = agentOf((await json('/api/state')).body, 'trading');
+  const still = agentOf((await json('/api/state')).body, 'temshik');
   assert.equal(still.activity, 'working');
   assert.equal(still.currentTask, 'Держит приказ после пульса');
+
+  office.state.tasks.unshift({
+    id: 't-archive-hide',
+    agent: 'trading',
+    agentId: 'trading',
+    fromAgentId: 'grok',
+    parentOrderId: null,
+    text: 'ARCHIVE-HIDDEN старый приказ трейдинга',
+    status: 'отправлена',
+    orderStatus: 'accepted',
+    progress: null,
+    note: '',
+    createdAt: '2026-01-02T00:00:00.000Z',
+    forwardStatus: null,
+    result: null,
+    history: [],
+    attachments: [],
+    messageId: 'task:t-archive-hide',
+  });
+  const hidden = agentOf((await json('/api/state')).body, 'trading');
+  assert.equal(hidden.archived, true);
+  assert.equal(hidden.activity, 'resting');
+  assert.equal(hidden.currentTask, null);
+  assert.equal(hidden.lastSeenAt, null);
+  const biz = agentOf((await json('/api/state')).body, 'biz');
+  assert.equal(biz.archived, true);
+  assert.equal(biz.activity, 'resting');
   delete process.env.AGENT_ACTIVE_MINUTES;
 });
