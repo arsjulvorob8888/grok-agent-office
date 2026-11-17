@@ -24,7 +24,7 @@ const AGENTS = [
   { id: 'grok', name: 'Главный агент · GROK', order: 1 },
   { id: 'army', name: 'Военная служба', order: 2 },
   { id: 'poker', name: 'Покер', order: 3 },
-  { id: 'trading', name: 'Трейдинг', order: 4 },
+  { id: 'trading', name: 'Трейдинг', order: 4, archived: true },
   { id: 'devops', name: 'DevOps', order: 5 },
   { id: 'dev', name: 'Программирование', order: 6 },
   { id: 'temshik', name: 'Темщик', order: 7 },
@@ -229,7 +229,7 @@ test('пункты и приказы владельца складываются
   assert.equal(open.priority, 'Срочно');
   assert.equal(open.status, 'В ожидании');
   assert.equal(open.deadline, null);
-  assert.match(open.description, /От: 8\. Финансы/);
+  assert.match(open.description, /От: 7\. Финансы/);
   assert.match(open.description, /Где: Ильинка/);
 
   const low = mapNeed({
@@ -253,7 +253,17 @@ test('пункты и приказы владельца складываются
   }, AGENTS);
   assert.equal(closed.priority, 'Средний');
   assert.equal(closed.status, 'Выполнено');
-  assert.match(closed.description, /5\. DevOps/);
+  assert.match(closed.description, /4\. DevOps/);
+
+  const archivedNeed = mapNeed({
+    id: 'n-arch',
+    what: 'Старое',
+    fromAgentId: 'trading',
+    where: 'Сити',
+    urgency: 'low',
+  }, AGENTS);
+  assert.match(archivedNeed.description, /От: Трейдинг/);
+  assert.doesNotMatch(archivedNeed.description, /От: \d/);
 
   const sent = mapOwnerOrder({
     id: 't-1',
@@ -266,7 +276,7 @@ test('пункты и приказы владельца складываются
   assert.equal(sent.priority, 'Средний');
   assert.equal(sent.status, 'В ожидании');
   assert.equal(sent.deadline, null);
-  assert.match(sent.description, /Исполнитель: 6\. Программирование/);
+  assert.match(sent.description, /Исполнитель: 5\. Программирование/);
 
   assert.equal(mapOwnerOrder({ id: 't-2', agent: 'dev', text: 'x', orderStatus: 'accepted' }, AGENTS).status, 'В ожидании');
   const progress = mapOwnerOrder({
@@ -498,7 +508,7 @@ test('после listen Кремль сам шлёт открытые пункт
     assert.equal(render.priority, 'Срочно');
     assert.equal(render.status, 'В ожидании');
     assert.equal(render.deadline, null);
-    assert.match(render.description, /От: 5\. DevOps/);
+    assert.match(render.description, /От: 4\. DevOps/);
     assert.match(render.description, /Где: Защищённая форма в чате DevOps/);
     for (const task of hit.body.tasks) assert.equal(task.status, 'В ожидании');
 
@@ -569,7 +579,7 @@ test('пункт и смена статуса приказа запускают 
     assert.equal(need.title, 'Подписать платёж');
     assert.equal(need.priority, 'Срочно');
     assert.equal(need.status, 'В ожидании');
-    assert.match(need.description, /От: 8\. Финансы/);
+    assert.match(need.description, /От: 7\. Финансы/);
     assert.match(need.description, /Где: Кабинет/);
     assert.ok(opened.body.tasks.some((task) => task.externalId === 'kremlin-need-need-render-api'));
     assert.equal(opened.body.goals.length, 2);
@@ -602,7 +612,7 @@ test('пункт и смена статуса приказа запускают 
     const orderTask = ordered.body.tasks.find((task) => task.externalId === `kremlin-order-${order.id}`);
     assert.equal(orderTask.priority, 'Средний');
     assert.equal(orderTask.deadline, null);
-    assert.match(orderTask.description, /Исполнитель: 6\. Программирование/);
+    assert.match(orderTask.description, /Исполнитель: 5\. Программирование/);
 
     const quiet = receiver.hits.length;
     const delegated = await post('/api/task', {
