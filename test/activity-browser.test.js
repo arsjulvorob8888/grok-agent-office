@@ -201,6 +201,22 @@ test('на широком экране пульс, сон, стрелка и «�
     assert.equal(await page.$('.act-marker[data-id="trading"]'), null);
     assert.equal(await page.$('.act-marker[data-id="biz"]'), null);
     assert.equal(await page.$('#delegations [data-order-id="t-archive-hide"]'), null);
+    const newcomers = await page.evaluate(() => {
+      const cls = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? (el.getAttribute('class') || '') : '';
+      };
+      return {
+        social: cls('#roster .chip[data-id="social"]'),
+        routines: cls('#agents .agent[data-id="routines"]'),
+        socialMarker: cls('.act-marker[data-id="social"]'),
+        routinesChip: cls('#roster .chip[data-id="routines"]'),
+      };
+    });
+    assert.match(newcomers.social, /\bsleep\b/, newcomers.social);
+    assert.match(newcomers.routines, /\bsleep\b/, newcomers.routines);
+    assert.match(newcomers.socialMarker, /\bsleep\b/, newcomers.socialMarker);
+    assert.match(newcomers.routinesChip, /\bsleep\b/, newcomers.routinesChip);
     const readElapsed = () => page.$eval('#procList .proc-elapsed', (el) => el.textContent);
     const before = await readElapsed();
     assert.match(before, /^\d+:\d{2}(?::\d{2})?$/);

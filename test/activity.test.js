@@ -309,4 +309,44 @@ test('пульс: токен, 404 и расчёт activity на сервере',
   assert.equal(biz.archived, true);
   assert.equal(biz.activity, 'resting');
   delete process.env.AGENT_ACTIVE_MINUTES;
+
+  const fresh = await json('/api/state');
+  for (const id of ['social', 'routines']) {
+    const agent = agentOf(fresh.body, id);
+    assert.equal(agent.archived, false, id);
+    assert.equal(agent.activity, 'resting', id);
+    assert.equal(agent.currentTask, null, id);
+    assert.equal(agent.lastSeenAt, null, id);
+  }
+  assert.equal(agentOf(fresh.body, 'social').number, '11');
+  assert.equal(agentOf(fresh.body, 'routines').number, '12');
+
+  const socialBeat = await json('/api/agents/social/heartbeat', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-act' },
+    body: JSON.stringify({ note: 'Смотрю охваты' }),
+  });
+  assert.equal(socialBeat.status, 200);
+  assert.equal(socialBeat.body.activity, 'working');
+  assert.equal(socialBeat.body.currentTask, 'Смотрю охваты');
+  const socialNow = agentOf((await json('/api/state')).body, 'social');
+  assert.equal(socialNow.activity, 'working');
+  assert.equal(socialNow.currentTask, 'Смотрю охваты');
+
+  const routineTask = await json('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-act' },
+    body: JSON.stringify({ agent: 'routines', text: 'Собрать утреннюю рутину', fromAgentId: 'grok' }),
+  });
+  assert.equal(routineTask.status, 201);
+  assert.equal(agentOf((await json('/api/state')).body, 'routines').activity, 'resting');
+  const acceptedRoutine = await json(`/api/orders/${routineTask.body.id}`, {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-act' },
+    body: JSON.stringify({ status: 'accepted' }),
+  });
+  assert.equal(acceptedRoutine.status, 200);
+  const routinesNow = agentOf((await json('/api/state')).body, 'routines');
+  assert.equal(routinesNow.activity, 'working');
+  assert.equal(routinesNow.currentTask, 'Собрать утреннюю рутину');
 });
