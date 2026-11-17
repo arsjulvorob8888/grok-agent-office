@@ -333,6 +333,10 @@
     const pts = new Map();
     let moved = 0, start = null, pinch = null;
     svg.addEventListener('pointerdown', (e) => {
+      const top = document.elementFromPoint(e.clientX, e.clientY);
+      // Жест по панели, полосе или кнопке не захватываем: у карты touch-action:none,
+      // и палец иначе уходит в пан вместо клика.
+      if (top && !svg.contains(top)) return;
       svg.setPointerCapture(e.pointerId);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       cancelAnimationFrame(flyRaf);
@@ -930,8 +934,6 @@
           <span class="hint">до 5 файлов, 10 МБ · перетащи или вставь скриншот</span>
         </div>
         <div class="attach-preview" id="attachPreview"></div>
-        <div class="row"><span class="hint">Ctrl+Enter — отправить</span><button class="btn gold" type="submit">${ico('send')}Дать задачу</button></div>
-        <div class="msg" id="formMsg"></div>
       </form>`;
     }
     const taskBlock = tier === 'main'
@@ -954,7 +956,8 @@
         ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
         ${a.vacant ? '' : taskBlock}
         ${a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : ''}
-      </div>`;
+      </div>
+      ${a.vacant ? '' : `<div class="task-dock"><span class="hint">Ctrl+Enter — отправить</span><button class="btn gold" type="submit" form="taskForm" id="taskSubmit">${ico('send')}Дать задачу</button><div class="msg" id="formMsg"></div></div>`}`;
     $('#pClose').onclick = () => select(null);
     const parentBtn = panel.querySelector('.parent-link');
     if (parentBtn) parentBtn.onclick = () => select(parentBtn.dataset.parent);
@@ -1021,7 +1024,7 @@
     let targets = [a.id];
     const sel = $('#taskTarget');
     if (sel) targets = sel.value === '__all' ? S.agents.filter((x) => tierOf(x) === 'dept' && !x.vacant).map((x) => x.id) : [sel.value];
-    const btn = $('#taskForm button[type=submit]');
+    const btn = $('#taskSubmit');
     btn.disabled = true; msg.className = 'msg'; msg.textContent = draft.length ? 'Загружаю файлы…' : 'Отправляю…';
     let attachmentIds = [];
     if (draft.length) {
@@ -1116,7 +1119,9 @@
 
   // ── Модалка пароля ───────────────────────────────────────────────────────
   function openModal(err) {
-    $('#modal').classList.add('show');
+    const modal = $('#modal');
+    modal.classList.add('show');
+    modal.dataset.openedAt = String(Date.now());
     $('#modal p').innerHTML = err ? `<span style="color:#fca5a5">${esc(err)}</span>` : 'Введи пароль доступа (<code>APP_PASSWORD</code> из Render). Он хранится только в этом браузере.';
     $('#pwInput').value = '';
     setTimeout(() => $('#pwInput').focus(), 60);
@@ -1135,7 +1140,13 @@
     };
     $('#pwCancel').onclick = closeModal;
     $('#pwForget').onclick = () => { localStorage.removeItem('appPassword'); closeModal(); toast('Пароль удалён', 'В этом браузере он больше не хранится.', 'x'); };
-    $('#modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
+    // Тот же тап, который открыл пропуск, в мобильной эмуляции приходит кликом уже по фону
+    // и сразу закрывал окно. Короткое окно после открытия этот клик не считает отменой.
+    $('#modal').onclick = (e) => {
+      if (e.target.id !== 'modal') return;
+      if (Date.now() - Number($('#modal').dataset.openedAt || 0) < 500) return;
+      closeModal();
+    };
     $('#btnKey').onclick = () => openModal();
   }
 

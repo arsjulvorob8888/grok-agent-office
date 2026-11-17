@@ -35,7 +35,8 @@ const STATUS_LABELS = {
 // РОСТЕР АГЕНТОВ. Это единственное место, где задаются агенты на карте Москвы.
 // x / y — координаты на карте (холст 1600×1100, север сверху, Кремль ≈ 800×540).
 // kind — тип фигурки на клиенте: putin, army, poker, trading, devops, dev, qa,
-//        temshik, blog, finance, invest, analyst, lang, biz, vacant, generic.
+//        temshik, blog, finance, invest, analyst, lang, biz, social, routines,
+//        vacant, generic.
 // tier — main (главный), dept (направление), sub (помощник, parentId), extra (союзник).
 // Номер на карте стабилен: сверху вниз по этому списку, помощники — 8.1, 8.2.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ const SEED_AGENTS = [
     tier: 'main',
     x: 800,
     y: 540,
-    links: ['army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'lang', 'biz'],
+    links: ['army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'lang', 'biz', 'social', 'routines'],
     responsibilities: [
       'Принимает задачи и распределяет их по направлениям',
       'Следит за сроками и качеством результатов',
@@ -299,6 +300,45 @@ const SEED_AGENTS = [
     links: [],
     responsibilities: ['Бизнес-идеи и их проверка', 'Финансовые расчёты'],
   },
+  // 13 и 14 заданы явно, чтобы номера 1–12, 8.1 и 8.2 не сдвинулись.
+  {
+    id: 'social',
+    name: 'Соцсети',
+    color: '#c026d3',
+    accent: '#fae8ff',
+    role: 'Instagram, YouTube и охваты',
+    district: 'ВДНХ',
+    kind: 'social',
+    tier: 'dept',
+    order: 13,
+    x: 1160,
+    y: 100,
+    links: [],
+    responsibilities: [
+      'Ведёт Instagram и YouTube',
+      'Публикует посты, сторис и ролики',
+      'Следит за охватами и комментариями',
+    ],
+  },
+  {
+    id: 'routines',
+    name: 'Рутины · Кремль',
+    color: '#9a3412',
+    accent: '#ffedd5',
+    role: 'Советник по рутинам и автоматизации, обучает владельца',
+    district: 'Хамовники',
+    kind: 'routines',
+    tier: 'dept',
+    order: 14,
+    x: 360,
+    y: 630,
+    links: [],
+    responsibilities: [
+      'Учит владельца собирать и запускать рутины',
+      'Автоматизирует повторяющиеся действия штаба',
+      'Следит, чтобы рутины совпадали с приказами',
+    ],
+  },
 ];
 
 // Свободные участки на окраинах для агентов, созданных на лету через /api/status.
@@ -389,12 +429,6 @@ const state = {
 
 const NEED_URGENCY = new Set(['low', 'normal', 'high']);
 
-// Агент «Соцсети», если он уже есть в ростере. Иначе пункт остаётся у главного.
-function socialAgentId() {
-  const hit = state.agents.find((a) => /соцсет/i.test(`${a.name || ''} ${a.id || ''}`));
-  return hit ? hit.id : 'grok';
-}
-
 function seedOwnerNeeds() {
   const createdAt = new Date().toISOString();
   const seeds = [
@@ -415,7 +449,7 @@ function seedOwnerNeeds() {
     {
       id: 'need-social',
       what: 'Войти в Instagram и YouTube для агента Соцсети',
-      fromAgentId: socialAgentId(),
+      fromAgentId: 'social',
       where: 'Instagram и YouTube',
       urgency: 'normal',
     },

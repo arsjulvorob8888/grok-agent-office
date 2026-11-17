@@ -109,6 +109,8 @@ test('на ширине 390 иерархия не прячется под пан
     assert.match(treeText, /10\.\s*Technology Blog/);
     assert.match(treeText, /11\.\s*Language Coach/);
     assert.match(treeText, /12\.\s*Business Adviser/);
+    assert.match(treeText, /13\.\s*Соцсети/);
+    assert.match(treeText, /14\.\s*Рутины/);
     assert.equal(hit.panelOpen, false);
     assert.equal(hit.overlap, false);
     assert.ok(hit.cardH > 30, 'строка иерархии не видна');
@@ -343,6 +345,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.match(text, /urg-high/);
     assert.match(text, /Академию агентов/);
     assert.match(text, /Instagram и YouTube/);
+    assert.match(text, /Соцсети/);
     assert.match(text, /финансовых вопросов/);
     assert.match(text, /Финансы/);
     assert.ok(info.popLeft >= -1 && info.popRight <= info.vw + 1, `попап шире экрана: ${info.popLeft}..${info.popRight}`);

@@ -59,7 +59,7 @@ test('state содержит новый ростер без секретов', a
   const { status, body } = await json('/api/state');
   assert.equal(status, 200);
   const ids = body.agents.map((a) => a.id);
-  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst']) {
+  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst', 'lang', 'biz', 'social', 'routines']) {
     assert.ok(ids.includes(id), `нет агента ${id}`);
   }
   const grok = body.agents.find((a) => a.id === 'grok');
@@ -89,6 +89,27 @@ test('state содержит новый ростер без секретов', a
   assert.equal(body.agents.find((a) => a.id === 'blog').number, '10');
   assert.equal(body.agents.find((a) => a.id === 'lang').number, '11');
   assert.equal(body.agents.find((a) => a.id === 'biz').number, '12');
+  const socialAgent = body.agents.find((a) => a.id === 'social');
+  assert.equal(socialAgent.name, 'Соцсети');
+  assert.equal(socialAgent.number, '13');
+  assert.equal(socialAgent.kind, 'social');
+  assert.equal(socialAgent.tier, 'dept');
+  assert.equal(socialAgent.parentId, null);
+  assert.equal(socialAgent.district, 'ВДНХ');
+  const routines = body.agents.find((a) => a.id === 'routines');
+  assert.equal(routines.name, 'Рутины · Кремль');
+  assert.equal(routines.number, '14');
+  assert.equal(routines.kind, 'routines');
+  assert.equal(routines.tier, 'dept');
+  assert.equal(routines.parentId, null);
+  assert.equal(routines.district, 'Хамовники');
+  assert.match(routines.role, /рутинам и автоматизации/);
+  assert.match(routines.role, /обучает владельца/);
+  assert.equal(body.agents.find((a) => a.id === 'trading').number, '4');
+  assert.equal(body.agents.find((a) => a.id === 'poker').number, '3');
+  assert.equal(body.agents.find((a) => a.id === 'devops').number, '5');
+  assert.equal(body.agents.find((a) => a.id === 'dev').number, '6');
+  assert.equal(body.agents.find((a) => a.id === 'temshik').number, '7');
   assert.ok(finance.links.includes('invest') && finance.links.includes('analyst'));
   const raw = JSON.stringify(body);
   assert.ok(!raw.includes('pw-test') && !raw.includes('tok-test') && !raw.includes('hook-key'));
@@ -600,13 +621,15 @@ test('пункты «нужно от вас»: посев, токен, созд�
   assert.equal(academy.urgency, 'normal');
   assert.match(academy.what, /Академию агентов/);
   assert.match(social.what, /Instagram и YouTube/);
+  assert.equal(social.fromAgentId, 'social');
   assert.equal(finance.fromAgentId, 'finance');
   assert.equal(finance.urgency, 'normal');
   assert.match(finance.what, /шесть финансовых вопросов/);
 
   const st = await json('/api/state');
-  const socialAgent = st.body.agents.find((a) => /соцсет/i.test(`${a.name} ${a.id}`));
-  assert.equal(social.fromAgentId, socialAgent ? socialAgent.id : 'grok');
+  const socialAgent = st.body.agents.find((a) => a.id === 'social');
+  assert.ok(socialAgent);
+  assert.equal(social.fromAgentId, socialAgent.id);
   assert.ok(st.body.needs.some((n) => n.id === 'need-render-api' && !n.closedAt));
   const raw = JSON.stringify(st.body);
   assert.ok(!raw.includes('pw-test') && !raw.includes('tok-test') && !raw.includes('hook-key'));
