@@ -16,6 +16,21 @@
 
   const NS = 'http://www.w3.org/2000/svg';
   const $ = (s, r = document) => r.querySelector(s);
+  function focusInside(root) {
+    const active = document.activeElement;
+    return !!(root && active && active !== document.body && root.contains(active));
+  }
+  // Chrome блокирует aria-hidden, если фокус остался внутри скрываемого блока.
+  function releaseFocus(root, next) {
+    if (!focusInside(root)) return;
+    const outside = next && next.nodeType === 1 && !root.contains(next);
+    if (outside && typeof next.focus === 'function') {
+      try { next.focus({ preventScroll: true }); } catch (_) { next.focus(); }
+    }
+    if (focusInside(root) && document.activeElement && document.activeElement.blur) {
+      document.activeElement.blur();
+    }
+  }
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const M = window.MoscowMap;
   const Feed = window.OfficeFeed;
@@ -975,7 +990,11 @@
     const box = document.createElement('div');
     box.id = 'lightbox';
     box.innerHTML = `<button type="button" class="icon-btn lb-close" aria-label="Закрыть">${ico('x')}</button><img alt=""><a class="btn ghost" download>Скачать</a>`;
-    box.onclick = (e) => { if (e.target === box || e.target.closest('.lb-close')) box.classList.remove('show'); };
+    box.onclick = (e) => {
+      if (e.target !== box && !e.target.closest('.lb-close')) return;
+      releaseFocus(box, S.lightboxOpener);
+      box.classList.remove('show');
+    };
     $('#app').appendChild(box);
   }
   function openLightbox(url, name) {
@@ -987,6 +1006,8 @@
     img.alt = name || 'Вложение';
     link.href = url;
     if (/^https?:/i.test(url)) link.removeAttribute('download'); else link.setAttribute('download', name || 'file');
+    const opener = document.activeElement;
+    S.lightboxOpener = opener && opener !== document.body ? opener : null;
     box.classList.add('show');
   }
 
@@ -1026,6 +1047,8 @@
     if (!head || roomHostId(head)) return;
     S.roomId = id;
     S.roomSig = '';
+    const opener = document.activeElement;
+    S.roomOpener = opener && opener !== document.body && !($('#room') && $('#room').contains(opener)) ? opener : null;
     const room = $('#room');
     room.hidden = false;
     room.classList.add('open');
@@ -1034,11 +1057,14 @@
     paintRoom();
     blip(640);
   }
-  function closeRoom() {
-    S.roomId = null;
-    S.roomSig = '';
+  function closeRoom(opts) {
     const room = $('#room');
     if (!room) return;
+    const next = (opts && opts.focus) || S.roomOpener;
+    releaseFocus(room, next);
+    S.roomId = null;
+    S.roomSig = '';
+    S.roomOpener = null;
     room.classList.remove('open');
     room.hidden = true;
     room.setAttribute('aria-hidden', 'true');
@@ -1114,8 +1140,10 @@
       const btn = e.target.closest('.room-go');
       if (!btn) return;
       const id = btn.dataset.id;
-      closeRoom();
       select(id);
+      const panel = $('#panel');
+      const next = panel && (panel.querySelector('#pClose') || panel.querySelector('button, a, input, textarea, select'));
+      closeRoom({ focus: next });
     });
   }
 
@@ -1597,7 +1625,10 @@
   function closeModal() {
     dropPendingAuth();
     const modal = $('#modal');
-    if (modal) modal.classList.remove('show');
+    if (modal) {
+      releaseFocus(modal, $('#btnKey'));
+      modal.classList.remove('show');
+    }
     const input = $('#pwInput');
     if (input) input.value = '';
   }
@@ -1749,10 +1780,11 @@
   function setHierarchy(open) {
     if (open && window.Processes) Processes.setOpen(false);
     const h = $('#hier');
+    const b = $('#btnHier');
     if (open && innerWidth <= 900) $('#panel').classList.remove('open');
+    if (!open) releaseFocus(h, b);
     h.classList.toggle('open', open);
     document.body.classList.toggle('hier-on', open);
-    const b = $('#btnHier');
     b.classList.toggle('on', open);
     b.setAttribute('aria-pressed', open ? 'true' : 'false');
     if (open) {
@@ -1775,7 +1807,11 @@
     const j = $('#journal');
     if (innerWidth > 900 && localStorage.getItem('journal') === 'collapsed') j.classList.add('collapsed');
     $('#jClose').onclick = () => {
-      if (innerWidth <= 900) { j.classList.remove('mobile-open'); return; }
+      if (innerWidth <= 900) {
+        releaseFocus(j, $('#btnJournal'));
+        j.classList.remove('mobile-open');
+        return;
+      }
       j.classList.toggle('collapsed'); localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
     };
     $('#btnJournal').onclick = () => {
@@ -1851,6 +1887,7 @@
   function setNeedsOpen(open) {
     const pop = $('#needsPop');
     if (!pop) return;
+    if (!open) releaseFocus(pop, $('#btnNeeds'));
     pop.classList.toggle('open', !!open);
     pop.setAttribute('aria-hidden', open ? 'false' : 'true');
     const btn = $('#btnNeeds');
