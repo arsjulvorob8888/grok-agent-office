@@ -462,7 +462,7 @@ test('старая запись без forwardStatus не называется �
       };
       return { held: pick('NEON-NULL'), sent: pick('NEON-OK'), failed: pick('NEON-ERR') };
     });
-    assert.equal(labels.held.who.includes('Владелец'), true);
+    assert.equal(labels.held.who.includes('Путин'), true);
     assert.equal(labels.held.process, 'В очереди, доставка не подключена');
     assert.equal(labels.held.feed, 'В очереди, доставка не подключена');
     assert.equal(labels.held.history, 'В очереди, доставка не подключена');
