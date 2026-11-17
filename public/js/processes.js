@@ -16,7 +16,8 @@
   }
 
   function person(id, map) {
-    if (!id || id === 'owner') return 'Владелец';
+    const owner = window.OfficeSender.senderName(id);
+    if (owner) return owner;
     const a = map.get(id);
     if (!a) return id;
     const name = a.id === 'grok' ? 'Путин' : (a.name || a.id);
