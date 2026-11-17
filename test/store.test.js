@@ -214,12 +214,21 @@ async function seedOffice(base) {
   assert.equal(scout.status, 200);
   assert.equal(scout.body.agent.id, 'scout');
 
-  const closed = await json(base, '/api/needs/need-render-api/close', {
+  const closed = await json(base, `/api/needs/${need.body.id}/close`, {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-test' },
-    body: '{}',
+    body: JSON.stringify({ agentId: 'dev' }),
   });
   assert.equal(closed.status, 200);
+  assert.equal(closed.body.closedBy, 'dev');
+  const answer = await json(base, '/api/needs/need-finance/answer', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-test' },
+    body: JSON.stringify({ text: 'Ответ на финансы' }),
+  });
+  assert.equal(answer.status, 201);
+  assert.equal(answer.body.answerStatus, 'answered');
+  assert.equal(answer.body.answers[0].text, 'Ответ на финансы');
 
   return {
     png: png.body.attachments[0],
@@ -266,8 +275,9 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(state.body.agents.some((agent) => agent.id === 'scout'), false);
       assert.equal(state.body.agents.find((agent) => agent.id === 'trading').archived, true);
       const needs = await json(second.base, '/api/needs');
-      assert.equal(needs.body.needs.length, 4);
-      assert.equal(needs.body.needs.find((item) => item.id === 'need-render-api').closedAt, null);
+      assert.equal(needs.body.needs.length, 3);
+      assert.equal(needs.body.needs.find((item) => item.id === 'need-render-api'), undefined);
+      assert.ok(needs.body.needs.find((item) => item.id === 'need-finance'));
       const missing = await fetch(second.base + '/api/files/' + 'a'.repeat(32));
       assert.equal(missing.status, 404);
     } finally {
@@ -318,6 +328,36 @@ describe('хранилище', { concurrency: 1 }, () => {
     }
   });
 
+  test('созданная задача остаётся в /api/state после нового процесса', { skip: process.env.DATABASE_URL ? false : 'DATABASE_URL не задан' }, async () => {
+    const schema = `r_${crypto.randomBytes(4).toString('hex')}`;
+    const env = { DATABASE_URL: process.env.DATABASE_URL, STORE_SCHEMA: schema };
+    let taskId;
+    const first = await startOffice(env);
+    try {
+      const created = await json(first.base, '/api/task', {
+        method: 'POST',
+        headers: { 'x-app-password': 'pw-test' },
+        body: JSON.stringify({ agent: 'dev', text: 'Пережить перезапуск' }),
+      });
+      assert.equal(created.status, 201);
+      taskId = created.body.id;
+    } finally {
+      await stopOffice(first);
+    }
+    const second = await startOffice(env);
+    try {
+      const state = await json(second.base, '/api/state');
+      const saved = state.body.tasks.find((task) => task.id === taskId);
+      assert.ok(saved);
+      assert.equal(saved.text, 'Пережить перезапуск');
+      assert.equal(saved.agentId, 'dev');
+      assert.equal(state.body.needs.find((item) => item.id === 'need-render-api'), undefined);
+    } finally {
+      await stopOffice(second);
+      await dropSchema(schema);
+    }
+  });
+
   test('Postgres сохраняет приказ, пункт, сообщение и файл после перезапуска', { skip: process.env.DATABASE_URL ? false : 'DATABASE_URL не задан' }, async () => {
     const schema = `p_${crypto.randomBytes(6).toString('hex')}`;
     const env = { DATABASE_URL: process.env.DATABASE_URL, STORE_SCHEMA: schema };
@@ -343,6 +383,8 @@ describe('хранилище', { concurrency: 1 }, () => {
       await pool.query(`UPDATE ${schema}.needs SET what = $1 WHERE id = $2`, ['Отредактировано вручную', 'need-finance']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-social']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-academy']);
+      const renderRows = await pool.query(`SELECT id FROM ${schema}.needs WHERE id = 'need-render-api'`);
+      assert.equal(renderRows.rowCount, 0);
       await pool.query(
         `UPDATE ${schema}.orders SET extra = $2::jsonb WHERE id = $1`,
         [made.parent.id, JSON.stringify({ deadline: '2031-11-17', priority: 'Срочно' })],
@@ -410,24 +452,27 @@ describe('хранилище', { concurrency: 1 }, () => {
 
       const needs = await json(second.base, '/api/needs');
       const ids = needs.body.needs.map((item) => item.id);
-      assert.ok(ids.includes(made.need.id));
-      assert.ok(ids.includes('need-social'));
-      assert.ok(ids.includes('need-finance'));
-      assert.ok(ids.includes('need-academy'));
+      assert.equal(ids.includes(made.need.id), false);
+      assert.equal(ids.includes('need-social'), false);
+      assert.equal(ids.includes('need-academy'), false);
       assert.equal(ids.includes('need-render-api'), false);
-      const social = needs.body.needs.find((item) => item.id === 'need-social');
-      assert.match(social.what, /Instagram и YouTube/);
-      const academy = needs.body.needs.find((item) => item.id === 'need-academy');
-      assert.match(academy.what, /Академию агентов/);
+      assert.ok(ids.includes('need-finance'));
       const finance = needs.body.needs.find((item) => item.id === 'need-finance');
       assert.equal(finance.what, 'Отредактировано вручную');
       assert.equal(finance.createdAt, financeCreatedAt);
-      const again = await json(second.base, '/api/needs/need-render-api/close', {
-        method: 'POST',
-        headers: { 'x-agent-token': 'tok-test' },
-        body: '{}',
+      const savedNeed = await json(second.base, `/api/needs/${made.need.id}`, {
+        headers: { 'x-app-password': 'pw-test' },
       });
-      assert.equal(again.body.closedAt, made.closed.body.closedAt);
+      assert.equal(savedNeed.status, 200);
+      assert.equal(savedNeed.body.closedBy, 'dev');
+      assert.ok(savedNeed.body.closedAt);
+      const savedFinance = await json(second.base, '/api/needs/need-finance', {
+        headers: { 'x-app-password': 'pw-test' },
+      });
+      assert.equal(savedFinance.body.answerStatus, 'answered');
+      assert.equal(savedFinance.body.answers[0].text, 'Ответ на финансы');
+      const render = await json(second.base, '/api/needs/need-render-api');
+      assert.equal(render.status, 404);
 
       const png = await fetch(second.base + made.png.url);
       assert.equal(png.status, 200);
@@ -448,7 +493,7 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.notEqual(third.body.id, made.parent.id);
       assert.notEqual(third.body.id, made.child.id);
       const nums = [made.parent.id, made.child.id, third.body.id].map((id) => Number(id.slice(2)));
-      assert.deepEqual(nums, [1, 2, 3]);
+      assert.deepEqual(nums, [1, 2, 4]);
       assert.equal(made.autoId, 'm-1');
       const nextMessage = await json(second.base, '/api/messages', {
         method: 'POST',

@@ -189,6 +189,16 @@
       hair: HAIR.short('#1f1a17'),
       extra: `<g transform="translate(18,-22)"><rect x="0" y="0" width="18" height="13" rx="2" fill="#5b3a1e"/><rect x="6" y="-3" width="6" height="4" rx="1" fill="none" stroke="#5b3a1e" stroke-width="1.6"/><rect x="0" y="5" width="18" height="1.6" fill="#3d2712"/></g>`,
     }),
+    social: () => generic({
+      top: '#a21caf', pants: '#3b0764',
+      hair: HAIR.bob('#3a241c'),
+      extra: `<g transform="translate(14,-36) rotate(8)"><rect x="0" y="0" width="12" height="18" rx="2" fill="#1c1224" stroke="#f0abfc" stroke-width="1"/><rect x="1.6" y="2.2" width="8.8" height="11.5" rx="1" fill="#4a044e"/><path d="M4.1,7.4c0,-1.5 1.2,-2.1 1.8,-1 .6,-1.1 1.8,-.5 1.8,1.1 0,1.5-1.8,2.8-1.8,2.8s-1.8,-1.3-1.8,-2.9z" fill="#fb7185"/></g>`,
+    }),
+    routines: () => generic({
+      top: '#9a3412', shirt: '#fff7ed', tie: '#f5c451', pants: '#3f1d0d',
+      hair: HAIR.short('#2a2118'),
+      extra: `<g transform="translate(-28,-36) rotate(-8)"><rect x="0" y="0" width="14" height="18" rx="1.5" fill="#fff7ed" stroke="#7c2d12"/><path d="M3,5h8M3,8.5h8M3,12h5" stroke="#c2410c" stroke-width="1.1"/></g><g transform="translate(20,-24)" fill="none" stroke="#f5c451" stroke-width="1.4"><circle r="5.5"/><path d="M0,-7.4v2.2M0,5.2v2.2M-7.4,0h2.2M5.2,0h2.2"/></g>`,
+    }),
     vacant: () => `<g class="fig vacant">
       <ellipse cx="0" cy="1" rx="22" ry="6" fill="#000" opacity=".22"/>
       <g class="fig-body" opacity=".9">

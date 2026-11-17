@@ -18,6 +18,7 @@
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const M = window.MoscowMap;
+  const Feed = window.OfficeFeed;
 
   const svg = $('#map'), world = $('#world'), overlay = $('#overlay');
   const S = {
@@ -30,6 +31,7 @@
     needs: [],
     seenNeeds: new Set(),
     needsReady: false,
+    panelScrollTo: '',
     archivedIds: new Set(),
   };
   const drafts = new Map();
@@ -37,6 +39,12 @@
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
   let rejectedOversize = false;
   const params = new URLSearchParams(location.search);
+  const NEED_ID = (() => {
+    const match = location.pathname.match(/^\/needs\/([^/]+)\/?$/);
+    if (!match) return '';
+    try { return decodeURIComponent(match[1]); } catch (_) { return match[1]; }
+  })();
+  if (NEED_ID) document.documentElement.classList.add('need-route');
 
   // ── Тема ─────────────────────────────────────────────────────────────────
   function initTheme() {
@@ -192,7 +200,14 @@
       badge.dataset.id = a.id;
       badge.onclick = (e) => { e.stopPropagation(); select(a.id); };
       overlay.appendChild(badge);
-      S.els.set(a.id, { g, tag, bubble, badge, link, packets, w: 0 });
+      const awaitBadge = document.createElement('button');
+      awaitBadge.type = 'button';
+      awaitBadge.className = 'await-you is-off';
+      awaitBadge.hidden = true;
+      awaitBadge.dataset.id = a.id;
+      awaitBadge.onclick = (e) => { e.stopPropagation(); e.preventDefault(); select(a.id, { scrollTo: 'awaits' }); };
+      overlay.appendChild(awaitBadge);
+      S.els.set(a.id, { g, tag, bubble, badge, awaitBadge, link, packets, w: 0 });
     }
     buildRoster();
     buildMiniDots();
@@ -203,7 +218,8 @@
       const e = S.els.get(a.id);
       if (!e) continue;
       const tier = tierOf(a), L = levelInfo(a);
-      e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${S.selected === a.id ? ' sel' : ''}`);
+      const act = a.activity === 'working' ? ' pulse' : ' sleep';
+      e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${act}${S.selected === a.id ? ' sel' : ''}`);
       e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}`;
       e.tag.innerHTML = `<span class="lvl">${a.vacant ? '?' : L.lvl}</span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
       e.w = 0;
@@ -217,8 +233,10 @@
         e.packets.setAttribute('class', `packet${hot ? ' on' : ''}`);
       }
       paintOrderBadge(e, a);
+      paintAwaitBadge(e.awaitBadge, a.id);
     }
     updateRoster();
+    if (window.ActivityView) ActivityView.paint();
     doPlaceOverlay();
   }
 
@@ -256,6 +274,31 @@
     e.badge.setAttribute('aria-label', aria);
     e.badge.title = aria;
   }
+  function paintAwaitBadge(el, agentId) {
+    if (!el) return;
+    const open = Feed.openNeedsForAgent(S.needs, agentId);
+    const count = open.length;
+    const allStale = count > 0 && open.every((n) => n.stale);
+    if (!count) {
+      el.hidden = true;
+      el.classList.add('is-off');
+      el.setAttribute('aria-hidden', 'true');
+      el.dataset.sig = '0';
+      return;
+    }
+    el.hidden = false;
+    el.classList.remove('is-off');
+    el.classList.toggle('is-stale', allStale);
+    el.setAttribute('aria-hidden', 'false');
+    const label = `ждёт вас: ${count}`;
+    el.setAttribute('aria-label', label);
+    el.title = label;
+    const sig = `${count}:${allStale ? 1 : 0}`;
+    if (el.dataset.sig !== sig) {
+      el.dataset.sig = sig;
+      el.innerHTML = `<span class="await-you-label">ждёт вас</span><b class="await-you-count">${count}</b>`;
+    }
+  }
 
   // ── Камера ───────────────────────────────────────────────────────────────
   function viewRect() {
@@ -265,7 +308,9 @@
     let left = 0, right = w, top = hud.bottom + 8, bottom = (ros.height ? ros.top : h) - 8;
     const j = $('#journal');
     const hier = $('#hier');
-    if (!mob && w > 900 && hier && hier.classList.contains('open')) left = hier.getBoundingClientRect().right + 8;
+    const proc = $('#processes');
+    if (!mob && w > 900 && proc && proc.classList.contains('open')) left = proc.getBoundingClientRect().right + 8;
+    else if (!mob && w > 900 && hier && hier.classList.contains('open')) left = hier.getBoundingClientRect().right + 8;
     else if (!mob && w > 900 && !j.classList.contains('collapsed') && getComputedStyle(j).display !== 'none') left = j.getBoundingClientRect().right + 8;
     if (S.selected && $('#panel').classList.contains('open')) {
       // Берём итоговые размеры панели, а не текущие (панель может ещё выезжать).
@@ -280,6 +325,8 @@
     document.body.classList.toggle('zoom-far', k < 0.55);
     placeOverlay();
     updateMiniView();
+    if (window.ActivityView) ActivityView.place();
+    if (window.Delegation) Delegation.rescale();
   }
   function clampCam() {
     const c = S.cam, w = innerWidth, h = innerHeight;
@@ -336,6 +383,10 @@
     const pts = new Map();
     let moved = 0, start = null, pinch = null;
     svg.addEventListener('pointerdown', (e) => {
+      const top = document.elementFromPoint(e.clientX, e.clientY);
+      // Жест по панели, полосе или кнопке не захватываем: у карты touch-action:none,
+      // и палец иначе уходит в пан вместо клика.
+      if (top && !svg.contains(top)) return;
       svg.setPointerCapture(e.pointerId);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       cancelAnimationFrame(flyRaf);
@@ -396,6 +447,7 @@
     clampCam(); applyCam();
   }
   function clickAt(target) {
+    if (window.Delegation && Delegation.click(target)) return;
     const ag = target.closest && target.closest('.agent');
     if (ag) { select(ag.dataset.id); return; }
     const lm = target.closest && target.closest('.landmark');
@@ -443,7 +495,7 @@
     const compact = k < 0.6;
     const order = [...S.agents].sort((a, b) => prio(b) - prio(a));
     // Панели интерфейса — препятствия для табличек.
-    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open', '#needsPop.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
+    const placed = ['.hud', '#roster', '#minimap', '#journal', '#hier.open', '#panel.open', '#needsPop.open', '#processes.open'].map((q) => document.querySelector(q)).filter((el) => el && el.offsetParent !== null).map((el) => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }).filter((r) => r.w > 0);
     const hit = (r) => placed.some((p) => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
     for (const a of order) {
       const e = S.els.get(a.id);
@@ -511,6 +563,27 @@
       e.badge.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
       if (!hidden) placed.push(r);
     }
+    for (const a of order) {
+      const e = S.els.get(a.id);
+      const el = e && e.awaitBadge;
+      if (!el) continue;
+      if (el.hidden || k < 0.28) { el.classList.add('hide'); continue; }
+      let sx = a.x * k + tx + Math.max(18, 34 * k);
+      let sy = (a.y + figTop(a) + 28) * k + ty;
+      const bw = el.offsetWidth || 72;
+      const bh = el.offsetHeight || 40;
+      const hud = document.querySelector('.hud').getBoundingClientRect();
+      let top = sy - bh;
+      if (top < hud.bottom + 4) top = hud.bottom + 4;
+      sy = top + bh;
+      const r = { x: sx - bw / 2, y: top, w: bw, h: bh };
+      const off = r.x < -80 || r.x > innerWidth + 80 || r.y < -40 || r.y > innerHeight + 40;
+      const underHud = r.y < hud.bottom - 1 && r.y + bh > hud.top;
+      const hidden = off || underHud || (hit(r) && S.selected !== a.id);
+      el.classList.toggle('hide', hidden);
+      el.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
+      if (!hidden) placed.push(r);
+    }
   }
   function prio(a) {
     return (S.selected === a.id ? 100 : 0) + (tierOf(a) === 'main' ? 50 : 0) + (a.status === 'working' ? 20 : a.status === 'waiting' ? 15 : 0) + (tierOf(a) === 'dept' ? 10 : 0) - (a.vacant ? 5 : 0);
@@ -530,10 +603,21 @@
       if (lastGroup && group !== lastGroup) html += '<span class="roster-sep"></span>';
       lastGroup = group;
       html += `<button class="chip ${t}${a.vacant ? ' vacant' : ''}" data-id="${esc(a.id)}" style="--c:${esc(a.color)}" title="${esc(titled(a))}">
+        <span class="await-you is-off" data-id="${esc(a.id)}" hidden aria-hidden="true"></span>
         <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span></button>`;
     }
     r.innerHTML = html;
-    r.querySelectorAll('.chip').forEach((c) => (c.onclick = () => select(c.dataset.id)));
+    r.querySelectorAll('.chip').forEach((c) => (c.onclick = (e) => {
+      if (e.target.closest('.await-you')) return;
+      select(c.dataset.id);
+    }));
+    r.querySelectorAll('.await-you').forEach((el) => {
+      el.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        select(el.dataset.id, { scrollTo: 'awaits' });
+      };
+    });
   }
   // Вертикальное колесо над полосой листает её вбок, когда агенты не влезают.
   // Иначе на узкой ширине мышью до крайних чипов не добраться: скроллбар был скрыт.
@@ -555,8 +639,11 @@
       const a = S.byId.get(c.dataset.id);
       if (!a) return;
       c.classList.toggle('sel', S.selected === a.id);
+      c.classList.toggle('pulse', a.activity === 'working');
+      c.classList.toggle('sleep', a.activity !== 'working');
       c.querySelector('.st').className = `st ${a.status}`;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
+      paintAwaitBadge(c.querySelector('.await-you'), a.id);
     });
   }
   function buildMiniDots() {
@@ -762,8 +849,9 @@
   }
 
   // ── Выбор агента и панель ────────────────────────────────────────────────
-  function select(id) {
+  function select(id, opts) {
     const prev = S.selected;
+    const scrollTo = opts && opts.scrollTo;
     S.selected = id && S.byId.has(id) ? id : null;
     const panel = $('#panel');
     if (!S.selected) {
@@ -775,7 +863,8 @@
     }
     if (prev !== S.selected) blip(prev ? 820 : 700);
     if (innerWidth <= 900 && $('#hier').classList.contains('open')) setHierarchy(false);
-    renderPanel({ preserveScroll: prev === S.selected });
+    S.panelScrollTo = scrollTo || '';
+    renderPanel({ preserveScroll: prev === S.selected && !scrollTo });
     S.panelSig = panelContentSig(S.selected);
     panel.classList.add('open');
     updateAgents();
@@ -810,14 +899,17 @@
   const ico = (n) => `<svg viewBox="0 0 24 24">${ICONS[n]}</svg>`;
   const fmtTime = (iso) => { try { const d = new Date(iso); return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + (Date.now() - d > 864e5 ? ' · ' + d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : ''); } catch (_) { return ''; } };
 
-  function questHTML(t, showAgent) {
+  function questHTML(t, showAgent, viewerId) {
     const a = S.byId.get(t.agent) || { name: t.agent, color: '#64748b' };
     const [cls, label] = taskBadge(t);
     const title = t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение');
-    return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}" style="--c:${esc(a.color)}">
+    const dir = viewerId ? Feed.orderDirection(t, viewerId, S.tasks) : '';
+    const mark = dir === 'out' ? '→' : dir === 'in' ? '←' : dir === 'both' ? '↔' : '';
+    const dirLabel = dir === 'out' ? 'отдал' : dir === 'in' ? 'получил' : dir === 'both' ? 'себе' : '';
+    return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}"${dir ? ` data-dir="${dir}"` : ''} style="--c:${esc(a.color)}">
       <span class="qi">${ico(cls === 'done' ? 'check' : cls === 'fail' ? 'x' : 'send')}</span>
       <span class="qt">${esc(title)}</span>
-      <span class="qm"><span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
+      <span class="qm">${mark ? `<span class="qdir" aria-label="${dirLabel}">${mark}</span>` : ''}<span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
       ${chainHTML(t)}
       ${historyHTML(t)}
       ${attachmentsHTML(t.attachments)}
@@ -874,14 +966,15 @@
   }
 
   function chatHTML(agent) {
-    const msgs = S.messages.filter((m) => m.agentId === agent.id).slice().sort((a, b) =>
+    const msgs = Feed.messagesForAgent(S.messages, S.tasks, agent.id).slice().sort((a, b) =>
       String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
     if (!msgs.length) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
     return msgs.map((m) => {
       if (m.role === 'system') {
         return `<div class="msg-row system"><div class="msg-sys">${linkify(m.text)}</div></div>`;
       }
-      const who = m.role === 'owner' ? 'Вы' : titled(agent);
+      const speaker = S.byId.get(m.agentId) || agent;
+      const who = m.role === 'owner' ? 'Вы' : titled(speaker);
       return `<div class="msg-row ${m.role === 'owner' ? 'owner' : 'agent'}">
         <div class="msg-bubble">
           <div class="msg-meta"><b>${esc(who)}</b><span>${fmtTime(m.timestamp || m.createdAt)}</span></div>
@@ -896,18 +989,20 @@
     const a = S.byId.get(id);
     if (!a) return '';
     const L = levelInfo(a);
-    const tasks = tierOf(a) === 'main' ? S.tasks.slice(0, 8) : S.tasks.filter((t) => t.agent === a.id).slice(0, 12);
-    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
-    const msgKey = S.messages.filter((m) => m.agentId === a.id).map((m) => [m.id, m.role, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
+    const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
+    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
+    const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
+    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
-    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey].join('\u0003');
+    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
 
   function renderPanel(opts = {}) {
     const a = S.byId.get(S.selected);
     if (!a) return;
     const tier = tierOf(a), L = levelInfo(a);
-    const tasks = S.tasks.filter((t) => t.agent === a.id);
+    const tasks = Feed.ordersForAgent(S.tasks, a.id);
+    const pin = S.pinnedOrder && tasks.find((t) => t.id === S.pinnedOrder);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
     const parent = a.parentId ? S.byId.get(a.parentId) : null;
     const panel = $('#panel');
@@ -930,7 +1025,7 @@
     } else {
       form = `<form class="task-form" id="taskForm">
         ${tier === 'main' ? `<label for="taskTarget">Кому поручить</label><select id="taskTarget">
-            <option value="${esc(a.id)}">1. GROK лично</option>
+            <option value="${esc(a.id)}">1. Путину лично</option>
             ${depts.map((d) => `<option value="${esc(d.id)}">${esc(titled(d))}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
@@ -941,13 +1036,12 @@
           <span class="hint">до 5 файлов, 10 МБ · перетащи или вставь скриншот</span>
         </div>
         <div class="attach-preview" id="attachPreview"></div>
-        <div class="row"><span class="hint">Ctrl+Enter — отправить</span><button class="btn gold" type="submit">${ico('send')}Дать задачу</button></div>
-        <div class="msg" id="formMsg"></div>
       </form>`;
     }
-    const taskBlock = tier === 'main'
-      ? `<div class="sec" data-anchor="tasks"><h4>Последние задачи штаба</h4><div class="quest-list" style="padding:0">${S.tasks.slice(0, 8).map((t) => questHTML(t, true)).join('') || emptyQuests()}</div></div>`
-      : `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${tasks.slice(0, 12).map((t) => questHTML(t, false)).join('') || emptyQuests()}</div></div>`;
+    const shown = tasks.slice(0, 20);
+    if (pin && !shown.some((t) => t.id === pin.id)) shown.unshift(pin);
+    const focusCls = (t) => (S.pinnedOrder === t.id ? ' order-focus' : '');
+    const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${shown.map((t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id).replace('class="quest"', `class="quest${focusCls(t)}"`)).join('') || emptyQuests()}</div></div>`;
     panel.innerHTML = `
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
@@ -956,6 +1050,7 @@
           <h2>${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</h2><div class="role">${esc(a.role || '')}</div>${parent ? `<button type="button" class="parent-link" data-parent="${esc(parent.id)}">Помощник · ${esc(titled(parent))}</button>` : ''}</div>
       </div>
       <div class="p-body">
+        ${panelNeedsHTML(a)}
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
           <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
         <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>
@@ -965,7 +1060,8 @@
         ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
         ${a.vacant ? '' : taskBlock}
         ${a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : ''}
-      </div>`;
+      </div>
+      ${a.vacant ? '' : `<div class="task-dock"><span class="hint">Ctrl+Enter — отправить</span><button class="btn gold" type="submit" form="taskForm" id="taskSubmit">${ico('send')}Дать задачу</button><div class="msg" id="formMsg"></div></div>`}`;
     $('#pClose').onclick = () => select(null);
     const parentBtn = panel.querySelector('.parent-link');
     if (parentBtn) parentBtn.onclick = () => select(parentBtn.dataset.parent);
@@ -1010,11 +1106,32 @@
     panel.querySelectorAll('.thumb').forEach((btn) => {
       btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(btn.dataset.full, btn.dataset.name); };
     });
+    panel.querySelectorAll('.need-close').forEach((btn) => {
+      btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeNeed(btn.dataset.need); };
+    });
     if (snap) restorePanelScroll(panel, snap);
     else {
       const chat = panel.querySelector('[data-scroll-key="chat"]');
       if (chat) { chat.scrollTop = chat.scrollHeight; requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; }); }
     }
+    if (S.panelScrollTo) {
+      const anchor = S.panelScrollTo;
+      S.panelScrollTo = '';
+      scrollPanelAnchor(anchor);
+    }
+  }
+  function scrollPanelAnchor(anchorId) {
+    const body = document.querySelector('#panel .p-body');
+    const el = body && body.querySelector(`[data-anchor="${anchorId}"]`);
+    if (!body || !el) return;
+    const apply = () => {
+      const box = body.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const pad = parseFloat(getComputedStyle(body).paddingTop) || 0;
+      body.scrollTop += r.top - (box.top + pad);
+    };
+    apply();
+    requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
   }
   const emptyQuests = () => '<div class="empty"><b>Заданий пока нет</b>Дай первую задачу — и агент возьмётся за работу.</div>';
 
@@ -1073,7 +1190,7 @@
     let targets = [a.id];
     const sel = $('#taskTarget');
     if (sel) targets = sel.value === '__all' ? S.agents.filter((x) => tierOf(x) === 'dept' && !x.vacant).map((x) => x.id) : [sel.value];
-    const btn = $('#taskForm button[type=submit]');
+    const btn = $('#taskSubmit');
     btn.disabled = true; msg.className = 'msg'; msg.textContent = draft.length ? 'Загружаю файлы…' : 'Отправляю…';
     let attachmentIds = [];
     if (draft.length) {
@@ -1178,7 +1295,9 @@
 
   // ── Модалка пароля ───────────────────────────────────────────────────────
   function openModal(err) {
-    $('#modal').classList.add('show');
+    const modal = $('#modal');
+    modal.classList.add('show');
+    modal.dataset.openedAt = String(Date.now());
     $('#modal p').innerHTML = err ? `<span style="color:#fca5a5">${esc(err)}</span>` : 'Введи пароль доступа (<code>APP_PASSWORD</code> из Render). Он хранится только в этом браузере.';
     $('#pwInput').value = '';
     setTimeout(() => $('#pwInput').focus(), 60);
@@ -1197,7 +1316,13 @@
     };
     $('#pwCancel').onclick = closeModal;
     $('#pwForget').onclick = () => { localStorage.removeItem('appPassword'); closeModal(); toast('Пароль удалён', 'В этом браузере он больше не хранится.', 'x'); };
-    $('#modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
+    // Тот же тап, который открыл пропуск, в мобильной эмуляции приходит кликом уже по фону
+    // и сразу закрывал окно. Короткое окно после открытия этот клик не считает отменой.
+    $('#modal').onclick = (e) => {
+      if (e.target.id !== 'modal') return;
+      if (Date.now() - Number($('#modal').dataset.openedAt || 0) < 500) return;
+      closeModal();
+    };
     $('#btnKey').onclick = () => openModal();
   }
 
@@ -1230,7 +1355,7 @@
     $('#jCount').textContent = S.tasks.length;
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
-    list.innerHTML = S.tasks.slice(0, 60).map((t) => questHTML(t, true)).join('') || '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
+    list.innerHTML = Feed.ordersForGeneral(S.tasks).slice(0, 60).map((t) => questHTML(t, true)).join('') || '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
     list.scrollTop = top;
     list.querySelectorAll('[data-scroll-key]').forEach((el) => {
       if (typeof saved[el.dataset.scrollKey] === 'number') el.scrollTop = saved[el.dataset.scrollKey];
@@ -1308,6 +1433,7 @@
     });
   }
   function setHierarchy(open) {
+    if (open && window.Processes) Processes.setOpen(false);
     const h = $('#hier');
     if (open && innerWidth <= 900) $('#panel').classList.remove('open');
     h.classList.toggle('open', open);
@@ -1323,7 +1449,7 @@
   }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
-    const active = staff.filter((a) => a.status === 'working').length;
+    const active = staff.filter((a) => (a.activity ? a.activity === 'working' : a.status === 'working')).length;
     const done = S.agents.reduce((s, a) => s + (a.completed || 0), 0);
     const energy = Math.min(100, Math.round(20 + (active / Math.max(1, staff.length)) * 50 + Math.min(30, done * 3)));
     $('#stTasks').textContent = S.tasks.length;
@@ -1339,6 +1465,7 @@
       j.classList.toggle('collapsed'); localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
     };
     $('#btnJournal').onclick = () => {
+      if (window.Processes) Processes.setOpen(false);
       blip(600);
       const fromHier = $('#hier').classList.contains('open');
       if (fromHier) setHierarchy(false);
@@ -1391,8 +1518,54 @@
     if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     placeOverlay();
   }
+  function panelNeedsHTML(agent) {
+    const list = Feed.needsForAgent(S.needs, agent.id);
+    if (!list.length) return '';
+    return `<div class="sec awaits" data-anchor="awaits"><h4>Ждёт от вас</h4><div class="awaits-list">${list.map((n) => needCardHTML(n, true)).join('')}</div></div>`;
+  }
+  const NEED_LABEL = { low: 'несрочно', normal: 'обычно', high: 'срочно', stale: 'требует проверки', closed: 'закрыто' };
+  function needSolveHref(n) {
+    return `/needs/${encodeURIComponent(String(n && n.id || ''))}`;
+  }
+  function needActionHTML(n) {
+    if (!n || !n.id) return '';
+    const label = String(n.actionLabel ?? '').trim() || 'Решить';
+    return `<div class="need-action-wrap"><a class="need-action" href="${esc(needSolveHref(n))}">${esc(label)}</a></div>`;
+  }
+  function needCardHTML(n, withClose) {
+    const view = Feed.needUrgencyView(n);
+    const close = withClose && !n.closedAt
+      ? `<div class="need-top"><button type="button" class="need-close" data-need="${esc(n.id)}">Закрыть</button></div>`
+      : '';
+    return `<article class="need-item urg-${view}${n.closedAt ? ' is-closed' : ''}${view === 'stale' ? ' is-stale' : ''}" data-id="${esc(n.id)}">
+      ${close}
+      <div class="need-what">${esc(n.what)}</div>
+      <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span>${n.answerStatus === 'answered' ? '<span class="need-answered">ответ получен</span>' : ''}</div>
+      ${needActionHTML(n)}
+    </article>`;
+  }
+  async function closeNeed(id) {
+    if (!id) return;
+    if (!getPassword()) { pending = () => closeNeed(id); openModal(); return; }
+    const res = await fetch(`/api/needs/${encodeURIComponent(id)}/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+      body: '{}',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      localStorage.removeItem('appPassword');
+      pending = () => closeNeed(id);
+      openModal('Пароль не подошёл. Попробуй ещё раз.');
+      return;
+    }
+    if (!res.ok) { toast('Не закрылось', data.error || `Ошибка ${res.status}`, 'x', true); return; }
+    blip(720);
+    toast('Пункт закрыт', data.what || '', 'check');
+    await loadState();
+  }
   function renderNeeds() {
-    const list = S.needs || [];
+    const list = Feed.needsForGeneral(S.needs || []);
     const badge = $('#needsBadge');
     const pill = $('#needsCount');
     if (badge) {
@@ -1404,17 +1577,12 @@
     if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
     const box = $('#needsList');
     if (!box) return;
-    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency].join('\u0001')).join('\n');
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.stale, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\n');
     if (box.dataset.sig === sig) return;
     const top = box.scrollTop;
-    const urgLabel = { low: 'несрочно', normal: 'обычно', high: 'срочно' };
-    box.innerHTML = list.length ? list.map((n) => {
-      const urg = urgLabel[n.urgency] ? n.urgency : 'normal';
-      return `<article class="need-item urg-${urg}" data-id="${esc(n.id)}">
-        <div class="need-what">${esc(n.what)}</div>
-        <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${urgLabel[urg]}</span></div>
-      </article>`;
-    }).join('') : '<div class="empty"><b>Пусто</b>Сейчас от вас ничего не ждут.</div>';
+    box.innerHTML = list.length
+      ? list.map((n) => needCardHTML(n, false)).join('')
+      : '<div class="empty"><b>Пусто</b>Сейчас от вас ничего не ждут.</div>';
     box.dataset.sig = sig;
     box.scrollTop = top;
   }
@@ -1424,19 +1592,19 @@
       new Notification('Нужно от вас', { body: `${item.what} · ${needFromLabel(item.fromAgentId)}`, tag: String(item.id) });
     } catch (_) { /* без уведомления */ }
   }
-  function needVisible(n) {
-    if (!n || !n.id || n.closedAt) return false;
-    return !(S.archivedIds && S.archivedIds.has(n.fromAgentId));
+  function authorVisible(id) {
+    return !(S.archivedIds && id && S.archivedIds.has(id));
   }
   function syncNeeds(raw) {
-    const list = (Array.isArray(raw) ? raw : []).filter(needVisible);
+    const list = (Array.isArray(raw) ? raw : []).filter((n) => n && n.id && authorVisible(n.fromAgentId));
     S.needs = list;
+    const open = Feed.needsForGeneral(list);
     const first = !S.needsReady;
-    const fresh = list.filter((n) => !S.seenNeeds.has(n.id));
+    const fresh = open.filter((n) => !n.stale && !S.seenNeeds.has(n.id));
     renderNeeds();
     if (fresh.length && !needsSnoozed()) setNeedsOpen(true);
     if (!first) fresh.forEach(notifyNeed);
-    for (const n of list) S.seenNeeds.add(n.id);
+    for (const n of open) S.seenNeeds.add(n.id);
     S.needsReady = true;
   }
   function initNeeds() {
@@ -1459,6 +1627,30 @@
       }).catch(() => {});
     };
   }
+
+  function openOrder(id) {
+    const t = S.tasks.find((x) => x.id === id);
+    if (!t) return;
+    const agentId = t.agentId || t.agent;
+    S.pinnedOrder = id;
+    document.body.dataset.openOrder = id;
+    if (S.selected !== agentId) select(agentId);
+    else {
+      renderPanel({ preserveScroll: false });
+      S.panelSig = panelContentSig(S.selected);
+      updateAgents();
+    }
+    const mark = () => {
+      const panel = $('#panel');
+      const q = panel && panel.querySelector(`.quest.order-focus, .quest[data-anchor="q:${CSS.escape(id)}"]`);
+      if (!q) return;
+      q.classList.add('order-focus');
+      const body = panel.querySelector('.p-body');
+      if (body) body.scrollTop = Math.max(0, q.offsetTop - 12);
+    };
+    requestAnimationFrame(mark);
+  }
+  window.Office = { openOrder };
 
   // ── Загрузка состояния ───────────────────────────────────────────────────
   async function loadState() {
@@ -1501,6 +1693,7 @@
         renderPanel({ preserveScroll: true });
       }
     }
+    document.dispatchEvent(new CustomEvent('officestate', { detail: data }));
     if (!S.loaded) {
       S.loaded = true;
       goHome(false);
@@ -1519,8 +1712,139 @@
     loadState().catch(() => {}).finally(() => setTimeout(poll, document.hidden ? CONFIG.pollMs * 3 : CONFIG.pollMs));
   }
 
+  function initNeedPage() {
+    if (!NEED_ID) return;
+    const title = $('#needTitle');
+    const who = $('#needWho');
+    const where = $('#needWhere');
+    const details = $('#needDetails');
+    const external = $('#needExternal');
+    const form = $('#needAnswerForm');
+    const area = $('#needAnswer');
+    const msg = $('#needAnswerMsg');
+    const badge = $('#needAnswerBadge');
+    let need = null;
+
+    function paintWho() {
+      if (!need || !who) return;
+      const agent = S.byId.get(need.fromAgentId);
+      who.textContent = agent ? `Ждёт: ${titled(agent)}` : `Ждёт: ${need.fromAgentId || 'агент'}`;
+    }
+    document.addEventListener('officestate', paintWho);
+
+    function paintExternal() {
+      if (!external) return;
+      const url = String(need && need.actionUrl || '').trim();
+      if (/^https:\/\/\S+$/i.test(url) && url.length <= 500) {
+        const label = String(need.actionLabel || '').trim() || 'Открыть ссылку';
+        external.innerHTML = `<a class="need-action" id="needExternalLink" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
+        return;
+      }
+      if (/^grokbot:\/\/\S+$/i.test(url) && url.length <= 500) {
+        external.innerHTML = `<p class="need-action-hint">${esc(url)} <span class="md-grok-hint">Откройте в Grok — браузер эту ссылку не откроет</span></p>`;
+        return;
+      }
+      external.innerHTML = '';
+    }
+    function paintPublic() {
+      if (title) title.textContent = need.what || 'Вопрос';
+      if (where) where.textContent = need.where ? `Где: ${need.where}` : '';
+      if (badge) badge.hidden = need.answerStatus !== 'answered';
+      paintWho();
+      paintExternal();
+    }
+    function paintPrivate(data) {
+      need = data;
+      paintPublic();
+      const markdown = typeof data.details === 'string' ? data.details : '';
+      if (details) details.innerHTML = markdown && window.renderSafeMarkdown ? window.renderSafeMarkdown(markdown) : '';
+      if (form) form.hidden = data.answerable !== true;
+    }
+    async function loadPrivate() {
+      const res = await fetch(`/api/needs/${encodeURIComponent(NEED_ID)}`, {
+        headers: { 'x-app-password': getPassword() },
+        cache: 'no-store',
+      });
+      if (res.status === 401) {
+        localStorage.removeItem('appPassword');
+        pending = loadPrivate;
+        openModal('Пароль не подошёл. Попробуй ещё раз.');
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (title) title.textContent = data.error || 'Пункт не найден';
+        return;
+      }
+      paintPrivate(data);
+    }
+    async function loadPublic() {
+      const res = await fetch(`/api/needs/${encodeURIComponent(NEED_ID)}`, { cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (title) title.textContent = data.error || 'Пункт не найден';
+        return;
+      }
+      need = data;
+      paintPublic();
+      if (details) details.innerHTML = '';
+      if (form) form.hidden = true;
+      if (!getPassword()) {
+        pending = loadPrivate;
+        openModal();
+        return;
+      }
+      await loadPrivate();
+    }
+    if (form) {
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const text = (area && area.value || '').trim();
+        if (!text) {
+          if (msg) msg.textContent = 'Напишите ответ';
+          return;
+        }
+        if (!getPassword()) {
+          pending = () => form.requestSubmit();
+          openModal();
+          return;
+        }
+        if (msg) msg.textContent = 'Отправляю…';
+        let res;
+        let data = {};
+        try {
+          res = await fetch(`/api/needs/${encodeURIComponent(NEED_ID)}/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+            body: JSON.stringify({ text }),
+          });
+          data = await res.json().catch(() => ({}));
+        } catch (err) {
+          if (msg) msg.textContent = messageForClientException(err);
+          return;
+        }
+        if (res.status === 401) {
+          localStorage.removeItem('appPassword');
+          pending = () => form.requestSubmit();
+          openModal('Пароль не подошёл. Попробуй ещё раз.');
+          return;
+        }
+        if (!res.ok) {
+          if (msg) msg.textContent = data.error || 'Не удалось отправить';
+          return;
+        }
+        if (area) area.value = '';
+        if (msg) msg.textContent = 'Ответ отправлен';
+        paintPrivate(data);
+      };
+    }
+    loadPublic().catch(() => {
+      if (title) title.textContent = 'Не удалось открыть вопрос';
+    });
+  }
+
   // ── Старт ────────────────────────────────────────────────────────────────
-  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initNeeds(); initRoster();
+  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initNeeds(); initRoster(); initNeedPage();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeOverlay());
   addEventListener('resize', () => {
     if (innerWidth <= 900 && $('#hier').classList.contains('open') && $('#panel').classList.contains('open')) {

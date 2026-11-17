@@ -14,6 +14,12 @@ process.env.AGENT_TOKEN = 'tok-ui';
 process.env.GROK_WEBHOOK_URL = '';
 process.env.GROK_WEBHOOK_KEY = '';
 process.env.PUBLIC_URL = 'http://127.0.0.1';
+process.env.NEEDS_DETAILS_JSON = JSON.stringify({
+  'need-finance': {
+    details: '## Вопросы\n\nСколько отложить?\n\nСмотрите https://example.com/budget\n\nЧат grokbot://app/v1/agent?id=demo\n\n<script>alert(1)</script>',
+    answerable: true,
+  },
+});
 delete process.env.PORYADOK_INGEST_TOKEN;
 
 const { app } = require('../server.js');
@@ -108,6 +114,8 @@ test('на ширине 390 иерархия не прячется под пан
     assert.match(treeText, /8\.\s*Тестировщик ПО/);
     assert.match(treeText, /9\.\s*Technology Blog/);
     assert.match(treeText, /10\.\s*Language Coach/);
+    assert.match(treeText, /11\.\s*Соцсети/);
+    assert.match(treeText, /12\.\s*Рутины/);
     assert.doesNotMatch(treeText, /Business Adviser/);
     assert.doesNotMatch(treeText, /Трейдинг/);
     assert.equal(hit.panelOpen, false);
@@ -304,12 +312,28 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
       const br = btn.getBoundingClientRect();
       const popBox = pop.getBoundingClientRect();
       const roster = document.querySelector('#roster').getBoundingClientRect();
-      const items = [...document.querySelectorAll('#needsPop .need-item')].map((el) => ({
-        what: el.querySelector('.need-what').textContent,
-        from: el.querySelector('.need-from').textContent,
-        where: el.querySelector('.need-where').textContent,
-        urg: el.className,
-      }));
+      const items = [...document.querySelectorAll('#needsPop .need-item')].map((el) => {
+        const link = el.querySelector('a.need-action');
+        const hint = el.querySelector('.need-action-hint');
+        const box = el.getBoundingClientRect();
+        const lr = link ? link.getBoundingClientRect() : null;
+        const hr = hint ? hint.getBoundingClientRect() : null;
+        return {
+          id: el.dataset.id,
+          what: el.querySelector('.need-what').textContent,
+          from: el.querySelector('.need-from').textContent,
+          where: el.querySelector('.need-where').textContent,
+          urg: el.className,
+          label: link ? link.textContent : '',
+          href: link ? link.getAttribute('href') : '',
+          target: link ? link.getAttribute('target') : '',
+          rel: link ? link.getAttribute('rel') : '',
+          hint: hint ? hint.textContent : '',
+          fits: !!(link && lr.left >= -1 && lr.right <= window.innerWidth + 1 && lr.width >= 40 && lr.height >= 36
+            && lr.left >= box.left - 1 && lr.right <= box.right + 1
+            && (!hint || (hr.left >= -1 && hr.right <= window.innerWidth + 1 && hr.right <= box.right + 1))),
+        };
+      });
       return {
         count: badge.textContent.trim(),
         label: btn.getAttribute('aria-label'),
@@ -331,7 +355,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
       };
     });
     assert.equal(info.vw, 390);
-    assert.ok(Number(info.count) >= 4, info.count);
+    assert.ok(Number(info.count) >= 3, info.count);
     assert.match(info.label, /Нужно от вас/);
     assert.equal(info.expanded, 'true');
     assert.equal(info.btnInView, true, 'бейдж не помещается в шапку');
@@ -339,13 +363,34 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.equal(info.notify, 'Включить уведомления');
     assert.equal(info.rowsFit, true, 'строка пункта обрезана');
     const text = info.items.map((i) => `${i.what} ${i.from} ${i.where} ${i.urg}`).join('\n');
-    assert.match(text, /Ключ Render API/);
-    assert.match(text, /DevOps/);
-    assert.match(text, /urg-high/);
+    assert.doesNotMatch(text, /Ключ Render API/);
     assert.match(text, /Академию агентов/);
+    assert.match(text, /Программирования и Тестировщика/);
+    assert.doesNotMatch(text, /Business Adviser/);
+    assert.match(text, /Чаты агентов в Grok/);
+    assert.match(text, /Чат Путина или Финансов/);
     assert.match(text, /Instagram и YouTube/);
+    assert.match(text, /Соцсети/);
     assert.match(text, /финансовых вопросов/);
     assert.match(text, /Финансы/);
+    const byId = Object.fromEntries(info.items.map((item) => [item.id, item]));
+    const academy = byId['need-academy'];
+    const finance = byId['need-finance'];
+    const social = byId['need-social'];
+    assert.equal(academy.label, 'Решить');
+    assert.equal(academy.href, '/needs/need-academy');
+    assert.equal(academy.target, null);
+    assert.equal(academy.rel, null);
+    assert.equal(academy.hint, '');
+    assert.equal(finance.label, 'Решить');
+    assert.equal(finance.href, '/needs/need-finance');
+    assert.equal(finance.target, null);
+    assert.equal(finance.hint, '');
+    assert.equal(social.href, '/needs/need-social');
+    assert.equal(social.hint, '');
+    assert.doesNotMatch(text, /Сколько отложить/);
+    assert.doesNotMatch(text, /example\.com\/budget/);
+    assert.ok(info.items.every((item) => item.fits), JSON.stringify(info.items));
     assert.ok(info.popLeft >= -1 && info.popRight <= info.vw + 1, `попап шире экрана: ${info.popLeft}..${info.popRight}`);
     assert.ok(info.popBottom <= info.rosterTop + 1, `попап перекрыл полосу: ${info.popBottom} / ${info.rosterTop}`);
 
@@ -367,15 +412,117 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.ok(after.until > Date.now() + 59 * 60 * 1000, String(after.until));
 
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => Number(document.querySelector('#needsBadge')?.textContent) >= 4, { timeout: 8000 });
+    await page.waitForFunction(() => Number(document.querySelector('#needsBadge')?.textContent) >= 3, { timeout: 8000 });
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await page.$eval('#needsPop', (el) => el.classList.contains('open')), false);
 
     await page.click('#btnNeeds');
-    await page.waitForSelector('#needsPop.open .need-item');
+    await page.waitForSelector('#needsPop.open .need-item a.need-action');
+    const opened = await page.evaluate(() => {
+      const pop = document.querySelector('#needsPop');
+      const items = [...pop.querySelectorAll('.need-item')];
+      return {
+        open: pop.classList.contains('open'),
+        hidden: pop.getAttribute('aria-hidden'),
+        badge: document.querySelector('#needsBadge').textContent.trim(),
+        buttons: items.map((el) => {
+          const link = el.querySelector('a.need-action');
+          const hint = el.querySelector('.need-action-hint');
+          return {
+            id: el.dataset.id,
+            label: link ? link.textContent.trim() : '',
+            href: link ? link.getAttribute('href') : '',
+            hint: hint ? hint.textContent : '',
+            https: link ? link.getAttribute('target') : '',
+          };
+        }),
+      };
+    });
+    assert.equal(opened.open, true);
+    assert.equal(opened.hidden, 'false');
+    assert.equal(String(opened.buttons.length), opened.badge);
+    assert.ok(opened.buttons.length >= 3, JSON.stringify(opened));
+    for (const button of opened.buttons) {
+      assert.equal(button.label, 'Решить', JSON.stringify(button));
+      assert.equal(button.href, `/needs/${button.id}`, JSON.stringify(button));
+      assert.equal(button.https, null);
+    }
+    const popupFinance = opened.buttons.find((button) => button.id === 'need-finance');
+    const popupAcademy = opened.buttons.find((button) => button.id === 'need-academy');
+    const popupSocial = opened.buttons.find((button) => button.id === 'need-social');
+    assert.equal(popupAcademy.href, '/needs/need-academy');
+    assert.equal(popupAcademy.https, null);
+    assert.equal(popupAcademy.hint, '');
+    assert.equal(popupFinance.href, '/needs/need-finance');
+    assert.equal(popupFinance.hint, '');
+    assert.equal(popupSocial.href, '/needs/need-social');
+    assert.equal(popupSocial.hint, '');
     await page.screenshot({ path: '/tmp/needs-390.png' });
   } finally {
     await page.close();
+  }
+});
+
+test('«Решить» экранирует ссылку и подсказку в списке и в «Ждёт от вас»', { timeout: 30000 }, async () => {
+  const created = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({
+      what: 'Ссылка <script>alert(1)</script>',
+      where: 'Чат <img src=x>',
+      fromAgentId: 'poker',
+      urgency: 'low',
+      actionUrl: 'grokbot://app/v1/agent?id=1&x=<script>',
+      actionLabel: 'Решить <img>',
+      actionHint: 'подсказка <b>x</b> «чат»',
+    }),
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    await page.evaluateOnNewDocument(() => {
+      localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+    });
+    await page.goto(`${base}/?agent=poker`, { waitUntil: 'domcontentloaded' });
+    const sel = `.need-item[data-id="${created.body.id}"]`;
+    await page.waitForSelector(`#needsList ${sel} a.need-action`, { timeout: 8000 });
+    await page.waitForSelector(`#panel.open[data-agent="poker"] [data-anchor="awaits"] ${sel} a.need-action`, { timeout: 8000 });
+    const cards = await page.$$eval(sel, (els) => els.map((el) => {
+      const link = el.querySelector('a.need-action');
+      const lr = link.getBoundingClientRect();
+      return {
+        html: el.innerHTML,
+        label: link.textContent,
+        href: link.getAttribute('href'),
+        target: link.getAttribute('target'),
+        right: lr.right,
+        vw: window.innerWidth,
+      };
+    }));
+    assert.equal(cards.length, 2, JSON.stringify(cards));
+    for (const card of cards) {
+      assert.doesNotMatch(card.html, /<script/i);
+      assert.doesNotMatch(card.html, /<img/i);
+      assert.match(card.html, /Ссылка &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+      assert.match(card.html, /Чат &lt;img src=x&gt;/);
+      assert.match(card.html, /Решить &lt;img&gt;/);
+      assert.doesNotMatch(card.html, /grokbot:/);
+      assert.doesNotMatch(card.html, /подсказка <b>/);
+      assert.equal(card.label, 'Решить <img>');
+      assert.equal(card.href, `/needs/${created.body.id}`);
+      assert.equal(card.target, null);
+      assert.ok(card.right <= card.vw + 1, JSON.stringify(card));
+    }
+  } finally {
+    await page.close();
+    if (created.body && created.body.id) {
+      await api(`/api/needs/${created.body.id}/close`, {
+        method: 'POST',
+        headers: { 'x-agent-token': 'tok-ui' },
+        body: JSON.stringify({ agentId: 'grok' }),
+      });
+    }
   }
 });
 
@@ -515,7 +662,7 @@ test('файл больше 10 МБ не уходит на сервер', { time
     await attachOnPage(page, big);
     const onAttach = await page.$eval('#formMsg', (el) => el.textContent);
     assert.equal(onAttach, 'Файл слишком большой (макс. 10 МБ)');
-    await page.click('#taskForm button[type=submit]');
+    await page.click('#taskSubmit');
     const after = await page.$eval('#formMsg', (el) => el.textContent);
     assert.equal(after, 'Файл слишком большой (макс. 10 МБ)');
     assert.equal(posts.some((p) => p === '/api/upload' || p === '/api/task'), false);
@@ -534,7 +681,7 @@ test('неверный пароль показывает «Неверный па
   try {
     await page.evaluate(() => localStorage.setItem('appPassword', 'wrong-password'));
     await page.$eval('#taskText', (el) => { el.value = 'Это не должно сохраниться'; });
-    await page.click('#taskForm button[type=submit]');
+    await page.click('#taskSubmit');
     await page.waitForFunction(() => document.querySelector('#formMsg')?.textContent === 'Неверный пароль', { timeout: 8000 });
     assert.ok(posts.includes('/api/task'));
     assert.equal(await page.$eval('#modal', (el) => el.classList.contains('show')), true);
@@ -626,7 +773,7 @@ test('остановленный сервер — это обрыв связи, 
     await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
     await page.$eval('#taskText', (el) => { el.value = 'Сервер уже ляжет'; });
     await new Promise((resolve, reject) => stopped.close((err) => (err ? reject(err) : resolve())));
-    await page.click('#taskForm button[type=submit]');
+    await page.click('#taskSubmit');
     await page.waitForFunction(() => document.querySelector('#formMsg')?.textContent === 'Нет связи с сервером', { timeout: 8000 });
   } finally {
     await page.close();
@@ -663,6 +810,229 @@ test('без reduced-motion новый приказ запускает полё�
     await page.waitForFunction(() => document.querySelector('#fx')?.dataset.flight === 'play', { timeout: 10000 });
   } finally {
     await page.close();
+  }
+});
+
+async function openQuiet(viewport) {
+  const page = await browser.newPage();
+  const narrow = viewport.width <= 700;
+  await page.setViewport({
+    width: viewport.width,
+    height: viewport.height,
+    isMobile: narrow,
+    hasTouch: narrow,
+    deviceScaleFactor: 1,
+  });
+  await page.evaluateOnNewDocument(() => {
+    localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+    localStorage.removeItem('needsNotify');
+    localStorage.removeItem('appPassword');
+  });
+  await page.goto(`${base}/?theme=day`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+  await page.waitForFunction(() => {
+    const el = document.querySelector('#roster .chip[data-id="finance"] .await-you');
+    return el && !el.hidden && el.querySelector('.await-you-count')?.textContent === '1';
+  }, { timeout: 8000 });
+  return page;
+}
+
+test('бейдж «ждёт вас»: счётчик, нуль скрыт, тап открывает блок', { timeout: 60000 }, async () => {
+  const viewports = [
+    { width: 1280, height: 800 },
+    { width: 390, height: 844 },
+  ];
+  for (const viewport of viewports) {
+    const page = await openQuiet(viewport);
+    try {
+      const counts = await page.evaluate(() => {
+        const read = (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return { missing: true };
+          const r = el.getBoundingClientRect();
+          return {
+            hidden: !!el.hidden,
+            text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+            count: el.querySelector('.await-you-count')?.textContent || '',
+            w: r.width,
+            h: r.height,
+          };
+        };
+        return {
+          financeRoster: read('#roster .chip[data-id="finance"] .await-you'),
+          financeMap: read('#overlay .await-you[data-id="finance"]'),
+          pokerRoster: read('#roster .chip[data-id="poker"] .await-you'),
+          pokerMap: read('#overlay .await-you[data-id="poker"]'),
+          devopsRoster: read('#roster .chip[data-id="devops"] .await-you'),
+        };
+      });
+      assert.equal(counts.financeRoster.hidden, false, JSON.stringify(counts));
+      assert.equal(counts.financeRoster.count, '1');
+      assert.match(counts.financeRoster.text, /ждёт вас/);
+      assert.ok(counts.financeRoster.w >= 40 && counts.financeRoster.h >= 40, JSON.stringify(counts.financeRoster));
+      assert.equal(counts.financeMap.missing, undefined);
+      assert.equal(counts.financeMap.hidden, false);
+      assert.equal(counts.financeMap.count, '1');
+      assert.equal(counts.pokerRoster.hidden, true);
+      assert.equal(counts.pokerMap.hidden, true);
+      assert.equal(counts.devopsRoster.hidden, true);
+
+      await page.evaluate(() => {
+        document.querySelector('#roster .chip[data-id="finance"]').scrollIntoView({ inline: 'center', block: 'nearest' });
+      });
+      const badge = '#roster .chip[data-id="finance"] .await-you';
+      if (viewport.width <= 700) {
+        const point = await page.$eval(badge, (el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        await page.touchscreen.tap(point.x, point.y);
+      } else {
+        await page.click(badge);
+      }
+      await page.waitForSelector('#panel.open[data-agent="finance"] [data-anchor="awaits"]', { timeout: 8000 });
+      await page.waitForFunction(() => {
+        const panel = document.querySelector('#panel.open');
+        if (!panel) return false;
+        const r = panel.getBoundingClientRect();
+        return r.width > 200 && r.left >= -1 && r.right <= window.innerWidth + 1 && r.top < window.innerHeight && r.bottom > 0;
+      }, { timeout: 3000 });
+      const placed = await page.evaluate(() => {
+        const body = document.querySelector('#panel .p-body');
+        const el = document.querySelector('#panel [data-anchor="awaits"]');
+        const close = el.querySelector('.need-close');
+        const br = body.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        const cr = close.getBoundingClientRect();
+        const link = el.querySelector('a.need-action');
+        const hint = el.querySelector('.need-action-hint');
+        const lr = link ? link.getBoundingClientRect() : null;
+        const hr = hint ? hint.getBoundingClientRect() : null;
+        return {
+          title: el.querySelector('h4').textContent,
+          delta: r.top - br.top,
+          visible: r.bottom > br.top && r.top < br.bottom,
+          closeW: cr.width,
+          closeH: cr.height,
+          text: el.textContent,
+          label: link ? link.textContent : '',
+          href: link ? link.getAttribute('href') : '',
+          target: link ? link.getAttribute('target') : '',
+          hint: hint ? hint.textContent : '',
+          linkRight: lr ? lr.right : 0,
+          hintRight: hr ? hr.right : 0,
+          vw: window.innerWidth,
+        };
+      });
+      assert.match(placed.title, /Ждёт от вас/);
+      assert.equal(placed.visible, true, JSON.stringify(placed));
+      assert.ok(placed.delta < 28 && placed.delta > -2, JSON.stringify(placed));
+      assert.match(placed.text, /финансовых вопросов/);
+      assert.match(placed.text, /Чат Путина или Финансов/);
+      assert.equal(placed.label, 'Решить');
+      assert.equal(placed.href, '/needs/need-finance');
+      assert.equal(placed.target, null);
+      assert.equal(placed.hint, '');
+      assert.ok(placed.linkRight <= placed.vw + 1 && placed.hintRight <= placed.vw + 1, JSON.stringify(placed));
+      assert.ok(placed.closeW >= 40 && placed.closeH >= 40, JSON.stringify(placed));
+
+      if (viewport.width > 700) {
+        await page.click('#panel .need-close');
+        await page.waitForSelector('#modal.show');
+        assert.equal(await page.$eval('#mTitle', (el) => el.textContent), 'Пропуск в штаб');
+        await page.click('#pwCancel');
+        await page.click('#pClose');
+        await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'));
+        await page.waitForFunction(() => {
+          const el = document.querySelector('#overlay .await-you[data-id="finance"]');
+          if (!el || el.hidden || el.classList.contains('hide')) return false;
+          const r = el.getBoundingClientRect();
+          const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return !!(top && (top === el || el.contains(top)));
+        }, { timeout: 5000 });
+        const mapHit = await page.evaluate(() => {
+          const el = document.querySelector('#overlay .await-you[data-id="finance"]');
+          if (!el || el.hidden || el.classList.contains('hide')) return null;
+          const r = el.getBoundingClientRect();
+          const x = r.left + r.width / 2;
+          const y = r.top + r.height / 2;
+          const top = document.elementFromPoint(x, y);
+          return {
+            x, y, w: r.width, h: r.height,
+            hit: !!(top && (top === el || el.contains(top))),
+          };
+        });
+        assert.ok(mapHit && mapHit.hit && mapHit.w >= 40 && mapHit.h >= 40, JSON.stringify(mapHit));
+        await page.$eval('#overlay .await-you[data-id="finance"]', (el) => el.click());
+        await page.waitForSelector('#panel.open[data-agent="finance"] [data-anchor="awaits"]');
+      }
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+test('панель DevOps: журнал приказов на десктопе и на 390, без ключа Render', { timeout: 60000 }, async () => {
+  const incoming = await api('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-ui' },
+    body: JSON.stringify({ agent: 'devops', text: 'Проверь деплой штаба', fromAgentId: 'grok' }),
+  });
+  assert.equal(incoming.status, 201);
+  const outgoing = await api('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-ui' },
+    body: JSON.stringify({
+      agent: 'qa',
+      text: 'Прогони смоук панели',
+      fromAgentId: 'devops',
+      parentOrderId: incoming.body.id,
+    }),
+  });
+  assert.equal(outgoing.status, 201);
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage();
+    try {
+      await page.setViewport({
+        width: viewport.width,
+        height: viewport.height,
+        isMobile: viewport.width <= 700,
+        hasTouch: viewport.width <= 700,
+        deviceScaleFactor: 1,
+      });
+      await page.evaluateOnNewDocument(() => {
+        localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+      });
+      await page.goto(`${base}/?theme=day&agent=devops`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#panel.open[data-agent="devops"] [data-anchor="tasks"] .quest[data-dir="in"]', { timeout: 8000 });
+      const info = await page.evaluate(() => {
+        const tasks = document.querySelector('[data-anchor="tasks"]');
+        const dirs = [...tasks.querySelectorAll('.quest')].map((q) => ({
+          dir: q.dataset.dir || '',
+          text: q.querySelector('.qt').textContent,
+        }));
+        return {
+          title: document.querySelector('.p-title h2').textContent,
+          awaits: document.querySelector('[data-anchor="awaits"]')?.textContent || '',
+          journal: tasks.querySelector('h4').textContent,
+          dirs,
+          chat: document.querySelector('[data-anchor="chat"]').textContent,
+          vw: window.innerWidth,
+        };
+      });
+      assert.equal(info.vw, viewport.width);
+      assert.match(info.title, /4\./);
+      assert.match(info.title, /DevOps/);
+      assert.equal(info.awaits, '');
+      assert.match(info.journal, /Журнал заданий/);
+      assert.doesNotMatch(`${info.awaits} ${info.chat} ${info.journal}`, /Ключ Render API/);
+      assert.ok(info.dirs.some((d) => d.dir === 'in' && /Проверь деплой/.test(d.text)), JSON.stringify(info.dirs));
+      assert.ok(info.dirs.some((d) => d.dir === 'out' && /Прогони смоук/.test(d.text)), JSON.stringify(info.dirs));
+      assert.match(info.chat, /Проверь деплой/);
+      assert.match(info.chat, /Прогони смоук/);
+    } finally {
+      await page.close();
+    }
   }
 });
 
@@ -728,6 +1098,7 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.match(chip('blog'), /^9\./);
     assert.match(chip('lang'), /^10\./);
     assert.equal(ui.options.some((o) => o.value === 'trading' || o.value === 'biz'), false);
+    assert.equal(ui.options.find((o) => o.value === 'grok').text, '1. Путину лично');
     assert.match(ui.options.find((o) => o.value === 'devops').text, /^4\./);
     assert.match(ui.options.find((o) => o.value === 'invest').text, /7\.1/);
     assert.match(ui.options.find((o) => o.value === 'lang').text, /10\./);
@@ -737,11 +1108,22 @@ test('на ширине 390 архивные агенты скрыты, исто
       badge: document.querySelector('#needsBadge').textContent.trim(),
     }));
     assert.doesNotMatch(needsUi.text, /Архивный пункт трейдинга/);
-    assert.doesNotMatch(needsUi.text, /Трейдинг|Business Adviser/);
+    assert.doesNotMatch(needsUi.text, /Трейдинг/);
+    const froms = await page.$$eval('#needsList .need-from', (els) => els.map((el) => el.textContent));
+    assert.ok(froms.every((text) => !/Трейдинг|Business Adviser/.test(text)), froms.join(' | '));
     const apiNeeds = await api('/api/needs');
     const visibleNeeds = apiNeeds.body.needs.filter((n) => n.fromAgentId !== 'trading' && n.fromAgentId !== 'biz');
     assert.ok(apiNeeds.body.needs.some((n) => n.fromAgentId === 'trading'));
     assert.equal(needsUi.badge, String(visibleNeeds.length));
+    await page.waitForSelector('#panel.open[data-agent="grok"]', { timeout: 8000 });
+    const hiddenUi = await page.evaluate(() => ({
+      tradingBadge: !!document.querySelector('#roster .await-you[data-id="trading"]:not([hidden]), #overlay .await-you[data-id="trading"]:not([hidden])'),
+      bizBadge: !!document.querySelector('#roster .await-you[data-id="biz"]:not([hidden]), #overlay .await-you[data-id="biz"]:not([hidden])'),
+      awaits: document.querySelector('#panel [data-anchor="awaits"]')?.textContent || '',
+    }));
+    assert.equal(hiddenUi.tradingBadge, false);
+    assert.equal(hiddenUi.bizBadge, false);
+    assert.doesNotMatch(hiddenUi.awaits, /Архивный пункт трейдинга/);
 
     await page.click('#btnHier');
     await page.waitForSelector('#hier.open .org-card', { timeout: 4000 });
@@ -756,6 +1138,90 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.equal(state.agents.find((a) => a.id === 'biz').archived, true);
     assert.ok(state.messages.some((m) => m.id === 'ui-archive-trading' && m.text === 'История трейдинга на месте'));
     assert.ok(state.needs.some((n) => n.fromAgentId === 'trading' && n.what === 'Архивный пункт трейдинга'));
+  } finally {
+    await page.close();
+  }
+});
+
+test('страница вопроса на 390px показывает текст после пароля и отправляет ответ', { timeout: 30000 }, async () => {
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    await page.evaluateOnNewDocument(() => {
+      localStorage.removeItem('appPassword');
+    });
+    await page.goto(`${base}/needs/need-finance`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => {
+      const title = document.querySelector('#needTitle')?.textContent || '';
+      const modal = document.querySelector('#modal')?.classList.contains('show');
+      return modal && /финансовых вопросов/.test(title);
+    }, { timeout: 8000 });
+    assert.equal(await page.$eval('#mTitle', (el) => el.textContent), 'Пропуск в штаб');
+    assert.equal(await page.$eval('#needDetails', (el) => el.innerHTML), '');
+    assert.equal(await page.$eval('#needAnswerForm', (el) => el.hidden), true);
+    const leaked = await page.evaluate(() => document.body.innerHTML.includes('Сколько отложить'));
+    assert.equal(leaked, false);
+
+    await page.type('#pwInput', 'pw-ui');
+    await page.click('#pwForm button[type=submit]');
+    await page.waitForFunction(() => (document.querySelector('#needDetails')?.textContent || '').includes('Сколько отложить'), { timeout: 8000 });
+    await page.waitForFunction(() => (document.querySelector('#needWho')?.textContent || '').includes('Финансы'), { timeout: 8000 });
+
+    const view = await page.evaluate(() => {
+      const pageEl = document.querySelector('#needPage');
+      const link = document.querySelector('#needDetails a');
+      const grok = document.querySelector('#needDetails .md-grok');
+      const send = document.querySelector('#needAnswerForm button');
+      const sendBox = send.getBoundingClientRect();
+      return {
+        vw: window.innerWidth,
+        who: document.querySelector('#needWho').textContent,
+        where: document.querySelector('#needWhere').textContent,
+        html: document.querySelector('#needDetails').innerHTML,
+        href: link ? link.getAttribute('href') : '',
+        grokText: grok ? grok.textContent : '',
+        grokLink: !!document.querySelector('#needDetails a[href^="grokbot:"]'),
+        script: !!document.querySelector('#needDetails script'),
+        form: document.querySelector('#needAnswerForm').hidden,
+        label: document.querySelector('label[for="needAnswer"]').textContent,
+        sendH: sendBox.height,
+        overflow: pageEl.scrollWidth <= pageEl.clientWidth + 1,
+      };
+    });
+    assert.equal(view.vw, 390);
+    assert.match(view.who, /7\.\s*Финансы/);
+    assert.match(view.where, /Чат Путина или Финансов/);
+    assert.equal(view.href, 'https://example.com/budget');
+    assert.equal(view.grokLink, false);
+    assert.match(view.grokText, /grokbot:\/\/app\/v1\/agent\?id=demo/);
+    assert.match(view.grokText, /Откройте в Grok/);
+    assert.equal(view.script, false);
+    assert.match(view.html, /&lt;script&gt;/);
+    assert.equal(view.form, false);
+    assert.equal(view.label, 'Ваш ответ');
+    assert.ok(view.sendH >= 40, String(view.sendH));
+    assert.equal(view.overflow, true);
+    const external = await page.$eval('#needExternal', (el) => el.textContent);
+    assert.match(external, /grokbot:\/\/app\/v1\/agent\?id=8b9d4ad0/);
+    assert.equal(await page.$('#needExternal a'), null);
+
+    await page.type('#needAnswer', 'Откладываю десять');
+    await page.click('#needAnswerForm button[type=submit]');
+    await page.waitForFunction(() => (document.querySelector('#needAnswerMsg')?.textContent || '').includes('Ответ отправлен'), { timeout: 8000 });
+    assert.equal(await page.$eval('#needAnswerBadge', (el) => el.hidden), false);
+
+    const saved = await api('/api/state', { headers: { 'x-app-password': 'pw-ui' } });
+    const finance = saved.body.needs.find((n) => n.id === 'need-finance');
+    assert.equal(finance.answerStatus, 'answered');
+    assert.equal(finance.closedAt, null);
+    assert.equal(finance.answers.at(-1).text, 'Откладываю десять');
+    const task = saved.body.tasks.find((t) => t.agent === 'finance' && t.text.includes('Откладываю десять'));
+    assert.equal(task.text, 'Ответ Арсения на «Ответить на шесть финансовых вопросов»: Откладываю десять');
+    const pub = await api('/api/state');
+    const hidden = pub.body.needs.find((n) => n.id === 'need-finance');
+    assert.equal(hidden.answers, undefined);
+    assert.equal(hidden.details, undefined);
+    assert.equal(JSON.stringify(hidden).includes('Сколько отложить'), false);
   } finally {
     await page.close();
   }
