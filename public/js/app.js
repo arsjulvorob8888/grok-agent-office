@@ -2223,7 +2223,12 @@
     };
     requestAnimationFrame(mark);
   }
-  window.Office = { openOrder };
+  function showAgent(id) {
+    if (!id || !S.byId.has(id)) return;
+    if (S.selected === id && $('#panel').classList.contains('open')) return;
+    select(id);
+  }
+  window.Office = { openOrder, showAgent };
 
   // ── Загрузка состояния ───────────────────────────────────────────────────
   async function loadState() {
