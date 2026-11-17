@@ -529,6 +529,21 @@
     r.innerHTML = html;
     r.querySelectorAll('.chip').forEach((c) => (c.onclick = () => select(c.dataset.id)));
   }
+  // Вертикальное колесо над полосой листает её вбок, когда агенты не влезают.
+  // Иначе на узкой ширине мышью до крайних чипов не добраться: скроллбар был скрыт.
+  function initRoster() {
+    const r = $('#roster');
+    r.addEventListener('wheel', (e) => {
+      if (r.scrollWidth <= r.clientWidth + 1) return;
+      let delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (e.deltaMode === 1) delta *= 16;
+      else if (e.deltaMode === 2) delta *= r.clientWidth;
+      if (!delta) return;
+      const prev = r.scrollLeft;
+      r.scrollLeft += delta;
+      if (r.scrollLeft !== prev) e.preventDefault();
+    }, { passive: false });
+  }
   function updateRoster() {
     document.querySelectorAll('#roster .chip').forEach((c) => {
       const a = S.byId.get(c.dataset.id);
@@ -1337,7 +1352,7 @@
   }
 
   // ── Старт ────────────────────────────────────────────────────────────────
-  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal();
+  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initRoster();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeOverlay());
   addEventListener('resize', () => {
     if (innerWidth <= 900 && $('#hier').classList.contains('open') && $('#panel').classList.contains('open')) {

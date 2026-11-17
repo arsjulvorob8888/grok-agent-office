@@ -462,7 +462,10 @@ body.hier-on #journal{display:none}
   .stat.energy{flex:1.5}
   .stat b{font-size:12.5px}
   .bar{width:100%;min-width:30px}
-  #roster{left:8px;right:8px;bottom:8px;max-width:none;transform:none;border-radius:18px;padding:6px;gap:2px}
+  #roster{left:8px;right:8px;bottom:8px;max-width:none;transform:none;border-radius:18px;padding:6px 6px 8px;gap:2px;overflow-x:auto;scrollbar-width:auto;scrollbar-color:#e0a92a rgba(255,255,255,.14);touch-action:pan-x;overscroll-behavior-x:contain}
+  #roster::-webkit-scrollbar{display:block;height:8px}
+  #roster::-webkit-scrollbar-thumb{background:#e0a92a;border-radius:8px}
+  #roster::-webkit-scrollbar-track{background:rgba(255,255,255,.14)}
   .chip{width:60px;padding:5px 2px}
   .chip.sub{width:54px;margin-top:4px}
   .chip.sub .av{width:32px;height:32px}
