@@ -33,6 +33,7 @@
   const drafts = new Map();
   const MAX_FILES = 5;
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
+  let rejectedOversize = false;
   const params = new URLSearchParams(location.search);
 
   // ── Тема ─────────────────────────────────────────────────────────────────
@@ -634,16 +635,19 @@
     box.querySelectorAll('[data-rm]').forEach((btn) => { btn.onclick = () => removeDraft(S.selected, btn.dataset.rm); });
   }
   function addDraftFiles(agentId, fileList) {
+    const files = [...(fileList || [])].filter(Boolean);
+    if (!files.length) return;
     const list = draftList(agentId);
     const msg = $('#formMsg');
     let err = '';
-    for (const file of fileList || []) {
-      if (!file) continue;
+    let sawOversize = false;
+    for (const file of files) {
       if (list.length >= MAX_FILES) { err = 'Можно прикрепить не больше 5 файлов'; break; }
-      if (file.size > MAX_FILE_BYTES) { err = `«${file.name || 'файл'}» больше 10 МБ`; continue; }
+      if (file.size > MAX_FILE_BYTES) { err = 'Файл слишком большой (макс. 10 МБ)'; sawOversize = true; continue; }
       const isImage = /^image\/(png|jpeg|gif|webp|bmp|avif)$/.test(file.type);
       list.push({ key: Math.random().toString(36).slice(2, 10), file, url: URL.createObjectURL(file), isImage, uploadedId: null });
     }
+    rejectedOversize = sawOversize;
     renderDrafts();
     if (msg && err) { msg.className = 'msg err'; msg.textContent = err; }
   }
@@ -667,8 +671,13 @@
       for (const d of pending) fd.append('files', d.file, d.file.name || 'file');
       const res = await fetch('/api/upload', { method: 'POST', headers: { 'x-app-password': getPassword() }, body: fd });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 401) { const err = new Error('auth'); err.auth = true; throw err; }
-      if (!res.ok) throw new Error(data.error || `Ошибка загрузки ${res.status}`);
+      if (!res.ok) {
+        const err = new Error(messageForStatus(res.status, data && data.error));
+        err.status = res.status;
+        err.auth = res.status === 401 || res.status === 403;
+        logClientError('загрузка файла', `HTTP ${res.status}: ${err.message}`);
+        throw err;
+      }
       const atts = data.attachments || [];
       if (atts.length !== pending.length) throw new Error('Сервер принял не все файлы');
       pending.forEach((d, i) => { d.uploadedId = atts[i].id; });
@@ -1010,13 +1019,54 @@
   // ── Отправка задач ───────────────────────────────────────────────────────
   const getPassword = () => localStorage.getItem('appPassword') || '';
   let pending = null;
+  const FILE_TOO_BIG = 'Файл слишком большой (макс. 10 МБ)';
+  const BAD_PASSWORD = 'Неверный пароль';
+  const SERVER_RESTART = 'Сервер перезапускается, попробуйте через минуту';
+  const OFFLINE = 'Нет связи с сервером';
+  function logClientError(where, detail) {
+    const text = detail instanceof Error ? (detail.stack || detail.message) : String(detail ?? '');
+    console.error(`[задача] ${where}: ${text}`);
+  }
+  function isFetchNetworkError(err) {
+    if (!err || err.name !== 'TypeError') return false;
+    const msg = String(err.message || '').trim();
+    if (/^(Failed to fetch|NetworkError when attempting to fetch resource\.?|Load failed|Network request failed)$/i.test(msg)) return true;
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  }
+  function messageForStatus(status, serverError) {
+    const code = Number(status);
+    if (code === 413) return FILE_TOO_BIG;
+    if (code === 401 || code === 403) return BAD_PASSWORD;
+    if (code === 502 || code === 503 || code === 504) return SERVER_RESTART;
+    if (code >= 400) {
+      const text = typeof serverError === 'string' ? serverError.trim() : '';
+      return text || `Ошибка ${code}`;
+    }
+    return '';
+  }
+  function messageForClientException(err) {
+    logClientError('исключение в браузере', err);
+    if (isFetchNetworkError(err)) return OFFLINE;
+    const text = err && err.message ? String(err.message).trim() : '';
+    return text || 'Не удалось отправить';
+  }
+  function noteBadPassword() {
+    localStorage.removeItem('appPassword');
+    pending = submitTask;
+    openModal('Пароль не подошёл. Попробуй ещё раз.');
+  }
   async function submitTask() {
     const a = S.byId.get(S.selected);
     if (!a) return;
+    const tier = tierOf(a);
     const txt = ($('#taskText').value || '').trim();
     const draft = draftList(a.id);
     const msg = $('#formMsg');
-    if (!txt && !draft.length) { msg.className = 'msg err'; msg.textContent = 'Напиши, что нужно сделать, или прикрепи файл.'; return; }
+    if (!txt && !draft.length) {
+      msg.className = 'msg err';
+      msg.textContent = rejectedOversize ? FILE_TOO_BIG : 'Напиши, что нужно сделать, или прикрепи файл.';
+      return;
+    }
     if (!getPassword()) { pending = submitTask; openModal(); return; }
     let targets = [a.id];
     const sel = $('#taskTarget');
@@ -1029,8 +1079,9 @@
         attachmentIds = await uploadDrafts(draft);
       } catch (err) {
         btn.disabled = false;
-        if (err.auth) { localStorage.removeItem('appPassword'); pending = submitTask; openModal('Пароль не подошёл. Попробуй ещё раз.'); msg.textContent = ''; return; }
-        msg.className = 'msg err'; msg.textContent = err.message || 'Не удалось загрузить файлы';
+        if (err.auth) noteBadPassword();
+        msg.className = 'msg err';
+        msg.textContent = err.auth ? BAD_PASSWORD : messageForClientException(err);
         return;
       }
       msg.textContent = 'Отправляю…';
@@ -1045,18 +1096,27 @@
           body: JSON.stringify({ agent: id, text: txt, attachmentIds, fromAgentId }),
         });
         const data = await res.json().catch(() => ({}));
-        if (res.status === 401) { localStorage.removeItem('appPassword'); pending = submitTask; openModal('Пароль не подошёл. Попробуй ещё раз.'); lastErr = 'auth'; break; }
-        if (!res.ok) { lastErr = data.error || `Ошибка ${res.status}`; continue; }
+        if (!res.ok) {
+          lastErr = messageForStatus(res.status, data && data.error);
+          logClientError('отправка задачи', `HTTP ${res.status}: ${lastErr}`);
+          if (res.status === 401 || res.status === 403) { noteBadPassword(); break; }
+          continue;
+        }
         ok++;
-        if (data && data.id && !S.seenOrders.has(data.id)) {
-          S.seenOrders.add(data.id);
-          flyOrder(data);
+        try {
+          if (data && data.id && !S.seenOrders.has(data.id)) {
+            S.seenOrders.add(data.id);
+            flyOrder(data);
+          }
+        } catch (err) {
+          logClientError('анимация приказа', err);
         }
         if (data.status && String(data.status).startsWith('не отправлена')) lastErr = 'Задача записана, но вебхук Grok не настроен (GROK_WEBHOOK_URL).';
-      } catch (_) { lastErr = 'Нет связи с сервером'; }
+      } catch (err) {
+        lastErr = messageForClientException(err);
+      }
     }
     btn.disabled = false;
-    if (lastErr === 'auth') { msg.textContent = ''; return; }
     if (ok) {
       whoosh();
       const names = targets.length > 1 ? `${ok} направлениям` : titled(S.byId.get(targets[0]));
