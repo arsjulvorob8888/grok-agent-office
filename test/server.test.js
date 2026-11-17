@@ -58,7 +58,7 @@ test('state содержит новый ростер без секретов', a
   const { status, body } = await json('/api/state');
   assert.equal(status, 200);
   const ids = body.agents.map((a) => a.id);
-  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'temshik', 'blog', 'finance', 'invest', 'analyst']) {
+  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst']) {
     assert.ok(ids.includes(id), `нет агента ${id}`);
   }
   const grok = body.agents.find((a) => a.id === 'grok');
@@ -81,6 +81,13 @@ test('state содержит новый ростер без секретов', a
   assert.equal(invest.number, '8.1');
   assert.equal(analyst.number, '8.2');
   assert.equal(invest.tier, 'sub');
+  const qa = body.agents.find((a) => a.id === 'qa');
+  assert.equal(qa.name, 'Тестировщик ПО');
+  assert.equal(qa.number, '9');
+  assert.equal(qa.kind, 'qa');
+  assert.equal(body.agents.find((a) => a.id === 'blog').number, '10');
+  assert.equal(body.agents.find((a) => a.id === 'lang').number, '11');
+  assert.equal(body.agents.find((a) => a.id === 'biz').number, '12');
   assert.ok(finance.links.includes('invest') && finance.links.includes('analyst'));
   const raw = JSON.stringify(body);
   assert.ok(!raw.includes('pw-test') && !raw.includes('tok-test') && !raw.includes('hook-key'));
@@ -413,4 +420,163 @@ test('результат статуса попадает в переписку �
   const replies = st.body.messages.filter((m) => m.agentId === 'trading' && m.role === 'agent' && m.taskId === t.body.id);
   assert.equal(replies.length, 1);
   assert.equal(replies[0].text, 'Три сделки в плюсе');
+  const sys = st.body.messages.filter((m) => m.role === 'system' && m.taskId === t.body.id);
+  assert.equal(sys.length, 2);
+  assert.equal(sys.filter((m) => m.text.startsWith('Выполнено:')).length, 1);
+});
+
+test('приказ: отправитель, цепочка и жизненный цикл', async () => {
+  const pw = { 'x-app-password': 'pw-test' };
+  const tok = { 'x-agent-token': 'tok-test' };
+
+  const dev = await json('/api/task', {
+    method: 'POST', headers: pw,
+    body: JSON.stringify({ agent: 'dev', text: 'Поправь экран' }),
+  });
+  assert.equal(dev.status, 201);
+  assert.equal(dev.body.status, 'отправлена');
+  assert.equal(dev.body.agent, 'dev');
+  assert.equal(dev.body.agentId, 'dev');
+  assert.equal(dev.body.fromAgentId, 'grok');
+  assert.equal(dev.body.parentOrderId, null);
+  assert.equal(dev.body.orderStatus, 'sent');
+  assert.equal(dev.body.history.length, 1);
+  assert.equal(dev.body.history[0].status, 'sent');
+  assert.ok(dev.body.history[0].at);
+
+  const personal = await json('/api/task', {
+    method: 'POST', headers: pw,
+    body: JSON.stringify({ agent: 'grok', text: 'Сводка' }),
+  });
+  assert.equal(personal.body.fromAgentId, 'owner');
+
+  const child = await json('/api/task', {
+    method: 'POST', headers: pw,
+    body: JSON.stringify({
+      agent: 'qa',
+      text: 'Проверь правку',
+      fromAgentId: 'dev',
+      parentOrderId: dev.body.id,
+    }),
+  });
+  assert.equal(child.status, 201);
+  assert.equal(child.body.agentId, 'qa');
+  assert.equal(child.body.fromAgentId, 'dev');
+  assert.equal(child.body.parentOrderId, dev.body.id);
+
+  const missingParent = await json('/api/task', {
+    method: 'POST', headers: pw,
+    body: JSON.stringify({ agent: 'qa', text: 'x', parentOrderId: 't-nope' }),
+  });
+  assert.equal(missingParent.status, 400);
+  const badFrom = await json('/api/task', {
+    method: 'POST', headers: pw,
+    body: JSON.stringify({ agent: 'qa', text: 'x', fromAgentId: 'nobody' }),
+  });
+  assert.equal(badFrom.status, 400);
+
+  assert.equal((await json(`/api/orders/${dev.body.id}`, { method: 'POST', body: '{"status":"accepted"}' })).status, 401);
+  const unknown = await json('/api/orders/t-missing', {
+    method: 'POST', headers: tok, body: JSON.stringify({ status: 'accepted' }),
+  });
+  assert.equal(unknown.status, 404);
+
+  const skip = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok, body: JSON.stringify({ status: 'done', result: 'рано' }),
+  });
+  assert.equal(skip.status, 400);
+  const badProgress = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok, body: JSON.stringify({ status: 'accepted', progress: 10 }),
+  });
+  assert.equal(badProgress.status, 400);
+
+  const accepted = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok, body: JSON.stringify({ status: 'accepted' }),
+  });
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.unchanged, false);
+  assert.equal(accepted.body.task.orderStatus, 'accepted');
+  const acceptedAgain = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok, body: JSON.stringify({ status: 'accepted' }),
+  });
+  assert.equal(acceptedAgain.status, 200);
+  assert.equal(acceptedAgain.body.unchanged, true);
+  assert.equal(acceptedAgain.body.task.history.length, accepted.body.task.history.length);
+
+  const progress = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'in_progress', progress: 40, note: 'Смотрю вёрстку' }),
+  });
+  assert.equal(progress.status, 200);
+  assert.equal(progress.body.task.orderStatus, 'in_progress');
+  assert.equal(progress.body.task.progress, 40);
+  assert.equal(progress.body.task.note, 'Смотрю вёрстку');
+  assert.equal(progress.body.task.status, 'отправлена');
+  const sameProgress = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'in_progress', progress: 40, note: 'Смотрю вёрстку' }),
+  });
+  assert.equal(sameProgress.body.unchanged, true);
+  assert.equal(sameProgress.body.task.history.length, progress.body.task.history.length);
+
+  const fraction = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'in_progress', progress: 40.5 }),
+  });
+  assert.equal(fraction.status, 400);
+  const longNote = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'in_progress', progress: 50, note: 'я'.repeat(201) }),
+  });
+  assert.equal(longNote.status, 400);
+
+  const moved = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'in_progress', progress: 80, note: 'Почти' }),
+  });
+  assert.equal(moved.body.unchanged, false);
+  assert.equal(moved.body.task.progress, 80);
+
+  const done = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'done', result: 'Экран поправлен' }),
+  });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.task.orderStatus, 'done');
+  assert.equal(done.body.task.status, 'выполнена');
+  assert.equal(done.body.task.result, 'Экран поправлен');
+  const doneAgain = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'done', result: 'Экран поправлен' }),
+  });
+  assert.equal(doneAgain.body.unchanged, true);
+  const doneOther = await json(`/api/orders/${dev.body.id}`, {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'done', result: 'Другой текст' }),
+  });
+  assert.equal(doneOther.status, 400);
+
+  const noResult = await json(`/api/orders/${child.body.id}`, {
+    method: 'POST', headers: tok, body: JSON.stringify({ status: 'done' }),
+  });
+  assert.equal(noResult.status, 400);
+
+  const st = await json('/api/state');
+  const saved = st.body.tasks.find((t) => t.id === dev.body.id);
+  assert.equal(saved.history.filter((h) => h.status === 'in_progress').length, 2);
+  assert.equal(saved.history[0].status, 'sent');
+  assert.equal(saved.history.at(-1).status, 'done');
+  const devLines = st.body.messages.filter((m) => m.agentId === 'dev' && m.role === 'system' && m.taskId === dev.body.id);
+  assert.equal(devLines.length, saved.history.length);
+  const ids = devLines.map((m) => m.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(devLines.filter((m) => m.text.includes('40%')).length, 1);
+  assert.equal(devLines.filter((m) => m.text.startsWith('Выполнено:')).length, 1);
+  const devAgent = st.body.agents.find((a) => a.id === 'dev');
+  assert.equal(devAgent.completed, 1);
+
+  const childState = st.body.tasks.find((t) => t.id === child.body.id);
+  assert.equal(childState.parentOrderId, dev.body.id);
+  assert.equal(childState.fromAgentId, 'dev');
+  assert.equal(childState.agentId, 'qa');
 });

@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test --test-concurrency=1 test/server.test.js test/ui-bugs.test.js"
+    "test": "node --test --test-concurrency=1 test/server.test.js test/ui-bugs.test.js test/browser.test.js"
   },
   "engines": {
     "node": ">=18"

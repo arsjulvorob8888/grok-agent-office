@@ -25,6 +25,7 @@
     els: new Map(), // id -> {g, tag, bubble, link, packets}
     sound: localStorage.getItem('soundOn') === '1',
     hierFold: new Set(),
+    seenOrders: new Set(),
   };
   const drafts = new Map();
   const MAX_FILES = 5;
@@ -180,7 +181,12 @@
       bubble.className = 'bubble hide';
       bubble.onclick = (e) => { e.stopPropagation(); select(a.id); };
       overlay.appendChild(bubble);
-      S.els.set(a.id, { g, tag, bubble, link, packets, w: 0 });
+      const badge = document.createElement('div');
+      badge.className = 'order-badge hide';
+      badge.dataset.id = a.id;
+      badge.onclick = (e) => { e.stopPropagation(); select(a.id); };
+      overlay.appendChild(badge);
+      S.els.set(a.id, { g, tag, bubble, badge, link, packets, w: 0 });
     }
     buildRoster();
     buildMiniDots();
@@ -204,9 +210,45 @@
         e.link.setAttribute('class', `link${tier === 'sub' ? ' sub' : ''}${hot ? ' hot' : ''}${S.selected === a.id ? ' sel' : ''}`);
         e.packets.setAttribute('class', `packet${hot ? ' on' : ''}`);
       }
+      paintOrderBadge(e, a);
     }
     updateRoster();
     doPlaceOverlay();
+  }
+
+  function latestOrder(agentId) {
+    const list = S.tasks.filter((t) => (t.agentId || t.agent) === agentId);
+    list.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.id).localeCompare(String(a.id)));
+    const newest = list[0];
+    if (!newest) return null;
+    if (['accepted', 'in_progress', 'done', 'failed'].includes(newest.orderStatus)) return newest;
+    return list.find((t) => t.orderStatus === 'in_progress' || t.orderStatus === 'accepted') || null;
+  }
+  function paintOrderBadge(e, a) {
+    if (!e.badge) return;
+    const t = latestOrder(a.id);
+    if (!t) {
+      e.badgeOn = false;
+      e.badge.className = 'order-badge hide';
+      e.badge.innerHTML = '';
+      e.badge.dataset.sig = '';
+      return;
+    }
+    const kind = t.orderStatus === 'in_progress' ? 'progress' : t.orderStatus;
+    const label = t.orderStatus === 'in_progress' ? 'в работе' : t.orderStatus === 'done' ? 'выполнено' : t.orderStatus === 'failed' ? 'не вышло' : 'принял';
+    const pct = Math.max(0, Math.min(100, Number.isFinite(Number(t.progress)) ? Number(t.progress) : 0));
+    const bar = t.orderStatus === 'in_progress' ? `<span class="ob-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>` : '';
+    const html = `<span class="ob-label">${label}</span>${bar}`;
+    const sig = `${kind}:${html}`;
+    if (e.badge.dataset.sig !== sig) {
+      e.badge.dataset.sig = sig;
+      e.badge.innerHTML = html;
+    }
+    e.badge.className = `order-badge ${kind === 'in_progress' ? 'progress' : kind}`;
+    e.badgeOn = true;
+    const aria = t.orderStatus === 'in_progress' ? `${label} ${pct}%` : label;
+    e.badge.setAttribute('aria-label', aria);
+    e.badge.title = aria;
   }
 
   // ── Камера ───────────────────────────────────────────────────────────────
@@ -420,6 +462,47 @@
       const hidden = hit(r) && S.selected !== a.id;
       e.bubble.classList.toggle('hide', hidden);
       e.bubble.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
+      if (!hidden) placed.push(r);
+    }
+    for (const a of order) {
+      const e = S.els.get(a.id);
+      if (!e || !e.badge) continue;
+      if (!e.badgeOn || k < 0.42) { e.badge.classList.add('hide'); continue; }
+      let sx = a.x * k + tx;
+      let sy = (a.y + figTop(a) - 10) * k + ty;
+      const bw = e.badge.offsetWidth || 84;
+      const bh = e.badge.offsetHeight || 22;
+      const hud = document.querySelector('.hud').getBoundingClientRect();
+      const panel = document.querySelector('#panel');
+      const panelBox = panel && panel.classList.contains('open') ? panel.getBoundingClientRect() : null;
+      let top = sy - bh;
+      const minTop = hud.bottom + 4;
+      if (e.bubbleOn && !e.bubble.classList.contains('hide')) {
+        const br = e.bubble.getBoundingClientRect();
+        top = Math.min(top, br.top - bh - 4);
+      }
+      if (top < minTop) top = minTop;
+      if (panelBox && top + bh > panelBox.top - 4 && top < panelBox.bottom) {
+        const above = panelBox.top - bh - 4;
+        if (above >= minTop) top = above;
+      }
+      if (e.bubbleOn && !e.bubble.classList.contains('hide')) {
+        const br = e.bubble.getBoundingClientRect();
+        const overlaps = sx - bw / 2 < br.right && sx + bw / 2 > br.left && top < br.bottom && top + bh > br.top;
+        if (overlaps) {
+          const right = br.right + 8 + bw / 2;
+          const left = br.left - 8 - bw / 2;
+          if (right + bw / 2 < innerWidth - 6) sx = right;
+          else if (left - bw / 2 > 6) sx = left;
+        }
+      }
+      sy = top + bh;
+      const r = { x: sx - bw / 2, y: top, w: bw, h: bh };
+      const off = r.x < -80 || r.x > innerWidth + 80 || r.y < -40 || r.y > innerHeight + 40;
+      const underHud = r.y < hud.bottom - 1 && r.y + bh > hud.top;
+      const hidden = off || underHud || (hit(r) && S.selected !== a.id);
+      e.badge.classList.toggle('hide', hidden);
+      e.badge.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
       if (!hidden) placed.push(r);
     }
   }
@@ -677,6 +760,7 @@
       return;
     }
     if (prev !== S.selected) blip(prev ? 820 : 700);
+    if (innerWidth <= 900 && $('#hier').classList.contains('open')) setHierarchy(false);
     renderPanel({ preserveScroll: prev === S.selected });
     S.panelSig = panelContentSig(S.selected);
     panel.classList.add('open');
@@ -689,6 +773,10 @@
 
   const STATUS_TEXT = { working: 'Работает', idle: 'Свободен', waiting: 'Ждёт тебя' };
   function taskBadge(t) {
+    if (t.orderStatus === 'failed') return ['fail', 'Не выполнен'];
+    if (t.orderStatus === 'done' || t.status === 'выполнена') return ['done', 'Выполнена'];
+    if (t.orderStatus === 'in_progress') return ['work', 'В работе'];
+    if (t.orderStatus === 'accepted') return ['work', 'Принял'];
     if (t.status === 'выполнена') return ['done', 'Выполнена'];
     if (String(t.status).startsWith('не отправлена')) return ['fail', 'Не отправлена'];
     if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) return ['fail', 'Ошибка связи'];
@@ -716,9 +804,59 @@
       <span class="qi">${ico(cls === 'done' ? 'check' : cls === 'fail' ? 'x' : 'send')}</span>
       <span class="qt">${esc(title)}</span>
       <span class="qm"><span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
+      ${chainHTML(t)}
+      ${historyHTML(t)}
       ${attachmentsHTML(t.attachments)}
       ${t.result ? `<div class="qr" data-scroll-key="result:${esc(t.id)}">${linkify(t.result)}</div>` : ''}
     </div>`;
+  }
+
+  function whoName(id) {
+    if (!id || id === 'owner') return 'Владелец';
+    const a = S.byId.get(id);
+    return a ? titled(a) : id;
+  }
+  function orderChain(task) {
+    const byId = new Map(S.tasks.map((t) => [t.id, t]));
+    const path = [];
+    const seen = new Set();
+    let cur = task;
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      path.push(cur);
+      cur = cur.parentOrderId ? byId.get(cur.parentOrderId) : null;
+    }
+    path.reverse();
+    const names = [];
+    for (const step of path) {
+      const from = whoName(step.fromAgentId || 'grok');
+      const to = whoName(step.agentId || step.agent);
+      if (!names.length || names[names.length - 1] !== from) names.push(from);
+      if (names[names.length - 1] !== to) names.push(to);
+    }
+    return names;
+  }
+  function currentOrderHTML(agent) {
+    const t = latestOrder(agent.id);
+    if (!t) return '';
+    return `<div class="sec order-now" data-anchor="order"><h4>Текущий приказ</h4>${chainHTML(t)}${historyHTML(t)}</div>`;
+  }
+  function chainHTML(t) {
+    const names = orderChain(t);
+    if (names.length < 2) return '';
+    return `<div class="order-chain">${names.map((n) => esc(n)).join(' <span class="arr">→</span> ')}</div>`;
+  }
+  const ORDER_WORD = { sent: 'отправлен', accepted: 'принял', in_progress: 'в работе', done: 'выполнено', failed: 'не выполнен' };
+  function historyHTML(t) {
+    const list = Array.isArray(t.history) ? t.history : [];
+    if (!list.length) return '';
+    return `<ol class="order-hist">${list.map((h) => {
+      const bits = [];
+      if (h.status === 'in_progress' && h.progress != null) bits.push(`${h.progress}%`);
+      if (h.note) bits.push(h.note);
+      if (h.status === 'done' && h.result) bits.push(h.result.length > 140 ? `${h.result.slice(0, 140)}…` : h.result);
+      return `<li><time datetime="${esc(h.at || '')}">${fmtTime(h.at)}</time><b>${esc(ORDER_WORD[h.status] || h.status || '')}</b>${bits.length ? `<span>${esc(bits.join(' · '))}</span>` : ''}</li>`;
+    }).join('')}</ol>`;
   }
 
   function chatHTML(agent) {
@@ -726,6 +864,9 @@
       String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
     if (!msgs.length) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
     return msgs.map((m) => {
+      if (m.role === 'system') {
+        return `<div class="msg-row system"><div class="msg-sys">${linkify(m.text)}</div></div>`;
+      }
       const who = m.role === 'owner' ? 'Вы' : titled(agent);
       return `<div class="msg-row ${m.role === 'owner' ? 'owner' : 'agent'}">
         <div class="msg-bubble">
@@ -742,7 +883,7 @@
     if (!a) return '';
     const L = levelInfo(a);
     const tasks = tierOf(a) === 'main' ? S.tasks.slice(0, 8) : S.tasks.filter((t) => t.agent === a.id).slice(0, 12);
-    const taskKey = tasks.map((t) => [t.id, t.status, t.text, t.result, t.forwardStatus, JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
+    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = S.messages.filter((m) => m.agentId === a.id).map((m) => [m.id, m.role, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
     return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey].join('\u0003');
@@ -803,7 +944,8 @@
       <div class="p-body">
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
           <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>`}
+        <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>
+        ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
         ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
@@ -893,16 +1035,20 @@
     let ok = 0, lastErr = '';
     for (const id of targets) {
       try {
+        const fromAgentId = tier === 'main' && id !== a.id ? a.id : 'owner';
         const res = await fetch('/api/task', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
-          body: JSON.stringify({ agent: id, text: txt, attachmentIds }),
+          body: JSON.stringify({ agent: id, text: txt, attachmentIds, fromAgentId }),
         });
         const data = await res.json().catch(() => ({}));
         if (res.status === 401) { localStorage.removeItem('appPassword'); pending = submitTask; openModal('Пароль не подошёл. Попробуй ещё раз.'); lastErr = 'auth'; break; }
         if (!res.ok) { lastErr = data.error || `Ошибка ${res.status}`; continue; }
         ok++;
-        launchPacket(id);
+        if (data && data.id && !S.seenOrders.has(data.id)) {
+          S.seenOrders.add(data.id);
+          flyOrder(data);
+        }
         if (data.status && String(data.status).startsWith('не отправлена')) lastErr = 'Задача записана, но вебхук Grok не настроен (GROK_WEBHOOK_URL).';
       } catch (_) { lastErr = 'Нет связи с сервером'; }
     }
@@ -922,32 +1068,45 @@
       msg.className = 'msg err'; msg.textContent = lastErr || 'Не удалось отправить';
     }
   }
-  function launchPacket(id) {
-    const a = S.byId.get(id), fx = $('#fx');
-    if (!a) return;
-    const e = S.els.get(id);
-    const [kx, ky] = kremlin();
-    const path = e && e.link;
-    const c = document.createElementNS(NS, 'g');
-    c.innerHTML = `<circle r="16" fill="${a.color}" opacity=".35" filter="url(#soft)"/><circle r="8" fill="${a.color}" stroke="#fff" stroke-width="3"/>`;
-    fx.appendChild(c);
-    const len = path ? path.getTotalLength() : 0, t0 = performance.now(), dur = 1100;
+  function prefersReducedMotion() {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+  function roofOf(agent) {
+    if (!agent) return kremlin();
+    const lift = agent.id === CONFIG.mainId ? 70 : Math.min(tallOf(agent), 150) * 0.62;
+    return [agent.x, agent.y - lift];
+  }
+  function flyOrder(task) {
+    if (!task) return;
+    const to = S.byId.get(task.agentId || task.agent);
+    if (!to) return;
+    const fromId = task.fromAgentId && task.fromAgentId !== 'owner' ? task.fromAgentId : CONFIG.mainId;
+    const from = S.byId.get(fromId) || S.byId.get(CONFIG.mainId);
+    const fx = $('#fx');
+    if (!fx) return;
+    if (prefersReducedMotion()) {
+      fx.dataset.flight = 'reduced';
+      return;
+    }
+    fx.dataset.flight = 'play';
+    let [x0, y0] = roofOf(from);
+    const [x1, y1] = roofOf(to);
+    if (from && to && from.id === to.id) y0 -= 80;
+    const dx = x1 - x0, dy = y1 - y0, len = Math.max(1, Math.hypot(dx, dy));
+    const bend = Math.min(90, len * 0.18);
+    const cx = (x0 + x1) / 2 - (dy / len) * bend;
+    const cy = (y0 + y1) / 2 + (dx / len) * bend - 36;
+    const node = document.createElementNS(NS, 'g');
+    node.setAttribute('class', 'order-flight');
+    node.innerHTML = `<g><rect x="-16" y="-11" width="32" height="20" rx="3" fill="#fff8ea" stroke="#c8102e" stroke-width="1.6"/><path d="M-16,-11 L0,1 L16,-11" fill="none" stroke="#c8102e" stroke-width="1.4"/><path d="M-16,9 L0,-1 L16,9" fill="none" stroke="#e7c98a" stroke-width="1"/></g>`;
+    fx.appendChild(node);
+    const dur = 1200, t0 = performance.now();
+    const bez = (t, a, b, c) => (1 - t) * (1 - t) * a + 2 * (1 - t) * t * b + t * t * c;
     const step = (now) => {
-      const t = Math.min(1, (now - t0) / dur), e2 = 1 - Math.pow(1 - t, 3);
-      const p = path ? path.getPointAtLength(len * e2) : { x: kx, y: ky - 40 * e2 };
-      c.setAttribute('transform', `translate(${p.x},${p.y})`);
+      const t = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - t, 3);
+      node.setAttribute('transform', `translate(${bez(e, x0, cx, x1)},${bez(e, y0, cy, y1)})`);
       if (t < 1) requestAnimationFrame(step);
-      else {
-        c.remove();
-        const ring = document.createElementNS(NS, 'circle');
-        ring.setAttribute('cx', a.x); ring.setAttribute('cy', a.y + 14); ring.setAttribute('r', 10);
-        ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', a.color); ring.setAttribute('stroke-width', 4);
-        fx.appendChild(ring);
-        const r0 = performance.now();
-        const grow = (n) => { const q = Math.min(1, (n - r0) / 600); ring.setAttribute('r', 10 + q * 80); ring.setAttribute('opacity', 1 - q); if (q < 1) requestAnimationFrame(grow); else ring.remove(); };
-        requestAnimationFrame(grow);
-        blip(1046);
-      }
+      else { node.remove(); blip(1046); }
     };
     requestAnimationFrame(step);
   }
@@ -1002,7 +1161,7 @@
     const top = list.scrollTop;
     const saved = {};
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
-    const sig = S.tasks.map((t) => [t.id, t.status, t.result, (t.attachments || []).length].join(':')).join('|');
+    const sig = S.tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
     $('#jCount').textContent = S.tasks.length;
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
@@ -1085,6 +1244,7 @@
   }
   function setHierarchy(open) {
     const h = $('#hier');
+    if (open && innerWidth <= 900) $('#panel').classList.remove('open');
     h.classList.toggle('open', open);
     document.body.classList.toggle('hier-on', open);
     const b = $('#btnHier');
@@ -1094,6 +1254,7 @@
       $('#journal').classList.remove('mobile-open');
       renderHierarchy(true);
     }
+    placeOverlay();
   }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
@@ -1150,6 +1311,7 @@
     S.byId = new Map(agents.map((a) => [a.id, a]));
     const sig = agentSig(agents);
     if (sig !== S.sig) { S.sig = sig; buildAgents(); }
+    noteFreshOrders();
     // Завершённые задачи → тост, опыт, звук
     const next = new Map();
     for (const t of S.tasks) {
@@ -1178,6 +1340,13 @@
       if (pre && S.byId.has(pre)) setTimeout(() => select(pre), 300);
     }
   }
+  function noteFreshOrders() {
+    for (const t of S.tasks) {
+      if (S.seenOrders.has(t.id)) continue;
+      S.seenOrders.add(t.id);
+      if (S.loaded) flyOrder(t);
+    }
+  }
   function poll() {
     loadState().catch(() => {}).finally(() => setTimeout(poll, document.hidden ? CONFIG.pollMs * 3 : CONFIG.pollMs));
   }
@@ -1185,7 +1354,12 @@
   // ── Старт ────────────────────────────────────────────────────────────────
   initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal(); initRoster();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeOverlay());
-  addEventListener('resize', () => { if (!S.userMoved && !S.selected) goHome(false); else { clampCam(); applyCam(); } });
+  addEventListener('resize', () => {
+    if (innerWidth <= 900 && $('#hier').classList.contains('open') && $('#panel').classList.contains('open')) {
+      $('#panel').classList.remove('open');
+    }
+    if (!S.userMoved && !S.selected) goHome(false); else { clampCam(); applyCam(); }
+  });
   // Кварталы строятся после первой загрузки, чтобы не застраивать участки агентов.
   loadState().then(() => {
     $('#blocks').innerHTML = M.buildBlocks(S.agents.map((a) => ({ x: a.x, y: a.y, tall: Math.min(tallOf(a), 200) + 20 })));

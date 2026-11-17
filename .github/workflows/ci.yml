@@ -27,6 +27,15 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Chrome for browser checks
+        run: |
+          if ! command -v google-chrome >/dev/null 2>&1 && ! command -v google-chrome-stable >/dev/null 2>&1; then
+            wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get update
+            sudo apt-get install -y /tmp/chrome.deb
+          fi
+
       - run: npm test
 
       - name: healthz smoke
