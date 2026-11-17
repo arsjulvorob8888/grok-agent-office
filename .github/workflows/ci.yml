@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+
+      - name: healthz smoke
+        run: |
+          PORT=3000 node server.js > /tmp/server.log 2>&1 &
+          pid=$!
+          for _ in $(seq 1 30); do
+            if [ "$(curl -fsS localhost:3000/healthz 2>/dev/null || true)" = "ok" ]; then
+              echo "healthz returned ok"
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "healthz smoke failed"
+          cat /tmp/server.log || true
+          kill "$pid" 2>/dev/null || true
+          exit 1
+
+  automerge:
+    needs: ci
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Squash-merge the pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
