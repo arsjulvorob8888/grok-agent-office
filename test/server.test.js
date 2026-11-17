@@ -30,6 +30,7 @@ before(async () => {
   process.env.GROK_WEBHOOK_URL = `http://127.0.0.1:${hook.address().port}/hook`;
   process.env.GROK_WEBHOOK_KEY = 'hook-key';
   process.env.PUBLIC_URL = 'https://example.test';
+  delete process.env.PORYADOK_INGEST_TOKEN;
   const { app } = require('../server.js');
   server = await new Promise((r) => {
     const s = app.listen(0, '127.0.0.1', () => r(s));
