@@ -8,6 +8,7 @@ const multer = require('multer');
 const store = require('./lib/store');
 const { activityFor, activeWindowMs } = require('./lib/activity');
 const { deliveryCaption } = require('./public/js/feed');
+const { buildDashboard } = require('./lib/agent-dashboard');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
 const { senderName } = require('./public/js/sender-label');
@@ -2773,6 +2774,39 @@ registerHeartbeat(app, {
 
 // Рутина сообщает старт и финиш. Пока finishedAt пустой, агент не спит,
 // даже если старт был раньше окна ACTIVITY_WINDOW_MIN.
+app.get('/api/agents/:id/dashboard', (req, res) => {
+  const agent = findAgent(String(req.params.id || ''));
+  if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
+  const activity = activityFor(agent, state.tasks, Date.now(), activeWindowMs(), activityExtras());
+  res.json(buildDashboard({
+    agent: { ...agent, number: agentNumber(agent) },
+    tasks: state.tasks.map(publicTask),
+    messages: state.messages,
+    activity,
+    now: Date.now(),
+  }));
+});
+
+app.post('/api/agents/:id/orders/:orderId', requireAppPassword, async (req, res) => {
+  const agent = findAgent(String(req.params.id || ''));
+  if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
+  const task = state.tasks.find((item) => item.id === req.params.orderId);
+  if (!task || (task.agentId || task.agent) !== agent.id) {
+    return res.status(404).json({ error: 'Приказ не найден' });
+  }
+  try {
+    const input = parseOrderUpdate(req.body);
+    const result = applyOrderUpdate(task, input);
+    if (result.changed && (task.orderStatus === 'done' || task.orderStatus === 'failed')) poryadokSync.schedule();
+    await store.flush();
+    return res.json({ ok: true, unchanged: !result.changed, task: publicTask(task) });
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    return res.status(status).json({ error: err.expose || 'Не удалось обновить приказ' });
+  }
+});
+
 app.get('/api/agents/:id/tasks', requireAgentToken, (req, res) => {
   const agent = findAgent(String(req.params.id || ''));
   if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });

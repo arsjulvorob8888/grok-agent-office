@@ -1,0 +1,676 @@
+/* Полноэкранный дашборд агента: обзор, задачи, аналитика, переписка.
+   Кнопка «Развернуть» дописывается в панель, саму панель карта перерисовывает сама. */
+(function () {
+  'use strict';
+
+  const TABS = ['overview', 'tasks', 'analytics', 'chat'];
+  const TEMPLATES = [
+    ['Доложи статус', 'Доложи текущий статус и что сделано.'],
+    ['Что в работе', 'Что сейчас в работе и какой следующий шаг?'],
+    ['Пришли итог', 'Закрой текущую задачу и пришли короткий итог.'],
+  ];
+  const NEXT = {
+    sent: [{ status: 'accepted', label: 'В работу' }, { status: 'failed', label: 'Не выполнено' }],
+    accepted: [{ status: 'in_progress', label: 'В работе' }, { status: 'done', label: 'Готово' }, { status: 'failed', label: 'Не выполнено' }],
+    in_progress: [{ status: 'done', label: 'Готово' }, { status: 'failed', label: 'Не выполнено' }],
+  };
+  const ACTIVITY = { working: 'Работает', waiting: 'Ждёт', resting: 'Спит' };
+  const STATUS = { working: 'Работает', idle: 'Свободен', waiting: 'Ждёт тебя' };
+  const LIVE = { working: 'Работает', idle: 'Свободен' };
+  const COL_TITLE = { new: 'Новые', work: 'В работе', done: 'Готово' };
+  const STATUS_TITLE = { sent: 'Новые', accepted: 'Принял', in_progress: 'В работе', done: 'Готово', failed: 'Не выполнен' };
+
+  const root = document.getElementById('agentDash');
+  if (!root) return;
+
+  let open = false;
+  let agentId = '';
+  let tab = 'overview';
+  let data = null;
+  let error = '';
+  let note = '';
+  let query = '';
+  let columnFilter = 'all';
+  let layout = 'kanban';
+  let ticket = 0;
+  let frame = 0;
+  const frozen = [];
+
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+
+  function password() {
+    try { return localStorage.getItem('appPassword') || ''; } catch (_) { return ''; }
+  }
+
+  function ownerName() {
+    return window.OfficeSender.senderName('owner');
+  }
+
+  function visibleText(text) {
+    return window.OfficeSender.displayOrderSender(text || '');
+  }
+
+  function readHash() {
+    const params = new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+    const name = params.get('tab') || 'overview';
+    return {
+      agent: params.get('agent') || '',
+      view: params.get('view') || '',
+      tab: TABS.includes(name) ? name : 'overview',
+    };
+  }
+
+  function writeHash(mode) {
+    const hash = `agent=${encodeURIComponent(agentId)}&view=dashboard&tab=${tab}`;
+    const url = `${location.pathname}${location.search}#${hash}`;
+    const state = { agentDash: 1 };
+    if (mode === 'push') history.pushState(state, '', url);
+    else history.replaceState(state, '', url);
+  }
+
+  function fmtTime(iso) {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return '';
+    try {
+      return new Date(t).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch (_) { return ''; }
+  }
+
+  function fmtDuration(ms) {
+    const min = Math.round(ms / 60000);
+    if (min < 1) return 'меньше минуты';
+    if (min < 60) return `${min} мин`;
+    const hours = Math.floor(min / 60);
+    const rest = min % 60;
+    return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
+  }
+
+  function filteredTasks() {
+    const tasks = (data && data.tasks) || [];
+    const q = query.trim().toLowerCase();
+    return tasks.filter((task) => {
+      if (columnFilter !== 'all' && task.column !== columnFilter) return false;
+      if (!q) return true;
+      return String(task.text || '').toLowerCase().includes(q);
+    });
+  }
+
+  function freeze() {
+    const app = document.getElementById('app');
+    if (!app) return;
+    for (const child of app.children) {
+      if (child === root || child.hasAttribute('inert') || child.hidden) continue;
+      child.setAttribute('inert', '');
+      frozen.push(child);
+    }
+  }
+
+  function thaw() {
+    while (frozen.length) frozen.pop().removeAttribute('inert');
+  }
+
+  function paintShell() {
+    if (root.querySelector('.dash-shell')) return;
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    root.setAttribute('aria-labelledby', 'dashTitle');
+    root.innerHTML = `
+      <div class="dash-shell">
+        <header class="dash-head">
+          <div>
+            <p class="dash-kicker" id="dashKicker"></p>
+            <h2 id="dashTitle">Дашборд</h2>
+            <p class="dash-role" id="dashRole"></p>
+          </div>
+          <div class="dash-head-actions">
+            <button type="button" class="btn ghost" id="dashCollapse">Свернуть</button>
+          </div>
+        </header>
+        <div class="dash-main" id="dashMain"><div id="dashPanel" role="tabpanel" tabindex="0"></div></div>
+        <div class="dash-tabs" role="tablist" aria-label="Разделы дашборда">
+          <button type="button" role="tab" id="dashTab-overview" data-tab="overview" aria-controls="dashPanel">Обзор</button>
+          <button type="button" role="tab" id="dashTab-tasks" data-tab="tasks" aria-controls="dashPanel">Задачи</button>
+          <button type="button" role="tab" id="dashTab-analytics" data-tab="analytics" aria-controls="dashPanel">Аналитика</button>
+          <button type="button" role="tab" id="dashTab-chat" data-tab="chat" aria-controls="dashPanel">Переписка</button>
+        </div>
+      </div>`;
+    root.querySelector('#dashCollapse').addEventListener('click', closeDash);
+    root.querySelectorAll('[role="tab"]').forEach((button) => {
+      button.addEventListener('click', () => selectTab(button.dataset.tab));
+    });
+    const panel = document.getElementById('dashPanel');
+    panel.addEventListener('click', onPanelClick);
+    panel.addEventListener('input', (event) => {
+      if (event.target.id === 'dashSearch') query = event.target.value;
+      if (event.target.id === 'dashFilter') columnFilter = event.target.value;
+      if (event.target.id === 'dashSearch' || event.target.id === 'dashFilter') render();
+    });
+    panel.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (event.target.id === 'dashChatForm') sendChat();
+      if (event.target.id === 'dashCreateForm') createTask();
+      if (event.target.id === 'dashDoneForm') {
+        const field = event.target.querySelector('input');
+        finishTask(event.target.dataset.orderId, field ? field.value : '');
+      }
+    });
+    panel.addEventListener('keydown', (event) => {
+      if (event.target.id === 'dashChatInput' && event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendChat();
+      }
+    });
+  }
+
+  function selectTab(next) {
+    if (!TABS.includes(next) || next === tab) return;
+    tab = next;
+    writeHash('replace');
+    render();
+  }
+
+  function show() {
+    frame += 1;
+    paintShell();
+    root.hidden = false;
+    root.setAttribute('aria-hidden', 'false');
+    const button = document.querySelector('.dash-expand');
+    if (button) button.setAttribute('aria-expanded', 'true');
+    const collapse = document.getElementById('dashCollapse');
+    if (collapse) collapse.focus();
+    requestAnimationFrame(() => {
+      if (open) root.classList.add('open');
+    });
+  }
+
+  function hide() {
+    if (!open && root.hidden) return;
+    open = false;
+    root.classList.remove('open');
+    const token = ++frame;
+    const finish = () => {
+      if (token !== frame || open) return;
+      root.hidden = true;
+      root.setAttribute('aria-hidden', 'true');
+      thaw();
+      const button = document.querySelector('.dash-expand');
+      if (button) {
+        button.setAttribute('aria-expanded', 'false');
+        if (!button.closest('[inert]')) button.focus();
+      }
+    };
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) finish();
+    else window.setTimeout(finish, 250);
+  }
+
+  function openDash(id, nextTab, mode) {
+    if (!id) return;
+    const was = open;
+    agentId = id;
+    tab = TABS.includes(nextTab) ? nextTab : 'overview';
+    open = true;
+    if (!was) freeze();
+    show();
+    if (mode === 'push') writeHash('push');
+    else if (mode === 'replace') writeHash('replace');
+    load();
+  }
+
+  function closeDash() {
+    if (!open) return;
+    if (history.state && history.state.agentDash) {
+      history.back();
+      return;
+    }
+    history.replaceState(null, '', `${location.pathname}${location.search}`);
+    hide();
+  }
+
+  function applyHash() {
+    const hash = readHash();
+    if (hash.view === 'dashboard' && hash.agent) openDash(hash.agent, hash.tab, 'quiet');
+    else hide();
+  }
+
+  async function load() {
+    const mine = ++ticket;
+    const id = agentId;
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(id)}/dashboard`, { cache: 'no-store' });
+      const body = await res.json().catch(() => null);
+      if (mine !== ticket || id !== agentId) return;
+      if (!res.ok) {
+        error = (body && body.error) || 'Не удалось загрузить дашборд';
+        data = null;
+      } else {
+        error = '';
+        data = body;
+      }
+    } catch (_) {
+      if (mine !== ticket) return;
+      error = 'Не удалось загрузить дашборд';
+    }
+    if (open && id === agentId) render();
+  }
+
+  function capture() {
+    const chat = document.getElementById('dashChatInput');
+    const task = document.getElementById('dashTaskInput');
+    const result = document.getElementById('dashResult');
+    return {
+      active: document.activeElement && document.activeElement.id,
+      chat: chat ? chat.value : null,
+      task: task ? task.value : null,
+      result: result ? result.value : null,
+      resultFor: result ? result.dataset.orderId : '',
+    };
+  }
+
+  function restore(keep) {
+    if (!keep) return;
+    const chat = document.getElementById('dashChatInput');
+    const task = document.getElementById('dashTaskInput');
+    const result = document.getElementById('dashResult');
+    if (chat && keep.chat != null) chat.value = keep.chat;
+    if (task && keep.task != null) task.value = keep.task;
+    if (result && keep.result != null && result.dataset.orderId === keep.resultFor) result.value = keep.result;
+    if (keep.active) {
+      const el = document.getElementById(keep.active);
+      if (el) el.focus();
+    }
+  }
+
+  function onPanelClick(event) {
+    const view = event.target.closest('[data-layout]');
+    if (view) {
+      layout = view.dataset.layout;
+      render();
+      return;
+    }
+    const template = event.target.closest('.dash-template');
+    if (template) {
+      const input = document.getElementById('dashChatInput');
+      if (input) {
+        input.value = template.dataset.text || '';
+        input.focus();
+      }
+      return;
+    }
+    const action = event.target.closest('[data-status]');
+    if (!action) return;
+    const orderId = action.dataset.orderId;
+    if (action.dataset.status === 'done') {
+      const card = action.closest('.dash-card');
+      if (card && !card.querySelector('#dashDoneForm')) {
+        const form = document.createElement('form');
+        form.id = 'dashDoneForm';
+        form.className = 'dash-done';
+        form.dataset.orderId = orderId;
+        form.innerHTML = '<label>Итог<input id="dashResult" required maxlength="4000" data-order-id=""></label><button class="btn gold" type="submit">Сохранить</button>';
+        form.querySelector('input').dataset.orderId = orderId;
+        card.appendChild(form);
+        form.querySelector('input').focus();
+      }
+      return;
+    }
+    postStatus(orderId, action.dataset.status, action.dataset.status === 'failed' ? { note: 'Не выполнено' } : {});
+  }
+
+  async function postStatus(orderId, status, extra) {
+    note = '';
+    if (!password()) {
+      note = 'Нужен пароль штаба';
+      render();
+      return;
+    }
+    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/orders/${encodeURIComponent(orderId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-password': password() },
+      body: JSON.stringify(Object.assign({ status }, extra || {})),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      note = body.error || 'Не удалось сменить статус';
+      render();
+      return;
+    }
+    note = '';
+    await load();
+  }
+
+  async function createTask() {
+    const input = document.getElementById('dashTaskInput');
+    const text = input ? input.value.trim() : '';
+    if (!text) return;
+    await postTask(text, input);
+  }
+
+  async function sendChat() {
+    const input = document.getElementById('dashChatInput');
+    const text = input ? input.value.trim() : '';
+    if (!text) return;
+    await postTask(text, input);
+  }
+
+  async function postTask(text, input) {
+    note = '';
+    if (!password()) {
+      note = 'Нужен пароль штаба';
+      render();
+      return;
+    }
+    const res = await fetch('/api/task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-password': password() },
+      body: JSON.stringify({ agent: agentId, text, fromAgentId: 'owner' }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      note = body.error || 'Не удалось отправить';
+      render();
+      return;
+    }
+    if (input) input.value = '';
+    note = '';
+    await load();
+  }
+
+  async function finishTask(orderId, result) {
+    const text = String(result || '').trim();
+    if (!text) return;
+    await postStatus(orderId, 'done', { result: text });
+  }
+
+  function render() {
+    if (!open) return;
+    paintShell();
+    const keep = capture();
+    const agent = (data && data.agent) || {};
+    const kicker = document.getElementById('dashKicker');
+    const title = document.getElementById('dashTitle');
+    const role = document.getElementById('dashRole');
+    if (kicker) kicker.textContent = agent.number ? `${agent.number}. ${agent.name || agentId}` : (agent.name || agentId || 'Агент');
+    if (title) title.textContent = agent.name || agentId || 'Дашборд';
+    if (role) role.textContent = agent.role || '';
+    root.querySelectorAll('[role="tab"]').forEach((button) => {
+      const on = button.dataset.tab === tab;
+      button.setAttribute('aria-selected', on ? 'true' : 'false');
+      button.tabIndex = on ? 0 : -1;
+    });
+    const panel = document.getElementById('dashPanel');
+    const tabBtn = document.getElementById(`dashTab-${tab}`);
+    if (panel && tabBtn) panel.setAttribute('aria-labelledby', tabBtn.id);
+    if (panel) panel.innerHTML = error && !data ? `<p class="dash-empty">${esc(error)}</p>` : viewHtml();
+    restore(keep);
+  }
+
+  function viewHtml() {
+    if (!data) return '<p class="dash-empty">Загрузка…</p>';
+    if (tab === 'tasks') return tasksHtml();
+    if (tab === 'analytics') return analyticsHtml();
+    if (tab === 'chat') return chatHtml();
+    return overviewHtml();
+  }
+
+  function overviewHtml() {
+    const agent = data.agent;
+    const metrics = data.metrics || { total: 0, done: 0, inProgress: 0 };
+    const level = agent.level || { lvl: 1, xp: 0, into: 0, need: 150 };
+    const pct = level.need ? Math.max(0, Math.min(100, Math.round((level.into / level.need) * 100))) : 0;
+    const activity = ACTIVITY[agent.activity] || STATUS[agent.status] || 'Свободен';
+    const mode = agent.activity || 'resting';
+    const live = agent.live
+      ? `<span class="dash-pill ${esc(agent.live.status)}">Живой ход: ${esc(LIVE[agent.live.status] || agent.live.status)}${agent.live.doing ? ` · ${esc(agent.live.doing)}` : ''}</span>`
+      : '';
+    const log = (data.activityLog || []).map((line) => {
+      const when = line.at ? `<time datetime="${esc(line.at)}">${esc(fmtTime(line.at))}</time>` : '<time>без времени</time>';
+      return `<li>${when}${esc(line.text)}</li>`;
+    }).join('');
+    return `
+      <div class="dash-status">
+        <span class="dash-pill ${esc(mode)}">${esc(activity)}</span>
+        ${agent.now ? `<span class="dash-now">${esc(agent.now)}</span>` : ''}
+        ${live}
+      </div>
+      <div class="dash-block">
+        <h3>Текущая задача</h3>
+        <p class="${agent.currentTask ? '' : 'dash-empty'}">${agent.currentTask ? esc(agent.currentTask) : 'Сейчас нет задачи'}</p>
+      </div>
+      <div class="dash-metrics">
+        <div class="dash-metric"><b>${metrics.total}</b><span>Задач всего</span></div>
+        <div class="dash-metric"><b>${metrics.done}</b><span>Выполнено</span></div>
+        <div class="dash-metric"><b>${metrics.inProgress}</b><span>В работе</span></div>
+      </div>
+      <div class="dash-level">
+        <div class="dash-level-badge"><div><b>${level.lvl}</b><span>УРОВЕНЬ</span></div></div>
+        <div>
+          <p>Опыт <b>${level.into}</b> / ${level.need}</p>
+          <p>Всего опыта ${level.xp}</p>
+          <div class="dash-bar" aria-hidden="true"><i style="width:${pct}%"></i></div>
+        </div>
+      </div>
+      <div class="dash-block">
+        <h3>Последние активности</h3>
+        ${log ? `<ul class="dash-activity">${log}</ul>` : '<p class="dash-empty">Пока нет активности</p>'}
+      </div>`;
+  }
+
+  function taskCard(task) {
+    const actions = (NEXT[task.orderStatus] || []).map((step) =>
+      `<button type="button" data-order-id="${esc(task.id)}" data-status="${esc(step.status)}">${esc(step.label)}</button>`).join('');
+    const bits = [];
+    if (task.deliveryLabel) bits.push(esc(task.deliveryLabel));
+    if (task.orderStatus === 'failed') bits.push('Не выполнен');
+    return `<article class="dash-card">
+      <p>${esc(task.text || 'Задача')}</p>
+      ${bits.length ? `<p class="dash-card-meta">${bits.join(' · ')}</p>` : ''}
+      ${actions ? `<div class="dash-card-actions">${actions}</div>` : ''}
+    </article>`;
+  }
+
+  function tasksHtml() {
+    const agent = data.agent || {};
+    const tasks = filteredTasks();
+    const all = (data.tasks || []);
+    const locked = agent.archived || agent.vacant;
+    const columns = ['new', 'work', 'done'].map((key) => {
+      const cards = tasks.filter((task) => task.column === key).map(taskCard).join('');
+      return `<section class="dash-col dash-col-${key}" aria-label="${COL_TITLE[key]}">
+        <h3>${COL_TITLE[key]} <span>${tasks.filter((task) => task.column === key).length}</span></h3>
+        ${cards || '<p class="dash-empty">Пусто</p>'}
+      </section>`;
+    }).join('');
+    const list = tasks.map(taskCard).join('') || '<p class="dash-empty">Ничего не найдено</p>';
+    const body = !all.length
+      ? '<p class="dash-empty">Задач пока нет</p>'
+      : (tasks.length ? (layout === 'list' ? `<div class="dash-list">${list}</div>` : `<div class="dash-kanban">${columns}</div>`) : '<p class="dash-empty">Ничего не найдено</p>');
+    const create = locked ? '' : `
+      <form class="dash-create" id="dashCreateForm">
+        <label for="dashTaskInput">Новая задача</label>
+        <textarea id="dashTaskInput" maxlength="4000" placeholder="Приказ агенту"></textarea>
+        <button class="btn gold" type="submit">Создать задачу</button>
+      </form>`;
+    return `
+      <div class="dash-tools">
+        <input id="dashSearch" type="search" placeholder="Поиск" aria-label="Поиск задач" value="${esc(query)}">
+        <select id="dashFilter" aria-label="Фильтр колонки">
+          <option value="all"${columnFilter === 'all' ? ' selected' : ''}>Все</option>
+          <option value="new"${columnFilter === 'new' ? ' selected' : ''}>Новые</option>
+          <option value="work"${columnFilter === 'work' ? ' selected' : ''}>В работе</option>
+          <option value="done"${columnFilter === 'done' ? ' selected' : ''}>Готово</option>
+        </select>
+        <div class="dash-view" role="group" aria-label="Вид списка">
+          <button type="button" data-layout="kanban" aria-pressed="${layout === 'kanban' ? 'true' : 'false'}">Канбан</button>
+          <button type="button" data-layout="list" aria-pressed="${layout === 'list' ? 'true' : 'false'}">Список</button>
+        </div>
+      </div>
+      ${body}
+      ${create}
+      <p class="dash-note${note && note.startsWith('Нужен') ? '' : note ? '' : ''}">${esc(note)}</p>`;
+  }
+
+  function bars(days) {
+    const width = 320;
+    const plot = 88;
+    const gap = 3;
+    const max = Math.max(1, ...days.map((day) => day.count));
+    const bar = (width - gap * (days.length - 1)) / days.length;
+    const shapes = days.map((day, index) => {
+      const h = day.count ? Math.max(4, (day.count / max) * plot) : 2;
+      const x = index * (bar + gap);
+      const y = plot - h;
+      const faint = day.count ? '' : ' fill="rgba(255,255,255,.22)"';
+      return `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${Math.max(bar, 1).toFixed(2)}" height="${h.toFixed(2)}" rx="1"${faint}><title>${esc(day.date)}: ${day.count}</title></rect>`;
+    }).join('');
+    const mark = (index) => {
+      const day = days[index];
+      if (!day) return '';
+      const x = Math.min(width - 18, Math.max(18, index * (bar + gap) + bar / 2));
+      return `<text x="${x.toFixed(1)}" y="${plot + 16}" text-anchor="middle">${esc(day.date.slice(8))}.${esc(day.date.slice(5, 7))}</text>`;
+    };
+    const sum = days.reduce((total, day) => total + day.count, 0);
+    const label = days.map((day) => `${day.date.slice(8)}.${day.date.slice(5, 7)} ${day.count}`).join(', ');
+    const svg = `<svg viewBox="0 0 ${width} ${plot + 22}" role="img" aria-label="Задачи по дням: ${esc(label)}"><line x1="0" y1="${plot}" x2="${width}" y2="${plot}" stroke="rgba(255,255,255,.16)"/>${shapes}${mark(0)}${mark(Math.floor((days.length - 1) / 2))}${mark(days.length - 1)}</svg>`;
+    return { svg, sum };
+  }
+
+  function statusChart(byStatus) {
+    const rows = Object.keys(STATUS_TITLE).map((key) => ({ key, count: byStatus[key] || 0 }));
+    const max = Math.max(1, ...rows.map((row) => row.count));
+    const height = rows.length * 22;
+    const marks = rows.map((row, index) => {
+      const y = index * 22 + 4;
+      const w = (row.count / max) * 180;
+      return `<text x="0" y="${y + 11}">${esc(STATUS_TITLE[row.key])}</text>
+        <rect class="track" x="92" y="${y}" width="180" height="14" rx="4"></rect>
+        <rect x="92" y="${y}" width="${w.toFixed(1)}" height="14" rx="4"><title>${esc(STATUS_TITLE[row.key])}: ${row.count}</title></rect>
+        <text x="278" y="${y + 11}">${row.count}</text>`;
+    }).join('');
+    return `<svg viewBox="0 0 320 ${height}" role="img" aria-label="Распределение по статусам">${marks}</svg>`;
+  }
+
+  function analyticsHtml() {
+    const analytics = (data && data.analytics) || {};
+    const daysBlock = !analytics.days
+      ? '<p class="dash-empty">Пока нет задач</p>'
+      : (() => {
+        const chart = bars(analytics.days);
+        const hint = chart.sum ? `За 14 дней: ${chart.sum}` : 'За 14 дней новых задач нет';
+        return `<h3>Задачи по дням</h3><p>${esc(hint)}</p>${chart.svg}`;
+      })();
+    const statusBlock = !analytics.byStatus
+      ? ''
+      : `<h3>По статусам</h3>${statusChart(analytics.byStatus)}`;
+    const avg = analytics.avgCompletionMs == null
+      ? 'Нет завершённых задач'
+      : fmtDuration(analytics.avgCompletionMs);
+    const share = !analytics.delivered
+      ? 'Нет сообщений с доставкой'
+      : `${analytics.delivered.delivered} из ${analytics.delivered.total}`;
+    return `
+      <div class="dash-charts">
+        <div class="dash-chart">${daysBlock}</div>
+        <div class="dash-chart">${statusBlock || '<p class="dash-empty">Пока нет задач</p>'}</div>
+      </div>
+      <div class="dash-stats">
+        <div class="dash-stat"><span>Среднее время выполнения</span><b>${esc(avg)}</b></div>
+        <div class="dash-stat"><span>Доставлено сообщений</span><b>${esc(share)}</b></div>
+      </div>`;
+  }
+
+  function chatHtml() {
+    const messages = (data && data.messages) || [];
+    const lines = messages.map((message) => {
+      const role = message.role === 'owner' ? 'owner' : message.role === 'system' ? 'system' : 'agent';
+      const who = role === 'owner' ? ownerName() : role === 'system' ? 'Система' : ((data.agent && data.agent.name) || 'Агент');
+      const text = visibleText(message.text);
+      const delivery = message.deliveryLabel ? `<span class="dash-delivery">${esc(message.deliveryLabel)}</span>` : '';
+      return `<article class="dash-bubble ${role}">
+        <header><b>${esc(who)}</b><time datetime="${esc(message.createdAt || '')}">${esc(fmtTime(message.createdAt))}</time></header>
+        ${text ? `<p>${esc(text)}</p>` : ''}
+        ${delivery}
+      </article>`;
+    }).join('');
+    const templates = TEMPLATES.map(([label, text]) =>
+      `<button type="button" class="dash-template" data-text="${esc(text)}">${esc(label)}</button>`).join('');
+    return `
+      <div class="dash-chat" id="dashChatLog">${lines || '<p class="dash-empty">Сообщений пока нет</p>'}</div>
+      <div class="dash-templates">${templates}</div>
+      <form class="dash-compose" id="dashChatForm">
+        <label for="dashChatInput">Сообщение агенту</label>
+        <textarea id="dashChatInput" maxlength="4000" placeholder="Приказ. Enter отправляет, Shift+Enter переносит строку"></textarea>
+        <button class="btn gold" id="dashSend" type="submit">Отправить</button>
+      </form>
+      <p class="dash-note">${esc(note)}</p>`;
+  }
+
+  function ensureButton() {
+    const panel = document.getElementById('panel');
+    const hero = panel && panel.querySelector('.p-hero');
+    if (!hero || hero.querySelector('.dash-expand')) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'dash-expand';
+    button.textContent = 'Развернуть';
+    button.setAttribute('aria-controls', 'agentDash');
+    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (panel.dataset.agent) openDash(panel.dataset.agent, 'overview', 'push');
+    });
+    hero.appendChild(button);
+  }
+
+  function onKey(event) {
+    if (!open) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeDash();
+      return;
+    }
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      if (!event.target.closest('[role="tablist"]')) return;
+      event.preventDefault();
+      const index = TABS.indexOf(tab);
+      const next = event.key === 'ArrowRight' ? (index + 1) % TABS.length : (index + TABS.length - 1) % TABS.length;
+      selectTab(TABS[next]);
+      const button = document.getElementById(`dashTab-${TABS[next]}`);
+      if (button) button.focus();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const items = [...root.querySelectorAll('button, a, input, textarea, select')].filter((el) => !el.disabled && el.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function boot() {
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    root.setAttribute('aria-labelledby', 'dashTitle');
+    ensureButton();
+    const panel = document.getElementById('panel');
+    if (panel) new MutationObserver(ensureButton).observe(panel, { childList: true, subtree: true });
+    window.addEventListener('popstate', applyHash);
+    window.addEventListener('hashchange', applyHash);
+    window.addEventListener('keydown', onKey, true);
+    window.setInterval(() => { if (open) load(); }, 4000);
+    applyHash();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
