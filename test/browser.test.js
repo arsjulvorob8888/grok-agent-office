@@ -329,7 +329,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
       };
     });
     assert.equal(info.vw, 390);
-    assert.ok(Number(info.count) >= 4, info.count);
+    assert.ok(Number(info.count) >= 3, info.count);
     assert.match(info.label, /Нужно от вас/);
     assert.equal(info.expanded, 'true');
     assert.equal(info.btnInView, true, 'бейдж не помещается в шапку');
@@ -337,10 +337,9 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.equal(info.notify, 'Включить уведомления');
     assert.equal(info.rowsFit, true, 'строка пункта обрезана');
     const text = info.items.map((i) => `${i.what} ${i.from} ${i.where} ${i.urg}`).join('\n');
-    assert.match(text, /Ключ Render API/);
-    assert.match(text, /DevOps/);
-    assert.match(text, /urg-high/);
+    assert.doesNotMatch(text, /Ключ Render API/);
     assert.match(text, /Академию агентов/);
+    assert.match(text, /Чаты агентов в Grok/);
     assert.match(text, /Instagram и YouTube/);
     assert.match(text, /финансовых вопросов/);
     assert.match(text, /Финансы/);
@@ -365,7 +364,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.ok(after.until > Date.now() + 59 * 60 * 1000, String(after.until));
 
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => Number(document.querySelector('#needsBadge')?.textContent) >= 4, { timeout: 8000 });
+    await page.waitForFunction(() => Number(document.querySelector('#needsBadge')?.textContent) >= 3, { timeout: 8000 });
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await page.$eval('#needsPop', (el) => el.classList.contains('open')), false);
 
@@ -390,5 +389,204 @@ test('без reduced-motion новый приказ запускает полё�
     await page.waitForFunction(() => document.querySelector('#fx')?.dataset.flight === 'play', { timeout: 10000 });
   } finally {
     await page.close();
+  }
+});
+
+async function openQuiet(viewport) {
+  const page = await browser.newPage();
+  const narrow = viewport.width <= 700;
+  await page.setViewport({
+    width: viewport.width,
+    height: viewport.height,
+    isMobile: narrow,
+    hasTouch: narrow,
+    deviceScaleFactor: 1,
+  });
+  await page.evaluateOnNewDocument(() => {
+    localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+    localStorage.removeItem('needsNotify');
+  });
+  await page.goto(`${base}/?theme=day`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+  await page.waitForFunction(() => {
+    const el = document.querySelector('#roster .chip[data-id="finance"] .await-you');
+    return el && !el.hidden && el.querySelector('.await-you-count')?.textContent === '1';
+  }, { timeout: 8000 });
+  return page;
+}
+
+test('бейдж «ждёт вас»: счётчик, нуль скрыт, тап открывает блок', { timeout: 60000 }, async () => {
+  const viewports = [
+    { width: 1280, height: 800 },
+    { width: 390, height: 844 },
+  ];
+  for (const viewport of viewports) {
+    const page = await openQuiet(viewport);
+    try {
+      const counts = await page.evaluate(() => {
+        const read = (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return { missing: true };
+          const r = el.getBoundingClientRect();
+          return {
+            hidden: !!el.hidden,
+            text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+            count: el.querySelector('.await-you-count')?.textContent || '',
+            w: r.width,
+            h: r.height,
+          };
+        };
+        return {
+          financeRoster: read('#roster .chip[data-id="finance"] .await-you'),
+          financeMap: read('#overlay .await-you[data-id="finance"]'),
+          pokerRoster: read('#roster .chip[data-id="poker"] .await-you'),
+          pokerMap: read('#overlay .await-you[data-id="poker"]'),
+          devopsRoster: read('#roster .chip[data-id="devops"] .await-you'),
+        };
+      });
+      assert.equal(counts.financeRoster.hidden, false, JSON.stringify(counts));
+      assert.equal(counts.financeRoster.count, '1');
+      assert.match(counts.financeRoster.text, /ждёт вас/);
+      assert.ok(counts.financeRoster.w >= 40 && counts.financeRoster.h >= 40, JSON.stringify(counts.financeRoster));
+      assert.equal(counts.financeMap.missing, undefined);
+      assert.equal(counts.financeMap.hidden, false);
+      assert.equal(counts.financeMap.count, '1');
+      assert.equal(counts.pokerRoster.hidden, true);
+      assert.equal(counts.pokerMap.hidden, true);
+      assert.equal(counts.devopsRoster.hidden, true);
+
+      await page.evaluate(() => {
+        document.querySelector('#roster .chip[data-id="finance"]').scrollIntoView({ inline: 'center', block: 'nearest' });
+      });
+      const badge = '#roster .chip[data-id="finance"] .await-you';
+      if (viewport.width <= 700) {
+        const point = await page.$eval(badge, (el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        await page.touchscreen.tap(point.x, point.y);
+      } else {
+        await page.click(badge);
+      }
+      await page.waitForSelector('#panel.open[data-agent="finance"] [data-anchor="awaits"]', { timeout: 8000 });
+      const placed = await page.evaluate(() => {
+        const body = document.querySelector('#panel .p-body');
+        const el = document.querySelector('#panel [data-anchor="awaits"]');
+        const close = el.querySelector('.need-close');
+        const br = body.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        const cr = close.getBoundingClientRect();
+        return {
+          title: el.querySelector('h4').textContent,
+          delta: r.top - br.top,
+          visible: r.bottom > br.top && r.top < br.bottom,
+          closeW: cr.width,
+          closeH: cr.height,
+          text: el.textContent,
+        };
+      });
+      assert.match(placed.title, /Ждёт от вас/);
+      assert.equal(placed.visible, true, JSON.stringify(placed));
+      assert.ok(placed.delta < 28 && placed.delta > -2, JSON.stringify(placed));
+      assert.match(placed.text, /финансовых вопросов/);
+      assert.ok(placed.closeW >= 40 && placed.closeH >= 40, JSON.stringify(placed));
+
+      if (viewport.width > 700) {
+        await page.click('#panel .need-close');
+        await page.waitForSelector('#modal.show');
+        assert.equal(await page.$eval('#mTitle', (el) => el.textContent), 'Пропуск в штаб');
+        await page.click('#pwCancel');
+        await page.click('#pClose');
+        await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'));
+        await page.waitForFunction(() => {
+          const el = document.querySelector('#overlay .await-you[data-id="finance"]');
+          if (!el || el.hidden || el.classList.contains('hide')) return false;
+          const r = el.getBoundingClientRect();
+          const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return !!(top && (top === el || el.contains(top)));
+        }, { timeout: 5000 });
+        const mapHit = await page.evaluate(() => {
+          const el = document.querySelector('#overlay .await-you[data-id="finance"]');
+          if (!el || el.hidden || el.classList.contains('hide')) return null;
+          const r = el.getBoundingClientRect();
+          const x = r.left + r.width / 2;
+          const y = r.top + r.height / 2;
+          const top = document.elementFromPoint(x, y);
+          return {
+            x, y, w: r.width, h: r.height,
+            hit: !!(top && (top === el || el.contains(top))),
+          };
+        });
+        assert.ok(mapHit && mapHit.hit && mapHit.w >= 40 && mapHit.h >= 40, JSON.stringify(mapHit));
+        await page.mouse.click(mapHit.x, mapHit.y);
+        await page.waitForSelector('#panel.open[data-agent="finance"] [data-anchor="awaits"]');
+      }
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+test('панель DevOps: журнал приказов на десктопе и на 390, без ключа Render', { timeout: 60000 }, async () => {
+  const incoming = await api('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-ui' },
+    body: JSON.stringify({ agent: 'devops', text: 'Проверь деплой штаба', fromAgentId: 'grok' }),
+  });
+  assert.equal(incoming.status, 201);
+  const outgoing = await api('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-ui' },
+    body: JSON.stringify({
+      agent: 'qa',
+      text: 'Прогони смоук панели',
+      fromAgentId: 'devops',
+      parentOrderId: incoming.body.id,
+    }),
+  });
+  assert.equal(outgoing.status, 201);
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage();
+    try {
+      await page.setViewport({
+        width: viewport.width,
+        height: viewport.height,
+        isMobile: viewport.width <= 700,
+        hasTouch: viewport.width <= 700,
+        deviceScaleFactor: 1,
+      });
+      await page.evaluateOnNewDocument(() => {
+        localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+      });
+      await page.goto(`${base}/?theme=day&agent=devops`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#panel.open[data-agent="devops"] [data-anchor="tasks"] .quest[data-dir="in"]', { timeout: 8000 });
+      const info = await page.evaluate(() => {
+        const tasks = document.querySelector('[data-anchor="tasks"]');
+        const dirs = [...tasks.querySelectorAll('.quest')].map((q) => ({
+          dir: q.dataset.dir || '',
+          text: q.querySelector('.qt').textContent,
+        }));
+        return {
+          title: document.querySelector('.p-title h2').textContent,
+          awaits: document.querySelector('[data-anchor="awaits"]')?.textContent || '',
+          journal: tasks.querySelector('h4').textContent,
+          dirs,
+          chat: document.querySelector('[data-anchor="chat"]').textContent,
+          vw: window.innerWidth,
+        };
+      });
+      assert.equal(info.vw, viewport.width);
+      assert.match(info.title, /5\./);
+      assert.match(info.title, /DevOps/);
+      assert.equal(info.awaits, '');
+      assert.match(info.journal, /Журнал заданий/);
+      assert.doesNotMatch(`${info.awaits} ${info.chat} ${info.journal}`, /Ключ Render API/);
+      assert.ok(info.dirs.some((d) => d.dir === 'in' && /Проверь деплой/.test(d.text)), JSON.stringify(info.dirs));
+      assert.ok(info.dirs.some((d) => d.dir === 'out' && /Прогони смоук/.test(d.text)), JSON.stringify(info.dirs));
+      assert.match(info.chat, /Проверь деплой/);
+      assert.match(info.chat, /Прогони смоук/);
+    } finally {
+      await page.close();
+    }
   }
 });
