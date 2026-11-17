@@ -5,6 +5,8 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
+const { activityFor } = require('./lib/activity');
+const { registerHeartbeat } = require('./lib/heartbeat');
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -465,6 +467,7 @@ function publicState() {
       vacant: !!a.vacant,
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
+      ...activityFor(a, state.tasks),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
@@ -1468,6 +1471,12 @@ app.post('/api/orders/:id', requireAgentToken, (req, res) => {
     if (!err.status) console.error(err);
     return res.status(status).json({ error: err.expose || 'Не удалось обновить приказ' });
   }
+});
+
+registerHeartbeat(app, {
+  requireAgentToken,
+  findAgent,
+  orders: () => state.tasks,
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
