@@ -10,6 +10,16 @@
 
   const RECENT_CLOSED_MS = 7 * 24 * 60 * 60 * 1000;
 
+  // Честная подпись доставки по forwardStatus. Старые записи из базы тоже:
+  // пустой код — вебхук не вызывался, 2xx — дошло, иначе ошибка с кодом.
+  function deliveryCaption(forwardStatus) {
+    if (forwardStatus == null || forwardStatus === '') return 'В очереди, доставка не подключена';
+    const code = Number(forwardStatus);
+    if (Number.isInteger(code) && code >= 200 && code < 300) return 'Отправлена';
+    if (Number.isInteger(code)) return `Ошибка доставки ${code}`;
+    return 'Ошибка доставки';
+  }
+
   function taskExecutor(task) {
     return (task && (task.agentId || task.agent)) || '';
   }
@@ -227,6 +237,7 @@
   return {
     RECENT_CLOSED_MS,
     taskExecutor,
+    deliveryCaption,
     orderParticipantIds,
     seesOrder,
     ordersForGeneral,

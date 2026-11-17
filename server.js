@@ -7,6 +7,7 @@ const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
 const { activityFor, activeWindowMs } = require('./lib/activity');
+const { deliveryCaption } = require('./public/js/feed');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
 const { senderName } = require('./public/js/sender-label');
@@ -1328,19 +1329,10 @@ function publicTask(t) {
   return view;
 }
 
-const DELIVERY_OFFLINE = 'Доставка не подключена, сообщение в очереди';
-const DELIVERY_FAILED = 'Не доставлено, в очереди';
-
-function queuedOutboxFor(taskId) {
-  return (state.outbox || []).find((item) => item && item.taskId === taskId && item.status === 'queued') || null;
-}
-
 function deliveryLabelFor(task) {
   if (!task) return null;
   if ((task.orderStatus || 'sent') !== 'sent') return null;
-  const item = queuedOutboxFor(task.id);
-  if (!item) return null;
-  return item.lastError ? DELIVERY_FAILED : DELIVERY_OFFLINE;
+  return deliveryCaption(task.forwardStatus);
 }
 
 function publicOutbox(item) {

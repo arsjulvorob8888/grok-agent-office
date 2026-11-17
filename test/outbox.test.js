@@ -18,8 +18,8 @@ const savedDatabaseUrl = process.env.DATABASE_URL || '';
 const KEY = 'kremlin-key-SHOULD-NOT-LOG';
 const PATH_TOKEN = 'hook-SHOULD-NOT-LOG';
 const BODY_TOKEN = 'TEXT-SENTINEL-should-not-log';
-const OFFLINE = 'Доставка не подключена, сообщение в очереди';
-const FAILED = 'Не доставлено, в очереди';
+const OFFLINE = 'В очереди, доставка не подключена';
+const FAILED = 'Ошибка доставки 500';
 
 delete process.env.DATABASE_URL;
 delete process.env.STORE_SCHEMA;
@@ -244,7 +244,7 @@ test('ошибка вебхука оставляет queued, а лог не со
       body: JSON.stringify({ agent: 'temshik', text: 'сеть молчит' }),
     });
     assert.equal(broken.status, 201);
-    assert.equal(broken.body.deliveryLabel, FAILED);
+    assert.equal(broken.body.deliveryLabel, 'Ошибка доставки 0');
   } finally {
     console.log = origLog;
     console.error = origErr;
@@ -413,6 +413,69 @@ async function dropSchema(schema) {
     await pool.end();
   }
 }
+
+test('старая запись без forwardStatus не называется отправленной', { timeout: 30000 }, async () => {
+  const at = '2026-11-17T12:00:00.000Z';
+  const baseTask = {
+    fromAgentId: 'owner',
+    delivery: 'queue',
+    orderStatus: 'sent',
+    progress: null,
+    note: '',
+    createdAt: at,
+    result: null,
+    attachments: [],
+    history: [{ status: 'sent', at, progress: null, note: '', result: null }],
+  };
+  office.state.tasks.unshift(
+    { ...baseTask, id: 't-neon-null', agent: 'advisor', agentId: 'advisor', text: 'NEON-NULL советник', status: 'отправлена', forwardStatus: null },
+    { ...baseTask, id: 't-neon-ok', agent: 'qa', agentId: 'qa', text: 'NEON-OK тестировщик', status: 'отправлена Путину', forwardStatus: 200 },
+    { ...baseTask, id: 't-neon-err', agent: 'dev', agentId: 'dev', text: 'NEON-ERR код', status: 'в очереди агента', forwardStatus: 502 },
+  );
+  const puppeteer = require('puppeteer-core');
+  const chrome = ['/usr/bin/google-chrome', '/usr/local/bin/google-chrome', '/usr/bin/google-chrome-stable']
+    .find((candidate) => fs.existsSync(candidate));
+  assert.ok(chrome, 'Chrome не найден');
+  const browser = await puppeteer.launch({
+    executablePath: chrome,
+    headless: true,
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.goto(`${base}/?agent=advisor`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => {
+      const row = [...document.querySelectorAll('#procList .proc-row')].find((node) => node.textContent.includes('NEON-NULL'));
+      return row && row.querySelector('.proc-st');
+    }, { timeout: 8000 });
+    const labels = await page.evaluate(() => {
+      const pick = (marker) => {
+        const row = [...document.querySelectorAll('#procList .proc-row')].find((node) => node.textContent.includes(marker));
+        const quest = [...document.querySelectorAll('#jList .quest')].find((node) => node.textContent.includes(marker));
+        return {
+          who: row ? row.querySelector('.proc-route').textContent : '',
+          process: row ? row.querySelector('.proc-st').textContent : '',
+          feed: quest ? quest.querySelector('.badge').textContent : '',
+          history: quest ? [...quest.querySelectorAll('.order-hist b')].map((node) => node.textContent).join('|') : '',
+        };
+      };
+      return { held: pick('NEON-NULL'), sent: pick('NEON-OK'), failed: pick('NEON-ERR') };
+    });
+    assert.equal(labels.held.who.includes('Владелец'), true);
+    assert.equal(labels.held.process, 'В очереди, доставка не подключена');
+    assert.equal(labels.held.feed, 'В очереди, доставка не подключена');
+    assert.equal(labels.held.history, 'В очереди, доставка не подключена');
+    assert.equal(labels.sent.process, 'Отправлена');
+    assert.equal(labels.sent.feed, 'Отправлена');
+    assert.equal(labels.sent.history, 'Отправлена');
+    assert.equal(labels.failed.process, 'Ошибка доставки 502');
+    assert.equal(labels.failed.feed, 'Ошибка доставки 502');
+    assert.equal(labels.failed.history, 'Ошибка доставки 502');
+  } finally {
+    await browser.close();
+  }
+});
 
 test('Postgres хранит outbox между процессами', { skip: savedDatabaseUrl ? false : 'DATABASE_URL не задан' }, async () => {
   const schema = `o_${crypto.randomBytes(4).toString('hex')}`;

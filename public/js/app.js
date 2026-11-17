@@ -1291,16 +1291,21 @@
     if (t.orderStatus === 'done' || t.status === 'выполнена') return ['done', 'Выполнена'];
     if (t.orderStatus === 'in_progress') return ['work', 'В работе'];
     if (t.orderStatus === 'accepted') return ['work', 'Принял'];
-    if (t.deliveryLabel && (t.orderStatus === 'sent' || !t.orderStatus)) return ['sent', t.deliveryLabel];
+    if (!t.orderStatus || t.orderStatus === 'sent') {
+      const caption = Feed.deliveryCaption(t.forwardStatus);
+      const code = Number(t.forwardStatus);
+      const failed = t.forwardStatus != null && t.forwardStatus !== '' && !(Number.isInteger(code) && code >= 200 && code < 300);
+      return [failed ? 'fail' : 'sent', caption];
+    }
     if (t.status === 'выполнена') return ['done', 'Выполнена'];
     const a = S.byId.get(t.agent);
     const latest = S.tasks.find((x) => x.agent === t.agent);
     if (a && a.status === 'working' && latest && latest.id === t.id) return ['work', 'В работе'];
-    if (t.status === 'в очереди агента') return ['sent', 'В очереди'];
-    if (t.status === 'отправлена Путину') return ['sent', 'Путину'];
+    if (t.status === 'в очереди агента') return ['sent', Feed.deliveryCaption(t.forwardStatus)];
+    if (t.status === 'отправлена Путину') return ['sent', Feed.deliveryCaption(t.forwardStatus)];
     if (String(t.status).startsWith('не отправлена')) return ['fail', 'Не отправлена'];
-    if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) return ['fail', 'Ошибка связи'];
-    return ['sent', 'Отправлена'];
+    if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) return ['fail', Feed.deliveryCaption(t.forwardStatus)];
+    return ['sent', Feed.deliveryCaption(t.forwardStatus)];
   }
   const ICONS = {
     send: '<path d="M4 12l16-8-6 16-3-6z M11 14l9-10"/>',
@@ -1376,7 +1381,8 @@
       if (h.status === 'in_progress' && h.progress != null) bits.push(`${h.progress}%`);
       if (h.note) bits.push(h.note);
       if (h.status === 'done' && h.result) bits.push(h.result.length > 140 ? `${h.result.slice(0, 140)}…` : h.result);
-      return `<li><time datetime="${esc(h.at || '')}">${fmtTime(h.at)}</time><b>${esc(ORDER_WORD[h.status] || h.status || '')}</b>${bits.length ? `<span>${esc(bits.join(' · '))}</span>` : ''}</li>`;
+      const word = h.status === 'sent' ? Feed.deliveryCaption(t.forwardStatus) : (ORDER_WORD[h.status] || h.status || '');
+      return `<li><time datetime="${esc(h.at || '')}">${fmtTime(h.at)}</time><b>${esc(word)}</b>${bits.length ? `<span>${esc(bits.join(' · '))}</span>` : ''}</li>`;
     }).join('')}</ol>`;
   }
 
@@ -1818,7 +1824,7 @@
     const top = list.scrollTop;
     const saved = {};
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
-    const sig = S.tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
+    const sig = S.tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
     $('#jCount').textContent = S.tasks.length;
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;

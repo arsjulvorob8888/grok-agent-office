@@ -247,7 +247,7 @@ test('бейдж, цепочка и тихий конверт при reduced-mot
     assert.doesNotMatch(chain, /Главный агент/);
     assert.match(chain, /Тестировщик/);
     const hist = await page.$eval('#panel .order-hist', (el) => el.textContent);
-    assert.match(hist, /отправлен/);
+    assert.match(hist, /В очереди, доставка не подключена/);
     assert.match(hist, /принял/);
     const chat = await page.$eval('#panel .chat-log', (el) => el.textContent);
     assert.match(chat, /Приказ:/);
