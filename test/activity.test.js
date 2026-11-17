@@ -25,6 +25,9 @@ before(async () => {
   process.env.AGENT_TOKEN = 'tok-act';
   process.env.GROK_WEBHOOK_URL = `http://127.0.0.1:${hook.address().port}/hook`;
   process.env.GROK_WEBHOOK_KEY = 'hook-key';
+  process.env.KREMLIN_WEBHOOK_URL = `http://127.0.0.1:${hook.address().port}/hook`;
+  process.env.KREMLIN_WEBHOOK_KEY = 'hook-key';
+  delete process.env.KREMLIN_WEBHOOK_HEADER;
   process.env.PUBLIC_URL = 'https://example.test';
   delete process.env.AGENT_ACTIVE_MINUTES;
   delete process.env.ACTIVITY_WINDOW_MIN;
