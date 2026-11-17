@@ -57,6 +57,13 @@
     const panel = document.getElementById('processes');
     const btn = document.getElementById('btnProcesses');
     if (!panel || !btn) return;
+    if (!open) {
+      const active = document.activeElement;
+      if (active && active !== document.body && panel.contains(active)) {
+        try { btn.focus({ preventScroll: true }); } catch (_) { btn.focus(); }
+        if (panel.contains(document.activeElement) && active.blur) active.blur();
+      }
+    }
     panel.classList.toggle('open', open);
     panel.setAttribute('aria-hidden', open ? 'false' : 'true');
     btn.classList.toggle('on', open);

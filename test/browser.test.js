@@ -1826,3 +1826,82 @@ test('помещения, лента, подсказка, бейдж и зазо
     await watch.page.close();
   }
 });
+
+function ariaWarnings(page) {
+  const notes = [];
+  page.on('console', (msg) => {
+    const text = msg.text();
+    if (/aria-hidden/i.test(text)) notes.push(text);
+  });
+  return notes;
+}
+
+async function focusHidden(page) {
+  return page.evaluate(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement) return '';
+    let node = active;
+    while (node && node !== document.documentElement) {
+      if (node.hidden || node.getAttribute('aria-hidden') === 'true') return node.id || node.getAttribute('class') || node.tagName;
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden') return node.id || node.getAttribute('class') || node.tagName;
+      node = node.parentElement;
+    }
+    return '';
+  });
+}
+
+test('фокус уходит из попапа и помещения до aria-hidden', { timeout: 90000 }, async () => {
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage();
+    const notes = ariaWarnings(page);
+    await page.setViewport({
+      width: viewport.width,
+      height: viewport.height,
+      isMobile: viewport.width <= 700,
+      hasTouch: viewport.width <= 700,
+      deviceScaleFactor: 1,
+    });
+    await page.evaluateOnNewDocument(() => {
+      localStorage.removeItem('needsSnoozeUntil');
+      localStorage.setItem('journal', 'collapsed');
+    });
+    try {
+      await page.goto(`${base}/?theme=day`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+      await page.waitForFunction(() => (document.querySelector('#needsList')?.textContent || '').length > 2, { timeout: 8000 });
+      if (!await page.$('#needsPop.open')) {
+        await page.click('#btnNeeds');
+        await page.waitForSelector('#needsPop.open', { timeout: 4000 });
+      }
+      await page.click('#needsClose');
+      await page.waitForFunction(() => !document.querySelector('#needsPop').classList.contains('open'));
+      assert.deepEqual(notes, [], `${viewport.width} needs: ${notes.join(' | ')}`);
+      assert.equal(await focusHidden(page), '', `${viewport.width} фокус внутри скрытого блока после «Нужно от вас»`);
+      const needsFocus = await page.evaluate(() => document.activeElement && document.activeElement.id);
+      assert.equal(needsFocus, 'btnNeeds');
+
+      await openFinanceRoom(page);
+      await page.waitForSelector('#room.open .room-go[data-id="finance"]', { timeout: 4000 });
+      await page.click('#room.open .room-go[data-id="finance"]');
+      await page.waitForSelector('#panel.open[data-agent="finance"] #pClose', { timeout: 8000 });
+      await page.waitForFunction(() => !document.querySelector('#room').classList.contains('open'));
+      assert.deepEqual(notes, [], `${viewport.width} room: ${notes.join(' | ')}`);
+      assert.equal(await focusHidden(page), '', `${viewport.width} фокус внутри скрытого блока после «Открыть»`);
+      const roomFocus = await page.evaluate(() => {
+        const active = document.activeElement;
+        const panel = document.querySelector('#panel');
+        return {
+          id: active && active.id,
+          inPanel: !!(active && panel && panel.contains(active)),
+          inRoom: !!(active && document.querySelector('#room')?.contains(active)),
+        };
+      });
+      assert.equal(roomFocus.inRoom, false);
+      assert.equal(roomFocus.inPanel, true, JSON.stringify(roomFocus));
+      assert.equal(roomFocus.id, 'pClose');
+    } finally {
+      await page.close();
+    }
+  }
+});
