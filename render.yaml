@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: grok-agent-office
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_PASSWORD
+        sync: false
+      - key: AGENT_TOKEN
+        generateValue: true
+      - key: GROK_WEBHOOK_URL
+        sync: false
+      - key: GROK_WEBHOOK_KEY
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
