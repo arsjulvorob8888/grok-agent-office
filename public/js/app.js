@@ -4,13 +4,13 @@
 
   // ── Настройки клиента ────────────────────────────────────────────────────
   // Сам ростер (имена, цвета, обязанности, место на карте) приходит с сервера:
-  // см. SEED_AGENTS в server.js. 8-е направление — агент slot8 («Свободное направление»).
+  // см. SEED_AGENTS в server.js. 8-е направление — Финансы, помощники 8.1 и 8.2.
   const CONFIG = {
     pollMs: 4000,
     mainId: 'grok',
     xpPerTask: 100, // опыт за выполненную задачу
     xpPerSent: 10, // опыт за полученную задачу
-    figScale: { main: 1.15, dept: 0.92, extra: 0.8 },
+    figScale: { main: 1.15, dept: 0.92, extra: 0.8, sub: 0.68 },
   };
 
   const NS = 'http://www.w3.org/2000/svg';
@@ -87,7 +87,22 @@
   }
 
   // ── Агенты на карте ──────────────────────────────────────────────────────
-  const tierOf = (a) => (a.id === CONFIG.mainId ? 'main' : a.tier === 'extra' ? 'extra' : 'dept');
+  const tierOf = (a) => (a.id === CONFIG.mainId ? 'main' : (a.parentId || a.tier === 'sub') ? 'sub' : a.tier === 'extra' ? 'extra' : 'dept');
+  const plainName = (a) => (a && a.id === CONFIG.mainId ? 'Главный агент' : (a && a.name) || '');
+  const numLabel = (a) => {
+    if (!a || !a.number) return '';
+    return String(a.number).includes('.') ? String(a.number) : `${a.number}.`;
+  };
+  const titled = (a) => (a && a.number ? `${numLabel(a)} ${plainName(a)}` : plainName(a));
+  const cmpNum = (a, b) => {
+    const pa = String(a.number || '').split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b.number || '').split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d) return d;
+    }
+    return 0;
+  };
   const tallOf = (a) => M.TALL[a.kind] || M.TALL.generic;
   const figScaleOf = (a) => CONFIG.figScale[tierOf(a)];
   const figFeet = (a) => (tierOf(a) === 'main' ? 38 : 32);
@@ -103,7 +118,7 @@
   }
 
   function agentSig(list) {
-    return list.map((a) => [a.id, a.kind, a.color, a.name, a.vacant, a.x, a.y, a.tier].join('|')).join(';');
+    return list.map((a) => [a.id, a.kind, a.color, a.name, a.number, a.parentId, a.vacant, a.x, a.y, a.tier].join('|')).join(';');
   }
 
   function buildAgents() {
@@ -121,7 +136,10 @@
       g.style.setProperty('--agent-glow', Figures.shade(a.color, 0.55));
       const plot = tier === 'main'
         ? `<ellipse class="plot-ring" cx="0" cy="${figFeet(a)}" rx="46" ry="14" stroke="#f5c451"/>`
-        : `<ellipse class="plot" cx="0" cy="14" rx="${tier === 'extra' ? 70 : 82}" ry="${tier === 'extra' ? 30 : 34}" fill="${a.color}" fill-opacity=".17" stroke="${a.color}" stroke-opacity=".6" stroke-width="2.4" stroke-dasharray="${a.vacant ? '7 5' : 'none'}"/>
+        : tier === 'sub'
+          ? `<ellipse class="plot" cx="0" cy="12" rx="48" ry="18" fill="${a.color}" fill-opacity=".2" stroke="${a.color}" stroke-opacity=".75" stroke-width="2"/>
+             <ellipse class="plot-ring" cx="0" cy="12" rx="56" ry="22" stroke="#f5c451"/>`
+          : `<ellipse class="plot" cx="0" cy="14" rx="${tier === 'extra' ? 70 : 82}" ry="${tier === 'extra' ? 30 : 34}" fill="${a.color}" fill-opacity=".17" stroke="${a.color}" stroke-opacity=".6" stroke-width="2.4" stroke-dasharray="${a.vacant ? '7 5' : 'none'}"/>
            <ellipse class="plot-ring" cx="0" cy="14" rx="${tier === 'extra' ? 78 : 92}" ry="${tier === 'extra' ? 35 : 40}" stroke="#f5c451"/>`;
       const bld = tier === 'main' ? M.building('putin', a.color) : M.building(a.kind || 'generic', a.color);
       const beaconY = tier === 'main' ? figTop(a) - 30 : -Math.min(tallOf(a), 150) - 12;
@@ -131,19 +149,23 @@
       gA.appendChild(g);
 
       let link = null, packets = null;
-      if (tier !== 'main') {
-        const x1 = a.x, y1 = a.y + 14, dx = x1 - kx, dy = y1 - ky, len = Math.hypot(dx, dy);
-        const cx = (kx + x1) / 2 - (dy / len) * len * 0.16, cy = (ky + y1) / 2 + (dx / len) * len * 0.16;
+      const parent = tier === 'sub' ? S.byId.get(a.parentId) : null;
+      if (tier !== 'main' && (tier !== 'sub' || parent)) {
+        const x0 = parent ? parent.x : kx, y0 = parent ? parent.y + 10 : ky;
+        const x1 = a.x, y1 = a.y + (tier === 'sub' ? 10 : 14), dx = x1 - x0, dy = y1 - y0, len = Math.max(1, Math.hypot(dx, dy));
+        const bend = tier === 'sub' ? 0.08 : 0.16;
+        const cx = (x0 + x1) / 2 - (dy / len) * len * bend, cy = (y0 + y1) / 2 + (dx / len) * len * bend;
         link = document.createElementNS(NS, 'path');
         link.setAttribute('id', `link-${a.id}`);
-        link.setAttribute('class', 'link');
-        link.setAttribute('d', `M${kx},${ky}Q${cx.toFixed(1)},${cy.toFixed(1)} ${x1},${y1}`);
-        link.setAttribute('stroke', a.color);
+        link.setAttribute('class', tier === 'sub' ? 'link sub' : 'link');
+        link.setAttribute('d', `M${x0},${y0}Q${cx.toFixed(1)},${cy.toFixed(1)} ${x1},${y1}`);
+        link.setAttribute('stroke', parent ? parent.color : a.color);
         gL.appendChild(link);
         packets = document.createElementNS(NS, 'g');
         packets.setAttribute('class', 'packet');
-        const dur = Math.max(2.2, len / 140).toFixed(1);
-        packets.innerHTML = [0, 1, 2].map((i) => `<g><circle r="7" fill="${a.color}" opacity=".6"/><circle r="3.6" fill="#fff"/><animateMotion dur="${dur}s" begin="-${(i * dur / 3).toFixed(2)}s" repeatCount="indefinite"><mpath href="#link-${a.id}"/></animateMotion></g>`).join('');
+        const dur = Math.max(1.6, len / 140).toFixed(1);
+        const dots = tier === 'sub' ? [0] : [0, 1, 2];
+        packets.innerHTML = dots.map((i) => `<g><circle r="${tier === 'sub' ? 5 : 7}" fill="${a.color}" opacity=".7"/><circle r="3" fill="#fff"/><animateMotion dur="${dur}s" begin="-${(i * dur / dots.length).toFixed(2)}s" repeatCount="indefinite"><mpath href="#link-${a.id}"/></animateMotion></g>`).join('');
         gL.appendChild(packets);
       }
 
@@ -170,8 +192,7 @@
       const tier = tierOf(a), L = levelInfo(a);
       e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${S.selected === a.id ? ' sel' : ''}`);
       e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}`;
-      const short = tier === 'main' ? 'GROK · Главный агент' : a.name;
-      e.tag.innerHTML = `<span class="lvl">${a.vacant ? '?' : L.lvl}</span><span class="nm">${esc(short)}</span><span class="dot ${a.status}"></span>`;
+      e.tag.innerHTML = `<span class="lvl">${a.vacant ? '?' : L.lvl}</span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
       e.w = 0;
       const show = !a.vacant && (a.status === 'working' || a.status === 'waiting') && a.now;
       e.bubble.className = `bubble ${a.status}${show ? '' : ' hide'}`;
@@ -179,7 +200,7 @@
       e.bubble.innerHTML = (a.status === 'working' ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(a.now || '');
       if (e.link) {
         const hot = a.status === 'working';
-        e.link.setAttribute('class', `link${hot ? ' hot' : ''}${S.selected === a.id ? ' sel' : ''}`);
+        e.link.setAttribute('class', `link${tier === 'sub' ? ' sub' : ''}${hot ? ' hot' : ''}${S.selected === a.id ? ' sel' : ''}`);
         e.packets.setAttribute('class', `packet${hot ? ' on' : ''}`);
       }
     }
@@ -353,7 +374,7 @@
     const lm = !ag && e.target.closest && e.target.closest('.landmark');
     if (ag) {
       const a = S.byId.get(ag.dataset.id);
-      showTip(e, `${a.name} · ${a.district || ''}`);
+      showTip(e, `${titled(a)} · ${a.district || ''}`);
     } else if (lm) showTip(e, lm.dataset.name);
     else hideTip();
   }
@@ -409,14 +430,15 @@
   }
   function buildRoster() {
     const r = $('#roster');
-    const list = [...S.agents].sort((a, b) => ({ main: 0, dept: 1, extra: 2 }[tierOf(a)] - { main: 0, dept: 1, extra: 2 }[tierOf(b)]) || (a.vacant ? 1 : 0) - (b.vacant ? 1 : 0));
-    let html = '', lastTier = null;
+    const list = [...S.agents].sort(cmpNum);
+    let html = '', lastGroup = null;
     for (const a of list) {
       const t = tierOf(a);
-      if (lastTier && t !== lastTier) html += '<span class="roster-sep"></span>';
-      lastTier = t;
-      html += `<button class="chip ${t}${a.vacant ? ' vacant' : ''}" data-id="${esc(a.id)}" style="--c:${esc(a.color)}" title="${esc(a.name)}">
-        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${esc(t === 'main' ? 'GROK' : a.name)}</span></button>`;
+      const group = t === 'main' ? 'main' : t === 'extra' ? 'extra' : 'staff';
+      if (lastGroup && group !== lastGroup) html += '<span class="roster-sep"></span>';
+      lastGroup = group;
+      html += `<button class="chip ${t}${a.vacant ? ' vacant' : ''}" data-id="${esc(a.id)}" style="--c:${esc(a.color)}" title="${esc(titled(a))}">
+        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span></button>`;
     }
     r.innerHTML = html;
     r.querySelectorAll('.chip').forEach((c) => (c.onclick = () => select(c.dataset.id)));
@@ -431,7 +453,7 @@
     });
   }
   function buildMiniDots() {
-    $('#miniDots').innerHTML = S.agents.map((a) => `<circle class="mini-dot" cx="${a.x}" cy="${a.y}" r="${tierOf(a) === 'main' ? 30 : 22}" fill="${a.color}"/>`).join('');
+    $('#miniDots').innerHTML = S.agents.map((a) => `<circle class="mini-dot" cx="${a.x}" cy="${a.y}" r="${tierOf(a) === 'main' ? 30 : tierOf(a) === 'sub' ? 14 : 22}" fill="${a.color}"/>`).join('');
   }
   function updateMiniView() {
     const { k, tx, ty } = S.cam, r = $('#miniView');
@@ -673,7 +695,7 @@
     return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}" style="--c:${esc(a.color)}">
       <span class="qi">${ico(cls === 'done' ? 'check' : cls === 'fail' ? 'x' : 'send')}</span>
       <span class="qt">${esc(title)}</span>
-      <span class="qm"><span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(tierOf(a) === 'main' ? 'GROK' : a.name)}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
+      <span class="qm"><span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
       ${attachmentsHTML(t.attachments)}
       ${t.result ? `<div class="qr" data-scroll-key="result:${esc(t.id)}">${linkify(t.result)}</div>` : ''}
     </div>`;
@@ -684,7 +706,7 @@
       String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
     if (!msgs.length) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
     return msgs.map((m) => {
-      const who = m.role === 'owner' ? 'Вы' : (tierOf(agent) === 'main' ? 'GROK' : agent.name);
+      const who = m.role === 'owner' ? 'Вы' : titled(agent);
       return `<div class="msg-row ${m.role === 'owner' ? 'owner' : 'agent'}">
         <div class="msg-bubble">
           <div class="msg-meta"><b>${esc(who)}</b><span>${fmtTime(m.timestamp || m.createdAt)}</span></div>
@@ -702,7 +724,7 @@
     const tasks = tierOf(a) === 'main' ? S.tasks.slice(0, 8) : S.tasks.filter((t) => t.agent === a.id).slice(0, 12);
     const taskKey = tasks.map((t) => [t.id, t.status, t.text, t.result, t.forwardStatus, JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = S.messages.filter((m) => m.agentId === a.id).map((m) => [m.id, m.role, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
-    const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).map((d) => `${d.id}:${d.name}`).join(',');
+    const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
     return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey].join('\u0003');
   }
 
@@ -711,7 +733,8 @@
     if (!a) return;
     const tier = tierOf(a), L = levelInfo(a);
     const tasks = S.tasks.filter((t) => t.agent === a.id);
-    const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant);
+    const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
+    const parent = a.parentId ? S.byId.get(a.parentId) : null;
     const panel = $('#panel');
     const snap = opts.preserveScroll ? capturePanelScroll(panel) : null;
     const textEl = $('#taskText');
@@ -732,8 +755,8 @@
     } else {
       form = `<form class="task-form" id="taskForm">
         ${tier === 'main' ? `<label for="taskTarget">Кому поручить</label><select id="taskTarget">
-            <option value="${esc(a.id)}">GROK лично</option>
-            ${depts.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}
+            <option value="${esc(a.id)}">1. GROK лично</option>
+            ${depts.map((d) => `<option value="${esc(d.id)}">${esc(titled(d))}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
         <textarea id="taskText" maxlength="4000" placeholder="${tier === 'main' ? 'Например: собери итоги недели по всем направлениям' : 'Опиши, что нужно сделать…'}"></textarea>
@@ -755,7 +778,7 @@
       <div class="p-hero">
         <div class="p-portrait">${portrait(a, '-34 -104 68 76')}</div>
         <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · главный агент' : (a.district || '') + (tier === 'extra' ? ' · союзник' : ''))}</div>
-          <h2>${esc(tier === 'main' ? 'Главный агент · GROK' : a.name)}</h2><div class="role">${esc(a.role || '')}</div></div>
+          <h2>${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</h2><div class="role">${esc(a.role || '')}</div>${parent ? `<button type="button" class="parent-link" data-parent="${esc(parent.id)}">Помощник · ${esc(titled(parent))}</button>` : ''}</div>
       </div>
       <div class="p-body">
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
@@ -768,6 +791,8 @@
         ${a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : ''}
       </div>`;
     $('#pClose').onclick = () => select(null);
+    const parentBtn = panel.querySelector('.parent-link');
+    if (parentBtn) parentBtn.onclick = () => select(parentBtn.dataset.parent);
     const f = $('#taskForm');
     if (f) {
       if (keep) {
@@ -865,7 +890,7 @@
     if (lastErr === 'auth') { msg.textContent = ''; return; }
     if (ok) {
       whoosh();
-      const names = targets.length > 1 ? `${ok} направлениям` : (tierOf(S.byId.get(targets[0])) === 'main' ? 'GROK' : S.byId.get(targets[0]).name);
+      const names = targets.length > 1 ? `${ok} направлениям` : titled(S.byId.get(targets[0]));
       const preview = txt || (draft.length ? draft.map((d) => d.file.name).join(', ') : 'вложение');
       toast('Задача отправлена', `${names}: «${preview.slice(0, 80)}»`, 'send');
       $('#taskText').value = '';

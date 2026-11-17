@@ -58,16 +58,30 @@ test('state содержит новый ростер без секретов', a
   const { status, body } = await json('/api/state');
   assert.equal(status, 200);
   const ids = body.agents.map((a) => a.id);
-  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'temshik', 'blog', 'slot8']) {
+  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'temshik', 'blog', 'finance', 'invest', 'analyst']) {
     assert.ok(ids.includes(id), `нет агента ${id}`);
   }
   const grok = body.agents.find((a) => a.id === 'grok');
   assert.equal(grok.kind, 'putin');
   assert.equal(grok.tier, 'main');
+  assert.equal(grok.number, '1');
   const army = body.agents.find((a) => a.id === 'army');
   assert.ok(army.responsibilities.length >= 4);
   assert.equal(army.completed, 0);
-  assert.equal(body.agents.find((a) => a.id === 'slot8').vacant, true);
+  assert.equal(army.number, '2');
+  const finance = body.agents.find((a) => a.id === 'finance');
+  assert.equal(finance.name, 'Финансы');
+  assert.equal(finance.vacant, false);
+  assert.equal(finance.number, '8');
+  assert.equal(finance.kind, 'finance');
+  const invest = body.agents.find((a) => a.id === 'invest');
+  const analyst = body.agents.find((a) => a.id === 'analyst');
+  assert.equal(invest.parentId, 'finance');
+  assert.equal(analyst.parentId, 'finance');
+  assert.equal(invest.number, '8.1');
+  assert.equal(analyst.number, '8.2');
+  assert.equal(invest.tier, 'sub');
+  assert.ok(finance.links.includes('invest') && finance.links.includes('analyst'));
   const raw = JSON.stringify(body);
   assert.ok(!raw.includes('pw-test') && !raw.includes('tok-test') && !raw.includes('hook-key'));
   assert.ok(Array.isArray(body.tasks));
@@ -97,10 +111,10 @@ test('POST /api/task валидирует поля и агента', async () =>
     method: 'POST', headers: h, body: JSON.stringify({ agent: 'nope', text: 'x' }),
   });
   assert.equal(unknown.status, 400);
-  const vacant = await json('/api/task', {
-    method: 'POST', headers: h, body: JSON.stringify({ agent: 'slot8', text: 'x' }),
+  const finance = await json('/api/task', {
+    method: 'POST', headers: h, body: JSON.stringify({ agent: 'finance', text: 'Сведи кассу' }),
   });
-  assert.equal(vacant.status, 400);
+  assert.equal(finance.status, 201);
 });
 
 test('задача создаётся и пересылается в вебхук', async () => {
@@ -179,16 +193,40 @@ test('неизвестный агент создаётся на лету и по
   assert.ok(st.body.agents.find((x) => x.id === 'grok').links.includes('crypto'));
 });
 
-test('свободный слот занимается при передаче имени', async () => {
+test('помощник Финансов принимает задачу и сообщения', async () => {
   const h = { 'x-agent-token': 'tok-test' };
-  const r = await json('/api/status', {
-    method: 'POST', headers: h, body: JSON.stringify({ agent: 'slot8', name: 'Здоровье', role: 'Спорт и питание' }),
-  });
-  assert.equal(r.body.agent.vacant, false);
   const t = await json('/api/task', {
-    method: 'POST', headers: { 'x-app-password': 'pw-test' }, body: JSON.stringify({ agent: 'slot8', text: 'План тренировок' }),
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-test' },
+    body: JSON.stringify({ agent: 'invest', text: 'Доля кэша в портфеле' }),
   });
   assert.equal(t.status, 201);
+  const msg = await json('/api/messages', {
+    method: 'POST',
+    headers: h,
+    body: JSON.stringify({ id: 'invest-note-1', agentId: 'invest', role: 'agent', text: 'Кэш 18%, смотрю ОФЗ' }),
+  });
+  assert.equal(msg.status, 201);
+  assert.equal(msg.body.message.agentId, 'invest');
+  const again = await json('/api/messages', {
+    method: 'POST',
+    headers: h,
+    body: JSON.stringify({ id: 'invest-note-1', agentId: 'invest', role: 'agent', text: 'повтор' }),
+  });
+  assert.equal(again.body.duplicate, true);
+  const child = await json('/api/status', {
+    method: 'POST',
+    headers: h,
+    body: JSON.stringify({ agent: 'credit', parentId: 'finance', name: 'Кредиты', role: 'Займы' }),
+  });
+  assert.equal(child.status, 200);
+  assert.equal(child.body.agent.parentId, 'finance');
+  assert.equal(child.body.agent.number, '8.3');
+  const st = await json('/api/state');
+  const created = st.body.agents.find((a) => a.id === 'credit');
+  assert.equal(created.tier, 'sub');
+  assert.ok(!st.body.agents.find((a) => a.id === 'grok').links.includes('credit'));
+  assert.ok(st.body.agents.find((a) => a.id === 'finance').links.includes('credit'));
 });
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');

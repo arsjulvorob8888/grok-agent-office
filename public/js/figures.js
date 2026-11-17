@@ -153,6 +153,21 @@
       hair: `<path d="M-22,-74q0-20 22-20t22,20z" fill="#d4a017"/><path d="M-22,-74h-9q0-4 9-5z" fill="#b8860b"/><rect x="-22" y="-77" width="44" height="4" rx="2" fill="#b8860b"/>`,
       extra: `<path d="M-10,-47q10,14 20,0" stroke="#f5c451" stroke-width="2.4" fill="none" stroke-dasharray="2 1.5"/><circle cx="0" cy="-39" r="3.2" fill="#f5c451"/><g transform="translate(26,-40)"><circle r="7" fill="#ffe066" opacity=".95"/><rect x="-3" y="6" width="6" height="4" rx="1" fill="#999"/><path d="M-2,-1l2,-3 2,3-2,3z" fill="#fff"/></g>`,
     }),
+    finance: () => generic({
+      top: '#1a3a5c', shirt: '#f7f3e8', tie: '#c6a15a', pants: '#14283c',
+      hair: HAIR.short('#3a2e24'),
+      extra: `<g transform="translate(16,-28)"><rect x="0" y="2" width="16" height="12" rx="1.5" fill="#5b3a1e"/><rect x="5" y="-1" width="6" height="4" fill="none" stroke="#5b3a1e" stroke-width="1.5"/><text x="8" y="12" text-anchor="middle" font-size="8" fill="#f5c451" font-weight="800">₽</text></g>`,
+    }),
+    invest: () => generic({
+      top: '#8a6a1f', shirt: '#fff6d8', tie: '#1a3a5c', pants: '#2a2416',
+      hair: HAIR.short('#2a2118'),
+      extra: `<g transform="translate(14,-40)"><rect x="0" y="0" width="22" height="15" rx="2" fill="#1a1408" stroke="#f5c451" stroke-width="1"/><path d="M3,11l4-5 4,3 6-6" stroke="#f5c451" stroke-width="1.6" fill="none"/><path d="M14,3h3v3" stroke="#f5c451" stroke-width="1.4" fill="none"/></g>`,
+    }),
+    analyst: () => generic({
+      top: '#2f6b4f', shirt: '#f3faf4', pants: '#1c3326', glasses: true,
+      hair: HAIR.bob('#4a3428'),
+      extra: `<g transform="translate(-28,-34) rotate(-8)"><rect x="0" y="0" width="16" height="20" rx="1.5" fill="#f7fbf6" stroke="#1a3a5c"/><rect x="3" y="12" width="2" height="5" fill="#1a3a5c"/><rect x="7" y="8" width="2" height="9" fill="#c6a15a"/><rect x="11" y="5" width="2" height="12" fill="#2f6b4f"/></g>`,
+    }),
     blog: () => generic({
       top: '#e83e8c', pants: '#2b2140',
       hair: HAIR.bob('#4a2b1d'),

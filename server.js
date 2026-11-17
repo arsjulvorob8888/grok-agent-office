@@ -34,8 +34,9 @@ const STATUS_LABELS = {
 // РОСТЕР АГЕНТОВ. Это единственное место, где задаются агенты на карте Москвы.
 // x / y — координаты на карте (холст 1600×1100, север сверху, Кремль ≈ 800×540).
 // kind — тип фигурки на клиенте: putin, army, poker, trading, devops, dev,
-//        temshik, blog, lang, biz, vacant, generic.
-// tier — main (главный), dept (направление), extra (союзник, необязательный).
+//        temshik, blog, finance, invest, analyst, lang, biz, vacant, generic.
+// tier — main (главный), dept (направление), sub (помощник, parentId), extra (союзник).
+// Номер на карте стабилен: сверху вниз по этому списку, помощники — 8.1, 8.2.
 // ─────────────────────────────────────────────────────────────────────────────
 const SEED_AGENTS = [
   {
@@ -49,7 +50,7 @@ const SEED_AGENTS = [
     tier: 'main',
     x: 800,
     y: 540,
-    links: ['army', 'poker', 'trading', 'devops', 'dev', 'temshik', 'blog', 'slot8', 'lang', 'biz'],
+    links: ['army', 'poker', 'trading', 'devops', 'dev', 'temshik', 'blog', 'finance', 'lang', 'biz'],
     responsibilities: [
       'Принимает задачи и распределяет их по направлениям',
       'Следит за сроками и качеством результатов',
@@ -176,6 +177,7 @@ const SEED_AGENTS = [
     district: 'Останкино',
     kind: 'blog',
     tier: 'dept',
+    order: 9,
     x: 845,
     y: 150,
     links: [],
@@ -185,23 +187,63 @@ const SEED_AGENTS = [
       'Контент-план и аналитика охватов',
     ],
   },
-  // ── 8-Е НАПРАВЛЕНИЕ: свободный слот. Чтобы занять его, поменяй name / role /
-  //    responsibilities / kind и поставь vacant: false. Либо пришли
-  //    POST /api/status с agent: "slot8" и полем name — слот займётся сам.
+  // ── 8-е направление: Финансы, Китай-город (Ильинка, квартал банков и казны).
   {
-    id: 'slot8',
-    name: 'Свободное направление',
-    color: '#8a8f9c',
-    accent: '#e5e7eb',
-    role: 'Назови направление — и здесь появится агент',
-    district: 'Сокольники',
-    kind: 'vacant',
+    id: 'finance',
+    name: 'Финансы',
+    color: '#1a3a5c',
+    accent: '#f5c451',
+    role: 'Казна, бюджет и денежные решения',
+    district: 'Китай-город · Ильинка',
+    kind: 'finance',
     tier: 'dept',
-    vacant: true,
-    x: 1160,
-    y: 300,
+    order: 8,
+    x: 1080,
+    y: 340,
+    links: ['invest', 'analyst'],
+    responsibilities: [
+      'Бюджет, касса и платежи',
+      'Сводит цифры направлений в одну картину',
+      'Ставит задачи помощникам: инвестициям и аналитике',
+    ],
+  },
+  {
+    id: 'invest',
+    name: 'Инвестиции',
+    parentId: 'finance',
+    color: '#c6a15a',
+    accent: '#fff6d8',
+    role: 'Портфель, рынки и долгие вложения',
+    district: 'Китай-город · Ильинка',
+    kind: 'invest',
+    tier: 'sub',
+    x: 1190,
+    y: 270,
     links: [],
-    responsibilities: ['Пока пусто: придумай, за что будет отвечать восьмой агент'],
+    responsibilities: [
+      'Ищет, куда положить деньги',
+      'Следит за рынком и рисками портфеля',
+      'Готовит короткие инвестиционные записки',
+    ],
+  },
+  {
+    id: 'analyst',
+    name: 'Бизнес-аналитик',
+    parentId: 'finance',
+    color: '#2f6b4f',
+    accent: '#e7f6ec',
+    role: 'Отчёты, юнит-экономика и модели',
+    district: 'Китай-город · Ильинка',
+    kind: 'analyst',
+    tier: 'sub',
+    x: 980,
+    y: 450,
+    links: [],
+    responsibilities: [
+      'Считает юнит-экономику и сценарии',
+      'Собирает отчёты для Финансов',
+      'Проверяет, сходятся ли цифры в планах',
+    ],
   },
   // ── Союзники (необязательные): уже существующие боты пользователя.
   {
@@ -247,16 +289,70 @@ const EXTRA_SLOTS = [
 function seedAgent(base) {
   return {
     ...base,
+    parentId: base.parentId || null,
     status: 'idle',
     now: base.vacant ? 'Ждёт названия' : 'Жду задач',
     done: [],
     completed: 0,
     responsibilities: (base.responsibilities || []).slice(),
+    links: (base.links || []).slice(),
+  };
+}
+
+// Номера стабильны: направления и союзники идут по порядку в SEED_AGENTS,
+// помощники получают 8.1, 8.2 по порядку среди детей одного родителя.
+function prepareRoster(list) {
+  let top = 0;
+  const sib = {};
+  const agents = list.map((base) => {
+    const agent = seedAgent(base);
+    if (agent.parentId) {
+      sib[agent.parentId] = (sib[agent.parentId] || 0) + 1;
+      agent.order = agent.order || sib[agent.parentId];
+      agent.tier = 'sub';
+    } else {
+      top += 1;
+      agent.order = agent.order || top;
+    }
+    return agent;
+  });
+  for (const agent of agents) {
+    if (!agent.parentId) continue;
+    const parent = agents.find((a) => a.id === agent.parentId);
+    if (parent && !parent.links.includes(agent.id)) parent.links.push(agent.id);
+  }
+  return agents;
+}
+
+function agentNumber(agent) {
+  if (!agent) return '';
+  if (agent.parentId) {
+    const parent = findAgent(agent.parentId);
+    const parentNum = parent ? agentNumber(parent) : '?';
+    const siblings = state.agents
+      .filter((a) => a.parentId === agent.parentId)
+      .sort((a, b) => (a.order || 0) - (b.order || 0) || a.id.localeCompare(b.id));
+    const idx = Math.max(1, siblings.findIndex((a) => a.id === agent.id) + 1);
+    return `${parentNum}.${idx}`;
+  }
+  const tops = state.agents
+    .filter((a) => !a.parentId)
+    .sort((a, b) => (a.order || 0) - (b.order || 0) || a.id.localeCompare(b.id));
+  const idx = tops.findIndex((a) => a.id === agent.id);
+  return String(idx + 1);
+}
+
+function slotNear(parent) {
+  const n = state.agents.filter((a) => a.parentId === parent.id).length;
+  const angle = -0.9 + n * 1.15;
+  return {
+    x: Math.round(Math.max(40, Math.min(1560, parent.x + Math.cos(angle) * 120))),
+    y: Math.round(Math.max(40, Math.min(1060, parent.y + Math.sin(angle) * 90))),
   };
 }
 
 const state = {
-  agents: SEED_AGENTS.map(seedAgent),
+  agents: prepareRoster(SEED_AGENTS),
   tasks: [],
   messages: [],
   files: new Map(),
@@ -292,6 +388,9 @@ function publicState() {
       district: a.district || '',
       kind: a.kind || 'generic',
       tier: a.tier || 'dept',
+      parentId: a.parentId || null,
+      order: a.order || 0,
+      number: agentNumber(a),
       vacant: !!a.vacant,
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
@@ -906,18 +1005,32 @@ app.post('/api/status', requireAgentToken, (req, res) => {
     return res.status(400).json({ error: 'status должен быть working, idle или waiting' });
   }
 
+  let parent = null;
+  if (typeof body.parentId === 'string' && body.parentId.trim()) {
+    parent = findAgent(body.parentId.trim());
+    if (!parent) return res.status(400).json({ error: 'Неизвестный родитель' });
+    if (parent.parentId) return res.status(400).json({ error: 'Помощник может подчиняться только направлению' });
+    if (parent.id === agentId) return res.status(400).json({ error: 'Агент не может быть родителем сам себе' });
+  }
+
   let agent = findAgent(agentId);
   if (!agent) {
-    const slot = nextSlot();
+    const slot = parent ? slotNear(parent) : nextSlot();
+    const siblings = parent ? state.agents.filter((a) => a.parentId === parent.id) : [];
+    const tops = state.agents.filter((a) => !a.parentId);
     agent = {
       id: agentId,
       name: typeof body.name === 'string' && body.name.trim() ? body.name.trim() : agentId,
       color: typeof body.color === 'string' && body.color.trim() ? body.color.trim() : '#64748b',
       accent: typeof body.accent === 'string' && body.accent.trim() ? body.accent.trim() : '#fff',
       role: typeof body.role === 'string' && body.role.trim() ? body.role.trim() : 'Агент',
-      district: typeof body.district === 'string' && body.district.trim() ? body.district.trim() : 'Окраина',
+      district: typeof body.district === 'string' && body.district.trim() ? body.district.trim() : (parent ? parent.district : 'Окраина'),
       kind: typeof body.kind === 'string' && body.kind.trim() ? body.kind.trim() : 'generic',
-      tier: 'dept',
+      tier: parent ? 'sub' : 'dept',
+      parentId: parent ? parent.id : null,
+      order: parent
+        ? siblings.reduce((m, a) => Math.max(m, a.order || 0), 0) + 1
+        : tops.reduce((m, a) => Math.max(m, a.order || 0), 0) + 1,
       x: slot.x,
       y: slot.y,
       links: [],
@@ -928,8 +1041,12 @@ app.post('/api/status', requireAgentToken, (req, res) => {
       responsibilities: cleanList(body.responsibilities),
     };
     state.agents.push(agent);
-    const main = findAgent('grok');
-    if (main && !main.links.includes(agent.id)) main.links.push(agent.id);
+    if (parent) {
+      if (!parent.links.includes(agent.id)) parent.links.push(agent.id);
+    } else {
+      const main = findAgent('grok');
+      if (main && !main.links.includes(agent.id)) main.links.push(agent.id);
+    }
   } else {
     if (typeof body.name === 'string' && body.name.trim()) agent.name = body.name.trim();
     if (typeof body.color === 'string' && body.color.trim()) agent.color = body.color.trim();
@@ -993,6 +1110,8 @@ app.post('/api/status', requireAgentToken, (req, res) => {
       done: agent.done.slice(),
       completed: agent.completed || 0,
       vacant: !!agent.vacant,
+      parentId: agent.parentId || null,
+      number: agentNumber(agent),
     },
   });
 });

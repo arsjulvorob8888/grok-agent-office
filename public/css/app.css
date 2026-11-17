@@ -95,6 +95,7 @@ body.night .car-body{fill:#ffe9a8;filter:drop-shadow(0 0 3px #ffcf5a)}
 
 /* ── Связи и пакеты ───────────────────────────── */
 .link{fill:none;stroke-width:2.4;stroke-dasharray:2 9;stroke-linecap:round;opacity:.35;transition:opacity .4s}
+.link.sub{stroke-width:2.2;stroke-dasharray:5 4;opacity:.8}
 .link.hot{opacity:.95;stroke-width:3;animation:flow 1.2s linear infinite}
 .link.sel{opacity:.9}
 @keyframes flow{to{stroke-dashoffset:-22}}
@@ -153,6 +154,10 @@ body.night .car-body{fill:#ffe9a8;filter:drop-shadow(0 0 3px #ffcf5a)}
 .tag.sel{background:rgba(30,22,10,.92);border-color:var(--gold)}
 .tag .lvl{font:800 10px/1 var(--display);min-width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--c);color:#fff;box-shadow:inset 0 0 0 2px rgba(255,255,255,.25)}
 .tag .nm{font-weight:800;font-size:12.5px;letter-spacing:.01em}
+.tag .ord{color:var(--gold);font-weight:800;margin-right:4px}
+.tag.sub{padding:3px 8px 3px 4px}
+.tag.sub .nm{font-size:11.5px}
+.tag.sub .lvl{min-width:18px;height:18px;font-size:9px}
 .tag .dot{width:8px;height:8px;border-radius:50%;background:#64748b;flex:none}
 .tag .dot.working{background:var(--ok);box-shadow:0 0 0 3px rgba(34,197,94,.25);animation:dot 1.2s infinite}
 .tag .dot.waiting{background:var(--warn);box-shadow:0 0 0 3px rgba(245,158,11,.25);animation:dot 1.2s infinite}
@@ -252,6 +257,11 @@ body.night #btnTheme .i-moon{display:block}
 .chip .lv{position:absolute;top:36px;left:8px;font:800 9px/1 var(--display);padding:3px 4px;border-radius:6px;background:#0d1017;color:var(--gold);border:1px solid rgba(245,196,81,.4)}
 .chip.main .av{background:radial-gradient(circle at 50% 30%,#e0283f,#7e0a1c);box-shadow:inset 0 0 0 2px rgba(245,196,81,.6)}
 .chip.vacant .av{background:repeating-linear-gradient(45deg,#2a2f3b 0 6px,#232733 6px 12px)}
+.chip.sub{width:64px;margin-top:8px}
+.chip.sub .av{width:36px;height:36px;border-radius:11px}
+.chip.sub .cn{font-size:9.5px;max-width:60px}
+.chip .ord,.p-title .ord{color:var(--gold);margin-right:3px}
+.parent-link{margin-top:4px;border:0;background:transparent;color:var(--gold);font:700 12px var(--font);cursor:pointer;padding:0;text-align:left}
 .roster-sep{width:1px;background:var(--line);margin:8px 2px;flex:none}
 
 /* ── Мини-карта ─────────────────────────────── */
@@ -406,6 +416,8 @@ body.night #btnTheme .i-moon{display:block}
   .bar{width:100%;min-width:30px}
   #roster{left:8px;right:8px;bottom:8px;max-width:none;transform:none;border-radius:18px;padding:6px;gap:2px}
   .chip{width:60px;padding:5px 2px}
+  .chip.sub{width:54px;margin-top:4px}
+  .chip.sub .av{width:32px;height:32px}
   .chip .av{width:38px;height:38px;border-radius:11px}
   .chip .lv{top:30px;left:5px}
   .chip .st{right:6px}
