@@ -195,6 +195,14 @@ body.hier-on .link.sub{opacity:1;stroke-dasharray:none;stroke-width:3.2}
 .order-badge.done{border-color:rgba(245,196,81,.75);color:#f5c451}
 .order-badge.failed{border-color:rgba(239,68,68,.7);color:#fca5a5}
 .order-badge.hide{opacity:0;pointer-events:none}
+.await-you{position:absolute;z-index:3;display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:40px;min-height:40px;padding:4px 8px;border:0;border-radius:12px;
+  background:linear-gradient(180deg,#ff7a45,#c8102e);color:#fff;font:800 10px/1.15 var(--display);letter-spacing:.01em;box-shadow:0 6px 16px rgba(200,16,46,.45);pointer-events:auto;cursor:pointer;text-align:center;touch-action:manipulation}
+.await-you.is-stale{background:linear-gradient(180deg,#f3e2a8,#b0893e);color:#2a2416;box-shadow:0 6px 16px rgba(176,137,62,.35)}
+.await-you .await-you-count{font:800 13px/1 var(--display)}
+.await-you[hidden],.await-you.is-off{display:none !important}
+#overlay .await-you{left:0;top:0}
+#overlay .await-you.hide{opacity:0;pointer-events:none}
+.chip .await-you{top:2px;left:2px;right:2px;width:auto;min-height:40px;z-index:2}
 .order-flight{pointer-events:none}
 .order-chain{grid-column:1 / -1;font-size:11.5px;font-weight:800;color:#f5c451;line-height:1.35}
 .order-chain .arr{color:#fff;font-weight:700;opacity:.7}
@@ -257,6 +265,15 @@ body.night #btnTheme .i-moon{display:block}
 .need-item.urg-high .need-urg{color:#fca5a5}
 .need-item.urg-normal .need-urg{color:var(--gold)}
 .need-item.urg-low .need-urg{color:#94a3b8}
+.need-item.urg-stale{border-left-color:#d6b15a;background:rgba(214,177,90,.08)}
+.need-item.urg-stale .need-urg,.need-item.is-stale .need-urg{color:#e7c98a}
+.need-item.urg-closed{border-left-color:#64748b}
+.need-item.is-closed{opacity:.55;filter:grayscale(.45)}
+.need-top{display:flex;justify-content:flex-end;margin:0 0 4px}
+.need-close{min-width:40px;min-height:40px;padding:8px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(200,16,46,.22);color:#fecaca;font:800 13px var(--font);cursor:pointer;touch-action:manipulation}
+.need-close:hover{background:rgba(200,16,46,.35)}
+.awaits-list{display:flex;flex-direction:column;gap:8px}
+.qdir{font-weight:800;color:var(--gold);font-size:14px;line-height:1}
 .needs-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px 12px;border-top:1px solid var(--line)}
 .needs-actions .btn{flex:1;justify-content:center;min-height:40px;text-align:center}
 
@@ -428,7 +445,7 @@ body.hier-on #journal{display:none}
 .vacant-note code{font-size:12px;color:var(--gold)}
 
 /* ── Вкладки окна агента и дашборд ───────────── */
-.agent-tabs{display:flex;flex-wrap:wrap;gap:6px;flex:0 0 auto;align-items:stretch;position:sticky;top:0;z-index:2;padding:2px 0 8px;margin:0;max-width:100%;background:linear-gradient(180deg,rgba(16,20,30,.97),rgba(16,20,30,.92))}
+.agent-tabs{display:flex;flex-wrap:wrap;gap:6px;flex:0 0 auto;align-items:stretch;padding:2px 0 8px;margin:0;max-width:100%}
 .agent-tab{flex:1 1 calc(50% - 6px);min-width:0;border:1px solid var(--line);background:rgba(255,255,255,.04);color:#d5dbe8;border-radius:999px;padding:8px 10px;font:700 12px/1.2 var(--font);cursor:pointer;white-space:nowrap;min-height:36px;text-align:center}
 .agent-tab[aria-selected="true"]{background:rgba(245,196,81,.16);border-color:rgba(245,196,81,.65);color:var(--gold)}
 .tab-count{display:inline-grid;place-items:center;min-width:16px;height:16px;margin-left:6px;padding:0 4px;border-radius:999px;background:var(--red);color:#fff;font:800 10px/16px var(--display)}

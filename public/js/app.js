@@ -18,6 +18,7 @@
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const M = window.MoscowMap;
+  const Feed = window.OfficeFeed;
 
   const svg = $('#map'), world = $('#world'), overlay = $('#overlay');
   const S = {
@@ -31,6 +32,7 @@
     seenNeeds: new Set(),
     needsReady: false,
     dashboards: new Map(),
+    panelScrollTo: '',
     archivedIds: new Set(),
   };
   let panelTab = 'dashboard';
@@ -195,7 +197,14 @@
       badge.dataset.id = a.id;
       badge.onclick = (e) => { e.stopPropagation(); select(a.id); };
       overlay.appendChild(badge);
-      S.els.set(a.id, { g, tag, bubble, badge, link, packets, w: 0 });
+      const awaitBadge = document.createElement('button');
+      awaitBadge.type = 'button';
+      awaitBadge.className = 'await-you is-off';
+      awaitBadge.hidden = true;
+      awaitBadge.dataset.id = a.id;
+      awaitBadge.onclick = (e) => { e.stopPropagation(); e.preventDefault(); select(a.id, { scrollTo: 'awaits' }); };
+      overlay.appendChild(awaitBadge);
+      S.els.set(a.id, { g, tag, bubble, badge, awaitBadge, link, packets, w: 0 });
     }
     buildRoster();
     buildMiniDots();
@@ -220,6 +229,7 @@
         e.packets.setAttribute('class', `packet${hot ? ' on' : ''}`);
       }
       paintOrderBadge(e, a);
+      paintAwaitBadge(e.awaitBadge, a.id);
     }
     updateRoster();
     doPlaceOverlay();
@@ -258,6 +268,31 @@
     const aria = t.orderStatus === 'in_progress' ? `${label} ${pct}%` : label;
     e.badge.setAttribute('aria-label', aria);
     e.badge.title = aria;
+  }
+  function paintAwaitBadge(el, agentId) {
+    if (!el) return;
+    const open = Feed.openNeedsForAgent(S.needs, agentId);
+    const count = open.length;
+    const allStale = count > 0 && open.every((n) => n.stale);
+    if (!count) {
+      el.hidden = true;
+      el.classList.add('is-off');
+      el.setAttribute('aria-hidden', 'true');
+      el.dataset.sig = '0';
+      return;
+    }
+    el.hidden = false;
+    el.classList.remove('is-off');
+    el.classList.toggle('is-stale', allStale);
+    el.setAttribute('aria-hidden', 'false');
+    const label = `ждёт вас: ${count}`;
+    el.setAttribute('aria-label', label);
+    el.title = label;
+    const sig = `${count}:${allStale ? 1 : 0}`;
+    if (el.dataset.sig !== sig) {
+      el.dataset.sig = sig;
+      el.innerHTML = `<span class="await-you-label">ждёт вас</span><b class="await-you-count">${count}</b>`;
+    }
   }
 
   // ── Камера ───────────────────────────────────────────────────────────────
@@ -514,6 +549,27 @@
       e.badge.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
       if (!hidden) placed.push(r);
     }
+    for (const a of order) {
+      const e = S.els.get(a.id);
+      const el = e && e.awaitBadge;
+      if (!el) continue;
+      if (el.hidden || k < 0.28) { el.classList.add('hide'); continue; }
+      let sx = a.x * k + tx + Math.max(18, 34 * k);
+      let sy = (a.y + figTop(a) + 28) * k + ty;
+      const bw = el.offsetWidth || 72;
+      const bh = el.offsetHeight || 40;
+      const hud = document.querySelector('.hud').getBoundingClientRect();
+      let top = sy - bh;
+      if (top < hud.bottom + 4) top = hud.bottom + 4;
+      sy = top + bh;
+      const r = { x: sx - bw / 2, y: top, w: bw, h: bh };
+      const off = r.x < -80 || r.x > innerWidth + 80 || r.y < -40 || r.y > innerHeight + 40;
+      const underHud = r.y < hud.bottom - 1 && r.y + bh > hud.top;
+      const hidden = off || underHud || (hit(r) && S.selected !== a.id);
+      el.classList.toggle('hide', hidden);
+      el.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
+      if (!hidden) placed.push(r);
+    }
   }
   function prio(a) {
     return (S.selected === a.id ? 100 : 0) + (tierOf(a) === 'main' ? 50 : 0) + (a.status === 'working' ? 20 : a.status === 'waiting' ? 15 : 0) + (tierOf(a) === 'dept' ? 10 : 0) - (a.vacant ? 5 : 0);
@@ -533,10 +589,21 @@
       if (lastGroup && group !== lastGroup) html += '<span class="roster-sep"></span>';
       lastGroup = group;
       html += `<button class="chip ${t}${a.vacant ? ' vacant' : ''}" data-id="${esc(a.id)}" style="--c:${esc(a.color)}" title="${esc(titled(a))}">
+        <span class="await-you is-off" data-id="${esc(a.id)}" hidden aria-hidden="true"></span>
         <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span></button>`;
     }
     r.innerHTML = html;
-    r.querySelectorAll('.chip').forEach((c) => (c.onclick = () => select(c.dataset.id)));
+    r.querySelectorAll('.chip').forEach((c) => (c.onclick = (e) => {
+      if (e.target.closest('.await-you')) return;
+      select(c.dataset.id);
+    }));
+    r.querySelectorAll('.await-you').forEach((el) => {
+      el.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        select(el.dataset.id, { scrollTo: 'awaits' });
+      };
+    });
   }
   // Вертикальное колесо над полосой листает её вбок, когда агенты не влезают.
   // Иначе на узкой ширине мышью до крайних чипов не добраться: скроллбар был скрыт.
@@ -560,6 +627,7 @@
       c.classList.toggle('sel', S.selected === a.id);
       c.querySelector('.st').className = `st ${a.status}`;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
+      paintAwaitBadge(c.querySelector('.await-you'), a.id);
     });
   }
   function buildMiniDots() {
@@ -765,8 +833,9 @@
   }
 
   // ── Выбор агента и панель ────────────────────────────────────────────────
-  function select(id) {
+  function select(id, opts) {
     const prev = S.selected;
+    const scrollTo = opts && opts.scrollTo;
     S.selected = id && S.byId.has(id) ? id : null;
     const panel = $('#panel');
     if (!S.selected) {
@@ -778,7 +847,12 @@
     }
     if (prev !== S.selected) blip(prev ? 820 : 700);
     if (innerWidth <= 900 && $('#hier').classList.contains('open')) setHierarchy(false);
-    renderPanel({ preserveScroll: prev === S.selected });
+    if (scrollTo === 'awaits') {
+      panelTabAgent = S.selected;
+      panelTab = 'needs';
+    }
+    S.panelScrollTo = scrollTo || '';
+    renderPanel({ preserveScroll: prev === S.selected && !scrollTo });
     S.panelSig = panelContentSig(S.selected);
     panel.classList.add('open');
     const openId = S.selected;
@@ -821,14 +895,17 @@
   const ico = (n) => `<svg viewBox="0 0 24 24">${ICONS[n]}</svg>`;
   const fmtTime = (iso) => { try { const d = new Date(iso); return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + (Date.now() - d > 864e5 ? ' · ' + d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : ''); } catch (_) { return ''; } };
 
-  function questHTML(t, showAgent) {
+  function questHTML(t, showAgent, viewerId) {
     const a = S.byId.get(t.agent) || { name: t.agent, color: '#64748b' };
     const [cls, label] = taskBadge(t);
     const title = t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение');
-    return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}" style="--c:${esc(a.color)}">
+    const dir = viewerId ? Feed.orderDirection(t, viewerId, S.tasks) : '';
+    const mark = dir === 'out' ? '→' : dir === 'in' ? '←' : dir === 'both' ? '↔' : '';
+    const dirLabel = dir === 'out' ? 'отдал' : dir === 'in' ? 'получил' : dir === 'both' ? 'себе' : '';
+    return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}"${dir ? ` data-dir="${dir}"` : ''} style="--c:${esc(a.color)}">
       <span class="qi">${ico(cls === 'done' ? 'check' : cls === 'fail' ? 'x' : 'send')}</span>
       <span class="qt">${esc(title)}</span>
-      <span class="qm"><span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
+      <span class="qm">${mark ? `<span class="qdir" aria-label="${dirLabel}">${mark}</span>` : ''}<span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
       ${chainHTML(t)}
       ${historyHTML(t)}
       ${attachmentsHTML(t.attachments)}
@@ -885,14 +962,15 @@
   }
 
   function chatHTML(agent) {
-    const msgs = S.messages.filter((m) => m.agentId === agent.id).slice().sort((a, b) =>
+    const msgs = Feed.messagesForAgent(S.messages, S.tasks, agent.id).slice().sort((a, b) =>
       String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
     if (!msgs.length) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
     return msgs.map((m) => {
       if (m.role === 'system') {
         return `<div class="msg-row system"><div class="msg-sys">${linkify(m.text)}</div></div>`;
       }
-      const who = m.role === 'owner' ? 'Вы' : titled(agent);
+      const speaker = S.byId.get(m.agentId) || agent;
+      const who = m.role === 'owner' ? 'Вы' : titled(speaker);
       return `<div class="msg-row ${m.role === 'owner' ? 'owner' : 'agent'}">
         <div class="msg-bubble">
           <div class="msg-meta"><b>${esc(who)}</b><span>${fmtTime(m.timestamp || m.createdAt)}</span></div>
@@ -907,14 +985,14 @@
     const a = S.byId.get(id);
     if (!a) return '';
     const L = levelInfo(a);
-    const tasks = tierOf(a) === 'main' ? S.tasks.slice(0, 8) : S.tasks.filter((t) => t.agent === a.id).slice(0, 12);
-    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
-    const msgKey = S.messages.filter((m) => m.agentId === a.id).map((m) => [m.id, m.role, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
+    const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
+    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
+    const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
+    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.checkedAt].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
     const cached = S.dashboards.get(a.id);
     const dashKey = `${a.dashboardUpdatedAt || ''}|${cached ? JSON.stringify(cached.data) : ''}`;
-    const needKey = (S.needs || []).filter((n) => n.fromAgentId === a.id).map((n) => [n.id, n.what, n.where, n.urgency].join('\u0001')).join('\u0002');
-    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, dashKey, needKey].join('\u0003');
+    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey, dashKey].join('\u0003');
   }
 
   function panelTabFor(agentId) {
@@ -949,23 +1027,14 @@
     try { await job; } finally { dashInflight.delete(key); }
   }
   function agentNeedsHTML(agent) {
-    const list = (S.needs || []).filter((n) => n && n.fromAgentId === agent.id && !n.closedAt);
-    if (!list.length) return '<div class="empty"><b>Пусто</b>Этот агент сейчас ничего не ждёт.</div>';
-    const urgLabel = { low: 'несрочно', normal: 'обычно', high: 'срочно' };
-    return `<div class="agent-needs">${list.map((n) => {
-      const urg = urgLabel[n.urgency] ? n.urgency : 'normal';
-      return `<article class="need-item urg-${urg}" data-id="${esc(n.id)}">
-        <div class="need-what">${esc(n.what)}</div>
-        <div class="need-meta"><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${urgLabel[urg]}</span></div>
-      </article>`;
-    }).join('')}</div>`;
+    return panelNeedsHTML(agent) || '<div class="empty"><b>Пусто</b>Этот агент сейчас ничего не ждёт.</div>';
   }
 
   function renderPanel(opts = {}) {
     const a = S.byId.get(S.selected);
     if (!a) return;
     const tier = tierOf(a), L = levelInfo(a);
-    const tasks = S.tasks.filter((t) => t.agent === a.id);
+    const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
     const parent = a.parentId ? S.byId.get(a.parentId) : null;
     const panel = $('#panel');
@@ -1003,11 +1072,9 @@
         <div class="msg" id="formMsg"></div>
       </form>`;
     }
-    const taskBlock = tier === 'main'
-      ? `<div class="sec" data-anchor="tasks"><h4>Последние задачи штаба</h4><div class="quest-list" style="padding:0">${S.tasks.slice(0, 8).map((t) => questHTML(t, true)).join('') || emptyQuests()}</div></div>`
-      : `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${tasks.slice(0, 12).map((t) => questHTML(t, false)).join('') || emptyQuests()}</div></div>`;
+    const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${tasks.map((t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id)).join('') || emptyQuests()}</div></div>`;
     const tab = panelTabFor(a.id);
-    const needCount = (S.needs || []).filter((n) => n && n.fromAgentId === a.id && !n.closedAt).length;
+    const needCount = Feed.openNeedsForAgent(S.needs, a.id).length;
     const tabBtn = (id, label) => {
       const count = id === 'needs' && needCount ? `<span class="tab-count">${needCount}</span>` : '';
       return `<button type="button" class="agent-tab" role="tab" data-tab="${id}" id="tab-${id}" aria-selected="${tab === id ? 'true' : 'false'}" aria-controls="panel-${id}">${label}${count}</button>`;
@@ -1031,7 +1098,7 @@
           ${tabBtn('dashboard', 'Дашборд')}${tabBtn('chat', 'Переписка')}${tabBtn('journal', 'Журнал')}${tabBtn('needs', 'Ждёт от вас')}
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-dashboard" data-tab-panel="dashboard" aria-labelledby="tab-dashboard"${hidden('dashboard')}>${dashHtml}</div>
-        <div class="tab-panel" role="tabpanel" id="panel-chat" data-tab-panel="chat" aria-labelledby="tab-chat"${hidden('chat')}>
+        <div class="tab-panel" role="tabpanel" id="panel-chat" data-tab-panel="chat" data-anchor="chat" aria-labelledby="tab-chat"${hidden('chat')}>
           <div class="chat-log" data-scroll-key="chat">${a.vacant ? '<div class="empty"><b>Переписки нет</b>Сначала дай направлению имя.</div>' : chatHTML(a)}</div>
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-journal" data-tab-panel="journal" aria-labelledby="tab-journal"${hidden('journal')}>
@@ -1095,11 +1162,32 @@
     panel.querySelectorAll('.thumb').forEach((btn) => {
       btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(btn.dataset.full, btn.dataset.name); };
     });
+    panel.querySelectorAll('.need-close').forEach((btn) => {
+      btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeNeed(btn.dataset.need); };
+    });
     if (snap) restorePanelScroll(panel, snap);
     else {
       const chat = panel.querySelector('[data-scroll-key="chat"]');
       if (chat) { chat.scrollTop = chat.scrollHeight; requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; }); }
     }
+    if (S.panelScrollTo) {
+      const anchor = S.panelScrollTo;
+      S.panelScrollTo = '';
+      scrollPanelAnchor(anchor);
+    }
+  }
+  function scrollPanelAnchor(anchorId) {
+    const body = document.querySelector('#panel .p-body');
+    const el = body && body.querySelector(`[data-anchor="${anchorId}"]`);
+    if (!body || !el) return;
+    const apply = () => {
+      const box = body.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const pad = parseFloat(getComputedStyle(body).paddingTop) || 0;
+      body.scrollTop += r.top - (box.top + pad);
+    };
+    apply();
+    requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
   }
   const emptyQuests = () => '<div class="empty"><b>Заданий пока нет</b>Дай первую задачу — и агент возьмётся за работу.</div>';
 
@@ -1315,7 +1403,7 @@
     $('#jCount').textContent = S.tasks.length;
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
-    list.innerHTML = S.tasks.slice(0, 60).map((t) => questHTML(t, true)).join('') || '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
+    list.innerHTML = Feed.ordersForGeneral(S.tasks).slice(0, 60).map((t) => questHTML(t, true)).join('') || '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
     list.scrollTop = top;
     list.querySelectorAll('[data-scroll-key]').forEach((el) => {
       if (typeof saved[el.dataset.scrollKey] === 'number') el.scrollTop = saved[el.dataset.scrollKey];
@@ -1476,8 +1564,45 @@
     if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     placeOverlay();
   }
+  function panelNeedsHTML(agent) {
+    const list = Feed.needsForAgent(S.needs, agent.id);
+    if (!list.length) return '';
+    return `<div class="sec awaits" data-anchor="awaits"><h4>Ждёт от вас</h4><div class="awaits-list">${list.map((n) => needCardHTML(n, true)).join('')}</div></div>`;
+  }
+  const NEED_LABEL = { low: 'несрочно', normal: 'обычно', high: 'срочно', stale: 'требует проверки', closed: 'закрыто' };
+  function needCardHTML(n, withClose) {
+    const view = Feed.needUrgencyView(n);
+    const close = withClose && !n.closedAt
+      ? `<div class="need-top"><button type="button" class="need-close" data-need="${esc(n.id)}">Закрыть</button></div>`
+      : '';
+    return `<article class="need-item urg-${view}${n.closedAt ? ' is-closed' : ''}${view === 'stale' ? ' is-stale' : ''}" data-id="${esc(n.id)}">
+      ${close}
+      <div class="need-what">${esc(n.what)}</div>
+      <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span></div>
+    </article>`;
+  }
+  async function closeNeed(id) {
+    if (!id) return;
+    if (!getPassword()) { pending = () => closeNeed(id); openModal(); return; }
+    const res = await fetch(`/api/needs/${encodeURIComponent(id)}/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+      body: '{}',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      localStorage.removeItem('appPassword');
+      pending = () => closeNeed(id);
+      openModal('Пароль не подошёл. Попробуй ещё раз.');
+      return;
+    }
+    if (!res.ok) { toast('Не закрылось', data.error || `Ошибка ${res.status}`, 'x', true); return; }
+    blip(720);
+    toast('Пункт закрыт', data.what || '', 'check');
+    await loadState();
+  }
   function renderNeeds() {
-    const list = S.needs || [];
+    const list = Feed.needsForGeneral(S.needs || []);
     const badge = $('#needsBadge');
     const pill = $('#needsCount');
     if (badge) {
@@ -1489,17 +1614,12 @@
     if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
     const box = $('#needsList');
     if (!box) return;
-    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency].join('\u0001')).join('\n');
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.stale, n.checkedAt].join('\u0001')).join('\n');
     if (box.dataset.sig === sig) return;
     const top = box.scrollTop;
-    const urgLabel = { low: 'несрочно', normal: 'обычно', high: 'срочно' };
-    box.innerHTML = list.length ? list.map((n) => {
-      const urg = urgLabel[n.urgency] ? n.urgency : 'normal';
-      return `<article class="need-item urg-${urg}" data-id="${esc(n.id)}">
-        <div class="need-what">${esc(n.what)}</div>
-        <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${urgLabel[urg]}</span></div>
-      </article>`;
-    }).join('') : '<div class="empty"><b>Пусто</b>Сейчас от вас ничего не ждут.</div>';
+    box.innerHTML = list.length
+      ? list.map((n) => needCardHTML(n, false)).join('')
+      : '<div class="empty"><b>Пусто</b>Сейчас от вас ничего не ждут.</div>';
     box.dataset.sig = sig;
     box.scrollTop = top;
   }
@@ -1509,19 +1629,19 @@
       new Notification('Нужно от вас', { body: `${item.what} · ${needFromLabel(item.fromAgentId)}`, tag: String(item.id) });
     } catch (_) { /* без уведомления */ }
   }
-  function needVisible(n) {
-    if (!n || !n.id || n.closedAt) return false;
-    return !(S.archivedIds && S.archivedIds.has(n.fromAgentId));
+  function authorVisible(id) {
+    return !(S.archivedIds && id && S.archivedIds.has(id));
   }
   function syncNeeds(raw) {
-    const list = (Array.isArray(raw) ? raw : []).filter(needVisible);
+    const list = (Array.isArray(raw) ? raw : []).filter((n) => n && n.id && authorVisible(n.fromAgentId));
     S.needs = list;
+    const open = Feed.needsForGeneral(list);
     const first = !S.needsReady;
-    const fresh = list.filter((n) => !S.seenNeeds.has(n.id));
+    const fresh = open.filter((n) => !n.stale && !S.seenNeeds.has(n.id));
     renderNeeds();
     if (fresh.length && !needsSnoozed()) setNeedsOpen(true);
     if (!first) fresh.forEach(notifyNeed);
-    for (const n of list) S.seenNeeds.add(n.id);
+    for (const n of open) S.seenNeeds.add(n.id);
     S.needsReady = true;
   }
   function initNeeds() {
