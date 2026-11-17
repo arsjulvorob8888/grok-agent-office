@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
+const store = require('./lib/store');
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -14,9 +15,9 @@ const GROK_WEBHOOK_KEY = process.env.GROK_WEBHOOK_KEY || '';
 const GROK_WEBHOOK_HEADER = process.env.GROK_WEBHOOK_HEADER || 'Authorization';
 const PUBLIC_URL = process.env.PUBLIC_URL || '';
 
-// Вложения лежат на диске процесса, метаданные — в памяти вместе с задачами.
-// На бесплатном Render диск эфемерный: файлы пропадают вместе с перезапуском,
-// засыпанием и новым деплоем, как и журнал задач. Платное хранилище не используется.
+// Приказы, переписка, «Нужно от вас» и байты вложений пишет lib/store.js в Postgres,
+// если DATABASE_URL задан и база доступна при старте. Иначе всё остаётся в памяти,
+// а файлы — в UPLOAD_DIR. Лимиты загрузки те же: 10 МБ и 5 файлов.
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_FILES = 5;
 const MAX_MESSAGES_PER_AGENT = 200;
@@ -431,6 +432,12 @@ function seedOwnerNeeds() {
 
 seedOwnerNeeds();
 
+store.init(state, {
+  uploadDir: UPLOAD_DIR,
+  maxMessagesPerAgent: MAX_MESSAGES_PER_AGENT,
+  maxTasks: 100,
+});
+
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
   const ba = Buffer.from(a);
@@ -547,6 +554,7 @@ function webhookHeaders() {
 function pushTask(task) {
   state.tasks.unshift(task);
   if (state.tasks.length > 100) state.tasks.length = 100;
+  store.noteTask(task);
 }
 
 function httpError(status, error) {
@@ -648,6 +656,7 @@ function pushOrderHistory(task, entry) {
     source: 'order',
     taskId: task.id,
   });
+  store.noteTask(task);
 }
 
 function orderSnapshot(task, status, progress, note, result) {
@@ -687,7 +696,11 @@ function applyOrderUpdate(task, input, opts = {}) {
     const last = task.history && task.history[task.history.length - 1];
     if (last && last.status === 'done') last.result = result;
     const msg = state.messages.find((m) => m.id === `order:${task.id}:${(task.history || []).length - 1}`);
-    if (msg && last) msg.text = orderEventText(task, last);
+    if (msg && last) {
+      msg.text = orderEventText(task, last);
+      store.noteMessage(msg);
+    }
+    store.noteTask(task);
     return { changed: false };
   }
   if (!opts.force && !(ORDER_NEXT[current] && ORDER_NEXT[current].has(status))) {
@@ -830,6 +843,7 @@ function storeIncomingFiles(files) {
       url: `/api/files/${id}`,
     };
     state.files.set(id, rec);
+    store.noteFile(rec);
     return publicAttachment(rec);
   });
 }
@@ -839,12 +853,15 @@ function releaseUnusedFiles() {
   for (const t of state.tasks) for (const a of t.attachments || []) if (a.id) used.add(a.id);
   for (const m of state.messages) for (const a of m.attachments || []) if (a.id) used.add(a.id);
   const now = Date.now();
+  const removed = [];
   for (const [id, rec] of state.files) {
     if (used.has(id)) continue;
     if (now - rec.createdAtMs < 30 * 60 * 1000) continue;
     try { fs.unlinkSync(path.join(UPLOAD_DIR, rec.storedName)); } catch (_) { /* нет файла */ }
     state.files.delete(id);
+    removed.push(id);
   }
+  store.noteFilesRemoved(removed);
 }
 
 function parseIdList(value) {
@@ -934,6 +951,7 @@ function trimMessages(agentId) {
   if (list.length <= MAX_MESSAGES_PER_AGENT) return;
   const drop = new Set(list.slice(0, list.length - MAX_MESSAGES_PER_AGENT).map((m) => m.id));
   state.messages = state.messages.filter((m) => !drop.has(m.id));
+  store.noteMessagesRemoved(drop);
 }
 
 function addMessage(input) {
@@ -943,6 +961,7 @@ function addMessage(input) {
       if (input.source === 'status' && input.text && existing.text !== input.text) {
         existing.text = input.text;
         existing.createdAt = input.createdAt || existing.createdAt;
+        store.noteMessage(existing);
       }
       return { message: publicMessage(existing), duplicate: true };
     }
@@ -963,6 +982,7 @@ function addMessage(input) {
   };
   state.messages.push(message);
   trimMessages(message.agentId);
+  store.noteMessage(message);
   return { message: publicMessage(message), duplicate: false };
 }
 
@@ -1090,6 +1110,9 @@ function requireUserOrAgent(req, res, next) {
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  store.ready.then(() => next(), next);
+});
 
 app.get('/healthz', (_req, res) => {
   res.status(200).type('text/plain').send('ok');
@@ -1103,7 +1126,7 @@ app.get('/api/needs', (_req, res) => {
   res.json({ needs: openNeeds().map(publicNeed) });
 });
 
-app.post('/api/needs', requireAgentToken, (req, res) => {
+app.post('/api/needs', requireAgentToken, async (req, res) => {
   try {
     const parsed = parseNeed(req.body);
     const item = {
@@ -1113,6 +1136,8 @@ app.post('/api/needs', requireAgentToken, (req, res) => {
       closedAt: null,
     };
     state.needs.unshift(item);
+    store.noteNeed(item);
+    await store.flush();
     res.status(201).json(publicNeed(item));
   } catch (err) {
     const status = err.status || 500;
@@ -1121,10 +1146,12 @@ app.post('/api/needs', requireAgentToken, (req, res) => {
   }
 });
 
-app.post('/api/needs/:id/close', requireAgentToken, (req, res) => {
+app.post('/api/needs/:id/close', requireAgentToken, async (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
   if (!item.closedAt) item.closedAt = new Date().toISOString();
+  store.noteNeed(item);
+  await store.flush();
   res.json(publicNeed(item));
 });
 
@@ -1242,13 +1269,16 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
     }
   }
 
+  store.noteTask(task);
+  await store.flush();
   res.status(201).json(publicTask(task));
 });
 
-app.post('/api/upload', requireUserOrAgent, uploadArray, (req, res) => {
+app.post('/api/upload', requireUserOrAgent, uploadArray, async (req, res) => {
   const files = req.files || [];
   if (!files.length) return res.status(400).json({ error: 'Нужен хотя бы один файл в поле files' });
   const attachments = storeIncomingFiles(files);
+  await store.flush();
   res.status(201).json({ attachments });
 });
 
@@ -1256,18 +1286,27 @@ app.get('/api/files/:id', (req, res) => {
   const id = String(req.params.id || '');
   const rec = /^[a-f0-9]{32}$/.test(id) ? state.files.get(id) : null;
   if (!rec) return res.status(404).json({ error: 'Файл не найден' });
-  const root = path.resolve(UPLOAD_DIR);
-  const resolved = path.resolve(root, rec.storedName);
-  if (path.dirname(resolved) !== root || !fs.existsSync(resolved)) {
-    return res.status(404).json({ error: 'Файл не найден' });
+  const bytes = Buffer.isBuffer(rec.bytes) ? rec.bytes : null;
+  let resolved = null;
+  if (!bytes) {
+    const root = path.resolve(UPLOAD_DIR);
+    resolved = path.resolve(root, rec.storedName);
+    if (path.dirname(resolved) !== root || !fs.existsSync(resolved)) {
+      return res.status(404).json({ error: 'Файл не найден' });
+    }
   }
   const inline = INLINE_MIME.has(rec.mime);
   const encoded = encodeURIComponent(rec.name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'private, max-age=86400');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="file"; filename*=UTF-8''${encoded}`);
+  if (bytes) {
+    res.setHeader('Content-Type', inline ? rec.mime : 'application/octet-stream');
+    res.setHeader('Content-Length', String(bytes.length));
+    return res.end(bytes);
+  }
   res.type(inline ? rec.mime : 'application/octet-stream');
-  res.sendFile(resolved);
+  return res.sendFile(resolved);
 });
 
 app.get('/api/messages', requireAgentToken, (req, res) => {
@@ -1288,15 +1327,20 @@ app.get('/api/messages', requireAgentToken, (req, res) => {
 });
 
 function forgetUploads(files) {
+  const removed = [];
   for (const file of files || []) {
-    if (file && file.filename) state.files.delete(file.filename);
+    if (file && file.filename) {
+      state.files.delete(file.filename);
+      removed.push(file.filename);
+    }
     if (file && file.path) {
       try { fs.unlinkSync(file.path); } catch (_) { /* уже удалён */ }
     }
   }
+  store.noteFilesRemoved(removed);
 }
 
-app.post('/api/messages', requireAgentToken, maybeUpload, (req, res) => {
+app.post('/api/messages', requireAgentToken, maybeUpload, async (req, res) => {
   try {
     if (Array.isArray(req.body?.messages)) {
       if (req.files && req.files.length) {
@@ -1308,6 +1352,7 @@ app.post('/api/messages', requireAgentToken, maybeUpload, (req, res) => {
       const results = prepared.map((item) => (item.duplicate ? item : addMessage(item.input)));
       const created = results.some((r) => !r.duplicate);
       releaseUnusedFiles();
+      await store.flush();
       return res.status(created ? 201 : 200).json({ ok: true, results });
     }
     const body = req.body || {};
@@ -1323,16 +1368,18 @@ app.post('/api/messages', requireAgentToken, maybeUpload, (req, res) => {
     const prepared = prepareRelayMessage(body, uploaded);
     const result = prepared.duplicate ? prepared : addMessage(prepared.input);
     releaseUnusedFiles();
+    await store.flush();
     return res.status(result.duplicate ? 200 : 201).json({ ok: true, duplicate: result.duplicate, message: result.message });
   } catch (err) {
     forgetUploads(req.files);
+    await store.flush();
     const status = err.status || 500;
     if (!err.status) console.error(err);
     return res.status(status).json({ error: err.expose || 'Не удалось сохранить сообщение' });
   }
 });
 
-app.post('/api/status', requireAgentToken, (req, res) => {
+app.post('/api/status', requireAgentToken, async (req, res) => {
   const body = req.body || {};
   const agentId = typeof body.agent === 'string' ? body.agent.trim() : '';
   if (!agentId) {
@@ -1440,6 +1487,7 @@ app.post('/api/status', requireAgentToken, (req, res) => {
     agent.completed = (agent.completed || 0) + 1;
   }
 
+  await store.flush();
   res.json({
     ok: true,
     agent: {
@@ -1456,12 +1504,13 @@ app.post('/api/status', requireAgentToken, (req, res) => {
   });
 });
 
-app.post('/api/orders/:id', requireAgentToken, (req, res) => {
+app.post('/api/orders/:id', requireAgentToken, async (req, res) => {
   const task = state.tasks.find((t) => t.id === req.params.id);
   if (!task) return res.status(404).json({ error: 'Приказ не найден' });
   try {
     const input = parseOrderUpdate(req.body);
     const result = applyOrderUpdate(task, input);
+    await store.flush();
     return res.json({ ok: true, unchanged: !result.changed, task: publicTask(task) });
   } catch (err) {
     const status = err.status || 500;
@@ -1477,9 +1526,14 @@ app.get('/', (_req, res) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Агенты Москвы (GROK) слушают 0.0.0.0:${PORT}`);
+  store.ready.then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      store.unrefIdle();
+      console.log(`Агенты Москвы (GROK) слушают 0.0.0.0:${PORT}`);
+    });
   });
+} else {
+  store.ready.then(() => store.unrefIdle());
 }
 
 module.exports = { app, state };
