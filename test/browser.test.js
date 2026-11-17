@@ -1906,6 +1906,78 @@ test('фокус уходит из попапа и помещения до aria-
   }
 });
 
+test('фокус после панели и помещения возвращается к тому, кто открыл', { timeout: 90000 }, async () => {
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage();
+    const notes = ariaWarnings(page);
+    await page.setViewport({
+      width: viewport.width,
+      height: viewport.height,
+      isMobile: viewport.width <= 700,
+      hasTouch: viewport.width <= 700,
+      deviceScaleFactor: 1,
+    });
+    await page.evaluateOnNewDocument(() => {
+      localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+      localStorage.setItem('journal', 'collapsed');
+      localStorage.removeItem('agentBar');
+    });
+    try {
+      await page.goto(`${base}/?theme=day`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+      await page.$eval('#roster .chip[data-id="finance"]', (el) => el.scrollIntoView({ inline: 'center', block: 'nearest' }));
+      await page.click('#roster .chip[data-id="finance"]');
+      await page.waitForSelector('#panel.open[data-agent="finance"] #pClose', { timeout: 8000 });
+      await page.click('#pClose');
+      await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'));
+      const panelBack = await page.evaluate(() => {
+        const panel = document.querySelector('#panel');
+        const active = document.activeElement;
+        return {
+          inert: panel.inert,
+          hidden: panel.getAttribute('aria-hidden'),
+          open: panel.classList.contains('open'),
+          focusId: active && active.dataset ? active.dataset.id : '',
+          focusTag: active && active.tagName,
+          inPanel: !!(active && panel.contains(active)),
+          body: active === document.body,
+        };
+      });
+      assert.equal(panelBack.inert, true, `${viewport.width} закрытая панель без inert`);
+      assert.equal(panelBack.hidden, 'true');
+      assert.equal(panelBack.open, false);
+      assert.equal(panelBack.inPanel, false);
+      assert.equal(panelBack.body, false);
+      assert.equal(panelBack.focusTag, 'BUTTON');
+      assert.equal(panelBack.focusId, 'finance', JSON.stringify(panelBack));
+      assert.equal(await focusHidden(page), '', `${viewport.width} фокус внутри скрытого блока после панели`);
+      assert.deepEqual(notes, [], `${viewport.width} panel: ${notes.join(' | ')}`);
+
+      await page.evaluate(() => document.querySelector('#overlay .tag[data-id="finance"]').click());
+      await page.waitForSelector('#room.open', { timeout: 4000 });
+      await page.click('#roomX');
+      await page.waitForFunction(() => !document.querySelector('#room').classList.contains('open'));
+      const roomBack = await page.evaluate(() => {
+        const active = document.activeElement;
+        return {
+          id: active && active.dataset ? active.dataset.id : '',
+          cls: active && active.className ? String(active.className) : '',
+          body: active === document.body,
+          inRoom: !!(active && document.querySelector('#room')?.contains(active)),
+        };
+      });
+      assert.equal(roomBack.body, false, `${viewport.width} фокус ушёл в body`);
+      assert.equal(roomBack.inRoom, false);
+      assert.equal(roomBack.id, 'finance', JSON.stringify(roomBack));
+      assert.match(roomBack.cls, /tag/);
+      assert.equal(await focusHidden(page), '');
+      assert.deepEqual(notes, [], `${viewport.width} room: ${notes.join(' | ')}`);
+    } finally {
+      await page.close();
+    }
+  }
+});
+
 test('нижняя панель агентов сворачивается и помнит состояние', { timeout: 90000 }, async () => {
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     const page = await browser.newPage();

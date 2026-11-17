@@ -31,6 +31,43 @@
       document.activeElement.blur();
     }
   }
+  function focusEl(el) {
+    try { el.focus({ preventScroll: true }); } catch (_) { el.focus(); }
+  }
+  // Кнопка, ссылка или элемент с tabindex. Обычный div получает tabindex=-1,
+  // чтобы на него можно было вернуть фокус, не добавляя его в Tab.
+  function asFocusTarget(el, opts) {
+    if (!el || el.nodeType !== 1 || !el.isConnected) return null;
+    if (el === document.body || el === document.documentElement || el.disabled) return null;
+    let node = el;
+    while (node && node !== document.body) {
+      if (node.hidden || node.inert || node.getAttribute('aria-hidden') === 'true') return null;
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden') return null;
+      node = node.parentElement;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    const off = rect.bottom <= 1 || rect.right <= 1 || rect.top >= innerHeight - 1 || rect.left >= innerWidth - 1;
+    if (off && !(opts && opts.allowOffscreen)) return null;
+    const tab = el.getAttribute('tabindex');
+    const natural = /^(BUTTON|A|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(el.tagName);
+    if (tab === null && !natural) el.setAttribute('tabindex', '-1');
+    if (typeof el.focus !== 'function') return null;
+    return el;
+  }
+  function focusFallback(agentId) {
+    const chip = agentId ? document.querySelector(`#roster .chip[data-id="${agentId}"]`) : null;
+    return asFocusTarget(chip) || asFocusTarget($('#agentBarToggle')) || asFocusTarget($('#btnHome')) || asFocusTarget($('#btnHier'));
+  }
+  function restoreFocus(root, preferred, fallback, opts) {
+    const loose = opts && opts.allowOffscreen;
+    const target = asFocusTarget(preferred, { allowOffscreen: loose }) || asFocusTarget(fallback);
+    if (root && focusInside(root)) releaseFocus(root, target);
+    const active = document.activeElement;
+    const lost = !active || active === document.body || active === document.documentElement || (root && root.contains(active));
+    if (lost && target && document.activeElement !== target) focusEl(target);
+  }
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const M = window.MoscowMap;
   const Feed = window.OfficeFeed;
@@ -235,7 +272,7 @@
       tag.onclick = (e) => {
         e.stopPropagation();
         if (eatClick) { eatClick = false; return; }
-        openRoom(a.id);
+        openRoom(a.id, tag);
       };
       tag.addEventListener('pointerdown', (e) => armHold(e, a.id));
       tag.addEventListener('pointerenter', () => setPeek(a.id));
@@ -244,12 +281,12 @@
       overlay.appendChild(tag);
       const bubble = document.createElement('div');
       bubble.className = 'bubble hide';
-      bubble.onclick = (e) => { e.stopPropagation(); select(a.id); };
+      bubble.onclick = (e) => { e.stopPropagation(); select(a.id, { opener: bubble }); };
       overlay.appendChild(bubble);
       const badge = document.createElement('div');
       badge.className = 'order-badge hide';
       badge.dataset.id = a.id;
-      badge.onclick = (e) => { e.stopPropagation(); select(a.id); };
+      badge.onclick = (e) => { e.stopPropagation(); select(a.id, { opener: badge }); };
       overlay.appendChild(badge);
       const awaitBadge = document.createElement('button');
       awaitBadge.type = 'button';
@@ -524,12 +561,12 @@
   function clickAt(target) {
     if (window.Delegation && Delegation.click(target)) return;
     const ag = target.closest && target.closest('.agent');
-    if (ag) { openRoom(ag.dataset.id); return; }
+    if (ag) { openRoom(ag.dataset.id, ag); return; }
     const lm = target.closest && target.closest('.landmark');
     if (lm) {
       blip(740);
       const x = +lm.dataset.x, y = +lm.dataset.y;
-      if (lm.dataset.lm === 'kremlin') { openRoom(CONFIG.mainId); return; }
+      if (lm.dataset.lm === 'kremlin') { openRoom(CONFIG.mainId, lm); return; }
       flyTo(x, y, Math.max(S.cam.k, 1.5));
       toast(lm.dataset.name, landmarkNote(lm.dataset.lm), 'pin');
       return;
@@ -1057,18 +1094,40 @@
   }
 
   // ── Выбор агента и панель ────────────────────────────────────────────────
+  function concealPanel(preferred, agentId) {
+    const panel = $('#panel');
+    if (!panel) return;
+    restoreFocus(panel, preferred, focusFallback(agentId));
+    if (focusInside(panel)) releaseFocus(panel, $('#agentBarToggle'));
+    panel.classList.remove('open');
+    panel.inert = true;
+    panel.setAttribute('aria-hidden', 'true');
+  }
   function select(id, opts) {
     const prev = S.selected;
     const scrollTo = opts && opts.scrollTo;
-    S.selected = id && S.byId.has(id) ? id : null;
     const panel = $('#panel');
-    if (!S.selected) {
-      panel.classList.remove('open');
+    const requested = id && S.byId.has(id) ? id : null;
+    if (!requested) {
+      concealPanel(S.panelOpener, prev);
+      S.panelOpener = null;
+      S.selected = null;
       updateAgents();
       if ($('#hier').classList.contains('open')) renderHierarchy(true);
       if (prev) setTimeout(() => { if (!S.selected) goHome(); }, 50);
       return;
     }
+    const from = (opts && opts.opener && opts.opener.nodeType === 1) ? opts.opener : document.activeElement;
+    const room = $('#room');
+    const insideRoom = !!(room && from && room.contains(from));
+    if (from && from !== document.body && from !== document.documentElement && panel && !panel.contains(from) && !insideRoom) {
+      S.panelOpener = from;
+    } else if (insideRoom && S.roomOpener) {
+      S.panelOpener = S.roomOpener;
+    }
+    S.selected = requested;
+    panel.inert = false;
+    panel.setAttribute('aria-hidden', 'false');
     if (prev !== S.selected) blip(prev ? 820 : 700);
     if (innerWidth <= 900 && $('#hier').classList.contains('open')) setHierarchy(false);
     S.panelScrollTo = scrollTo || '';
@@ -1087,13 +1146,13 @@
     const room = $('#room');
     return !!(room && room.classList.contains('open'));
   }
-  function openRoom(id) {
+  function openRoom(id, from) {
     const head = S.byId.get(id);
     if (!head || roomHostId(head)) return;
     S.roomId = id;
     S.roomSig = '';
-    const opener = document.activeElement;
-    S.roomOpener = opener && opener !== document.body && !($('#room') && $('#room').contains(opener)) ? opener : null;
+    const opener = (from && from.nodeType === 1) ? from : document.activeElement;
+    S.roomOpener = opener && opener !== document.body && opener !== document.documentElement && !($('#room') && $('#room').contains(opener)) ? opener : null;
     const room = $('#room');
     room.hidden = false;
     room.classList.add('open');
@@ -1105,8 +1164,10 @@
   function closeRoom(opts) {
     const room = $('#room');
     if (!room) return;
-    const next = (opts && opts.focus) || S.roomOpener;
-    releaseFocus(room, next);
+    const explicit = opts && opts.focus;
+    const preferred = explicit || S.roomOpener;
+    const agentId = S.roomId;
+    restoreFocus(room, preferred, focusFallback(agentId), { allowOffscreen: !!explicit });
     S.roomId = null;
     S.roomSig = '';
     S.roomOpener = null;
@@ -1826,7 +1887,7 @@
     if (open && window.Processes) Processes.setOpen(false);
     const h = $('#hier');
     const b = $('#btnHier');
-    if (open && innerWidth <= 900) $('#panel').classList.remove('open');
+    if (open && innerWidth <= 900 && $('#panel').classList.contains('open')) concealPanel(S.panelOpener, S.selected);
     if (!open) releaseFocus(h, b);
     h.classList.toggle('open', open);
     document.body.classList.toggle('hier-on', open);
