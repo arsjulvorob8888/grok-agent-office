@@ -740,6 +740,9 @@ function publicNeed(item, now = Date.now(), opts = {}) {
     answerable: item.answerable === true,
     answerStatus: item.answerStatus === 'answered' ? 'answered' : null,
   };
+  if (item.answer != null && item.answer !== '') view.answer = item.answer;
+  if (item.answeredAt) view.answeredAt = item.answeredAt;
+  if (item.updatedAt) view.updatedAt = item.updatedAt;
   if (opts.includePrivate) {
     view.details = typeof item.details === 'string' ? item.details : '';
     view.answers = (Array.isArray(item.answers) ? item.answers : []).map((answer) => ({

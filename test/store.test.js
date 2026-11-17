@@ -383,8 +383,13 @@ describe('хранилище', { concurrency: 1 }, () => {
       await pool.query(`UPDATE ${schema}.needs SET what = $1 WHERE id = $2`, ['Отредактировано вручную', 'need-finance']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-social']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-academy']);
-      const renderRows = await pool.query(`SELECT id FROM ${schema}.needs WHERE id = 'need-render-api'`);
-      assert.equal(renderRows.rowCount, 0);
+      await pool.query(
+        `UPDATE ${schema}.needs SET extra = COALESCE(extra, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+        ['need-finance', JSON.stringify({ answer: 'краткий ответ', answeredAt: '2026-11-17T12:30:00.000Z', updatedAt: '2026-11-17T12:31:00.000Z' })],
+      );
+      await pool.query(
+        `UPDATE ${schema}.agent_state SET payload = COALESCE(payload, '{}'::jsonb) || '{"analysis":"смотрит риски"}'::jsonb WHERE id = 'advisor'`,
+      );
       await pool.query(
         `UPDATE ${schema}.orders SET extra = $2::jsonb WHERE id = $1`,
         [made.parent.id, JSON.stringify({ deadline: '2031-11-17', priority: 'Срочно' })],
@@ -456,10 +461,15 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(ids.includes('need-social'), false);
       assert.equal(ids.includes('need-academy'), false);
       assert.equal(ids.includes('need-render-api'), false);
+      assert.equal(state.body.needs.some((item) => item.id === 'need-academy' || item.id === 'need-render-api'), false);
+      assert.equal(state.body.agents.find((agent) => agent.id === 'advisor').analysis, 'смотрит риски');
       assert.ok(ids.includes('need-finance'));
       const finance = needs.body.needs.find((item) => item.id === 'need-finance');
       assert.equal(finance.what, 'Отредактировано вручную');
       assert.equal(finance.createdAt, financeCreatedAt);
+      assert.equal(finance.answer, 'краткий ответ');
+      assert.equal(finance.answeredAt, '2026-11-17T12:30:00.000Z');
+      assert.equal(finance.updatedAt, '2026-11-17T12:31:00.000Z');
       const savedNeed = await json(second.base, `/api/needs/${made.need.id}`, {
         headers: { 'x-app-password': 'pw-test' },
       });
