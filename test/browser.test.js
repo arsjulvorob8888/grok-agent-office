@@ -1927,9 +1927,19 @@ test('фокус после панели и помещения возвраща�
       await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
       await page.$eval('#roster .chip[data-id="finance"]', (el) => el.scrollIntoView({ inline: 'center', block: 'nearest' }));
       await page.click('#roster .chip[data-id="finance"]');
-      await page.waitForSelector('#panel.open[data-agent="finance"] #pClose', { timeout: 8000 });
+      await page.waitForFunction(() => {
+        const btn = document.querySelector('#panel.open[data-agent="finance"] #pClose');
+        const panel = document.querySelector('#panel');
+        if (!btn || !panel || panel.inert || panel.getAttribute('aria-hidden') === 'true') return false;
+        const r = btn.getBoundingClientRect();
+        const x = r.left + r.width / 2;
+        const y = r.top + r.height / 2;
+        if (x < 1 || y < 1 || x > innerWidth - 1 || y > innerHeight - 1) return false;
+        const hit = document.elementFromPoint(x, y);
+        return !!(hit && (hit === btn || btn.contains(hit)));
+      }, { timeout: 4000 });
       await page.click('#pClose');
-      await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'));
+      await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'), { timeout: 4000 });
       const panelBack = await page.evaluate(() => {
         const panel = document.querySelector('#panel');
         const active = document.activeElement;

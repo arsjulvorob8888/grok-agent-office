@@ -1097,11 +1097,14 @@
   function concealPanel(preferred, agentId) {
     const panel = $('#panel');
     if (!panel) return;
-    restoreFocus(panel, preferred, focusFallback(agentId));
-    if (focusInside(panel)) releaseFocus(panel, $('#agentBarToggle'));
-    panel.classList.remove('open');
-    panel.inert = true;
-    panel.setAttribute('aria-hidden', 'true');
+    try {
+      restoreFocus(panel, preferred, focusFallback(agentId));
+      if (focusInside(panel)) releaseFocus(panel, $('#agentBarToggle'));
+    } finally {
+      panel.classList.remove('open');
+      panel.inert = true;
+      panel.setAttribute('aria-hidden', 'true');
+    }
   }
   function select(id, opts) {
     const prev = S.selected;
@@ -1127,6 +1130,7 @@
     }
     S.selected = requested;
     panel.inert = false;
+    panel.removeAttribute('inert');
     panel.setAttribute('aria-hidden', 'false');
     if (prev !== S.selected) blip(prev ? 820 : 700);
     if (innerWidth <= 900 && $('#hier').classList.contains('open')) setHierarchy(false);
