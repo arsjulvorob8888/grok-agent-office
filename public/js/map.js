@@ -351,7 +351,7 @@
 
   // ── Здания направлений ─────────────────────────────────────────────────
   // Высота «шапки» здания над точкой агента (для расстановки облачков).
-  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, qa: 108, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, social: 100, routines: 110, generic: 110 };
+  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, qa: 108, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, advisor: 110, social: 100, routines: 110, generic: 110 };
 
   function building(kind, color) {
     const R = rng(color.length * 97 + kind.length * 13);
@@ -442,6 +442,15 @@
         let s = box(-40, -34, 80, 30, 66, '#0e7c74', { top: '#16a39a', front: '#0b5f59' });
         for (let x = -36; x < 40; x += 10) s += `<path d="M${x},-96v92" stroke="#7de3d9" stroke-opacity=".4"/>`;
         for (let y = -90; y < 0; y += 10) s += `<path d="M-40,${y}h80" stroke="#7de3d9" stroke-opacity=".4"/>`;
+        return s;
+      }
+      case 'advisor': {
+        let s = box(-48, -22, 96, 20, 48, '#f3e6d4', { top: '#faf3e8', front: '#e4d2b8', windows: true, rand: R });
+        s += `<path d="M-56,-70 L0,-104 L56,-70 Z" fill="#7c2d3a"/>`;
+        s += `<path d="M-56,-70 L0,-104 L0,-70 Z" fill="#5c1f2c"/>`;
+        s += `<path d="M0,-88 l3.4,7 7.6,.9 -5.6,5.1 1.5,7.6 L0,-72.6 -7,-65.4 l1.5-7.6 -5.6-5.1 7.6-.9z" fill="#f5c451"/>`;
+        s += `<rect x="-12" y="-22" width="24" height="18" fill="#5c3317"/><rect x="-5" y="-16" width="10" height="12" fill="#3f2412"/>`;
+        s += `<rect x="-48" y="-2" width="96" height="3" fill="${c}"/>`;
         return s;
       }
       case 'social': {

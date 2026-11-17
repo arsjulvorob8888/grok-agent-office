@@ -21,7 +21,7 @@ const {
 const GOALS_FILE = path.join(__dirname, '..', 'config', 'finance-goals.json');
 
 const AGENTS = [
-  { id: 'grok', name: 'Главный агент · GROK', order: 1 },
+  { id: 'grok', name: 'Путин', order: 1 },
   { id: 'army', name: 'Военная служба', order: 2 },
   { id: 'poker', name: 'Покер', order: 3 },
   { id: 'trading', name: 'Трейдинг', order: 4, archived: true },
@@ -560,7 +560,7 @@ test('после listen Кремль сам шлёт открытые пункт
     assert.equal(academy.deadline, null);
     assert.equal(academy.actionUrl, 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2');
     assert.equal(academy.actionHint, null);
-    assert.match(academy.description, /От: 1\. Главный агент/);
+    assert.match(academy.description, /От: 1\. Путин/);
     assert.match(academy.description, /Где: Чаты агентов в Grok/);
     assert.match(academy.description, /Решить: https:\/\/cursor\.com\/canvas\/store-497a06f4-8b81-4283-89e8-143a1091624a\/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2/);
     const finance = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-finance');

@@ -18,7 +18,7 @@
     if (!id || id === 'owner') return 'Владелец';
     const a = map.get(id);
     if (!a) return id;
-    const name = a.id === 'grok' ? 'Главный агент' : (a.name || a.id);
+    const name = a.id === 'grok' ? 'Путин' : (a.name || a.id);
     if (!a.number) return name;
     const num = String(a.number).includes('.') ? String(a.number) : `${a.number}.`;
     return `${num} ${name}`;

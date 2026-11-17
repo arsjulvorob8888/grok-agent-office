@@ -98,7 +98,7 @@
 
   // ── Агенты на карте ──────────────────────────────────────────────────────
   const tierOf = (a) => (a.id === CONFIG.mainId ? 'main' : (a.parentId || a.tier === 'sub') ? 'sub' : a.tier === 'extra' ? 'extra' : 'dept');
-  const plainName = (a) => (a && a.id === CONFIG.mainId ? 'Главный агент' : (a && a.name) || '');
+  const plainName = (a) => (a && a.id === CONFIG.mainId ? 'Путин' : (a && a.name) || '');
   const numLabel = (a) => {
     if (!a || !a.number) return '';
     return String(a.number).includes('.') ? String(a.number) : `${a.number}.`;
@@ -1040,7 +1040,7 @@
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
         <div class="p-portrait">${portrait(a, '-34 -104 68 76')}</div>
-        <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · главный агент' : (a.district || '') + (tier === 'extra' ? ' · союзник' : ''))}</div>
+        <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · Путин' : (a.district || '') + (tier === 'extra' ? ' · союзник' : ''))}</div>
           <h2>${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</h2><div class="role">${esc(a.role || '')}</div>${parent ? `<button type="button" class="parent-link" data-parent="${esc(parent.id)}">Помощник · ${esc(titled(parent))}</button>` : ''}</div>
       </div>
       <div class="p-body">
@@ -1681,7 +1681,7 @@
       if (S.loaded && t.status === 'выполнена' && prevStatus.get(t.id) && prevStatus.get(t.id) !== 'выполнена') {
         const a = S.byId.get(t.agent);
         if (a) {
-          toast(`${tierOf(a) === 'main' ? 'GROK' : a.name}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${t.result ? t.result.slice(0, 90) : t.text.slice(0, 90)}`, 'check');
+          toast(`${plainName(a)}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${t.result ? t.result.slice(0, 90) : t.text.slice(0, 90)}`, 'check');
           xpPop(a, CONFIG.xpPerTask); chime();
         }
       }
