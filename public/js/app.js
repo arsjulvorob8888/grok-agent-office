@@ -20,11 +20,14 @@
 
   const svg = $('#map'), world = $('#world'), overlay = $('#overlay');
   const S = {
-    agents: [], tasks: [], byId: new Map(), selected: null, loaded: false, sig: '',
-    taskStatus: new Map(), cam: { k: 1, tx: 0, ty: 0 }, userMoved: false,
+    agents: [], tasks: [], messages: [], byId: new Map(), selected: null, loaded: false, sig: '',
+    panelSig: '', taskStatus: new Map(), cam: { k: 1, tx: 0, ty: 0 }, userMoved: false,
     els: new Map(), // id -> {g, tag, bubble, link, packets}
     sound: localStorage.getItem('soundOn') === '1',
   };
+  const drafts = new Map();
+  const MAX_FILES = 5;
+  const MAX_FILE_BYTES = 10 * 1024 * 1024;
   const params = new URLSearchParams(location.search);
 
   // ── Тема ─────────────────────────────────────────────────────────────────
@@ -304,6 +307,10 @@
       zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0016)));
     }, { passive: false });
     addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const lb = $('#lightbox');
+        if (lb && lb.classList.contains('show')) { lb.classList.remove('show'); return; }
+      }
       if (e.target.closest('input,textarea,select')) return;
       if (e.key === 'Escape') { if ($('#modal').classList.contains('show')) closeModal(); else select(null); }
       if (e.key === '+' || e.key === '=') zoomAt(innerWidth / 2, innerHeight / 2, 1.2);
@@ -441,6 +448,182 @@
     });
   }
 
+  // ── Вложения, переписка, сохранение прокрутки ───────────────────────────
+  // Опрос /api/state каждые 4 с перерисовывал панель через innerHTML и сбрасывал
+  // scrollTop и у .p-body, и у внутренних .qr. Пока данные те же — панель не трогаем.
+  // Когда данные меняются, возвращаем якорь и scrollTop каждого вложенного блока.
+  function linkify(text) {
+    const s = String(text ?? '');
+    const re = /(https?:\/\/[^\s<]+)/g;
+    let out = '', last = 0, m;
+    while ((m = re.exec(s))) {
+      out += esc(s.slice(last, m.index));
+      let u = m[1], trail = '';
+      while (/[),.;!?]$/.test(u)) { trail = u.slice(-1) + trail; u = u.slice(0, -1); }
+      out += `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>${esc(trail)}`;
+      last = m.index + m[1].length;
+    }
+    return out + esc(s.slice(last));
+  }
+  function safeUrl(u) {
+    const s = String(u || '').trim();
+    if (/^\/api\/files\/[a-f0-9]{32}$/.test(s)) return s;
+    try {
+      const url = new URL(s, location.origin);
+      if (url.origin === location.origin && /^\/api\/files\/[a-f0-9]{32}$/.test(url.pathname)) return url.pathname + url.search;
+      if (url.protocol === 'http:' || url.protocol === 'https:') return url.href;
+    } catch (_) { /* не ссылка */ }
+    return '';
+  }
+  function isImageAtt(a) {
+    const mime = String(a.mime || '').toLowerCase();
+    if (/^image\/(png|jpeg|gif|webp|bmp|avif)$/.test(mime)) return true;
+    return /\.(png|jpe?g|gif|webp|bmp|avif)(\?|#|$)/i.test(`${a.name || ''} ${a.url || ''}`);
+  }
+  function attachmentsHTML(list) {
+    const items = (list || []).map((a) => ({ ...a, href: safeUrl(a.url) })).filter((a) => a.href);
+    if (!items.length) return '';
+    const thumbs = items.filter(isImageAtt).map((a) =>
+      `<button type="button" class="thumb" data-full="${esc(a.href)}" data-name="${esc(a.name || '')}"><img src="${esc(a.href)}" alt="${esc(a.name || '')}"></button>`).join('');
+    const links = items.map((a) => {
+      const external = /^https?:/i.test(a.href);
+      const attrs = external ? ' target="_blank" rel="noopener noreferrer"' : ` download="${esc(a.name || 'file')}"`;
+      return `<a class="file-link" href="${esc(a.href)}"${attrs}>${ico('clip')}<span>${esc(a.name || 'файл')}</span></a>`;
+    }).join('');
+    return `<div class="atts">${thumbs ? `<div class="thumbs">${thumbs}</div>` : ''}<div class="file-links">${links}</div></div>`;
+  }
+  function draftList(agentId) {
+    if (!drafts.has(agentId)) drafts.set(agentId, []);
+    return drafts.get(agentId);
+  }
+  function renderDrafts() {
+    const box = $('#attachPreview');
+    if (!box || !S.selected) return;
+    const list = draftList(S.selected);
+    box.innerHTML = list.map((d) => `<div class="file-chip">
+      ${d.isImage ? `<img src="${esc(d.url)}" alt="">` : `<span class="file-ico">${ico('clip')}</span>`}
+      <span class="file-nm" title="${esc(d.file.name)}">${esc(d.file.name)}</span>
+      <button type="button" class="file-rm" data-rm="${esc(d.key)}" aria-label="Убрать файл">${ico('x')}</button>
+    </div>`).join('');
+    box.querySelectorAll('[data-rm]').forEach((btn) => { btn.onclick = () => removeDraft(S.selected, btn.dataset.rm); });
+  }
+  function addDraftFiles(agentId, fileList) {
+    const list = draftList(agentId);
+    const msg = $('#formMsg');
+    let err = '';
+    for (const file of fileList || []) {
+      if (!file) continue;
+      if (list.length >= MAX_FILES) { err = 'Можно прикрепить не больше 5 файлов'; break; }
+      if (file.size > MAX_FILE_BYTES) { err = `«${file.name || 'файл'}» больше 10 МБ`; continue; }
+      const isImage = /^image\/(png|jpeg|gif|webp|bmp|avif)$/.test(file.type);
+      list.push({ key: Math.random().toString(36).slice(2, 10), file, url: URL.createObjectURL(file), isImage, uploadedId: null });
+    }
+    renderDrafts();
+    if (msg && err) { msg.className = 'msg err'; msg.textContent = err; }
+  }
+  function removeDraft(agentId, key) {
+    const list = draftList(agentId);
+    const i = list.findIndex((d) => d.key === key);
+    if (i < 0) return;
+    URL.revokeObjectURL(list[i].url);
+    list.splice(i, 1);
+    renderDrafts();
+  }
+  function clearDrafts(agentId) {
+    for (const d of draftList(agentId)) URL.revokeObjectURL(d.url);
+    drafts.set(agentId, []);
+    renderDrafts();
+  }
+  async function uploadDrafts(list) {
+    const pending = list.filter((d) => !d.uploadedId);
+    if (pending.length) {
+      const fd = new FormData();
+      for (const d of pending) fd.append('files', d.file, d.file.name || 'file');
+      const res = await fetch('/api/upload', { method: 'POST', headers: { 'x-app-password': getPassword() }, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { const err = new Error('auth'); err.auth = true; throw err; }
+      if (!res.ok) throw new Error(data.error || `Ошибка загрузки ${res.status}`);
+      const atts = data.attachments || [];
+      if (atts.length !== pending.length) throw new Error('Сервер принял не все файлы');
+      pending.forEach((d, i) => { d.uploadedId = atts[i].id; });
+    }
+    return list.map((d) => d.uploadedId);
+  }
+  function captureAnchor(scroller) {
+    const box = scroller.getBoundingClientRect();
+    const line = box.top + 12;
+    const nodes = [...scroller.querySelectorAll('[data-anchor]')];
+    let best = null;
+    for (const el of nodes) {
+      if (el.closest('[data-scroll-key]')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.top <= line && r.bottom > line) best = { id: el.dataset.anchor, delta: r.top - box.top };
+    }
+    if (best) return best;
+    for (const el of nodes) {
+      if (el.closest('[data-scroll-key]')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom > box.top + 4) return { id: el.dataset.anchor, delta: r.top - box.top };
+    }
+    return null;
+  }
+  function capturePanelScroll(panel) {
+    const body = panel.querySelector('.p-body');
+    const keys = {};
+    panel.querySelectorAll('[data-scroll-key]').forEach((el) => { keys[el.dataset.scrollKey] = el.scrollTop; });
+    const chat = panel.querySelector('[data-scroll-key="chat"]');
+    const ta = panel.querySelector('#taskText');
+    return {
+      anchor: body ? captureAnchor(body) : null,
+      bodyTop: body ? body.scrollTop : 0,
+      keys,
+      chatStick: chat ? chat.scrollHeight - chat.scrollTop - chat.clientHeight < 64 : false,
+      ta: ta ? ta.scrollTop : 0,
+    };
+  }
+  function restorePanelScroll(panel, snap) {
+    if (!snap) return;
+    const apply = () => {
+      panel.querySelectorAll('[data-scroll-key]').forEach((el) => {
+        const v = snap.keys[el.dataset.scrollKey];
+        if (typeof v === 'number') el.scrollTop = v;
+      });
+      const chat = panel.querySelector('[data-scroll-key="chat"]');
+      if (chat && snap.chatStick) chat.scrollTop = chat.scrollHeight;
+      const body = panel.querySelector('.p-body');
+      if (body) {
+        const anchor = snap.anchor && body.querySelector(`[data-anchor="${snap.anchor.id}"]`);
+        if (anchor) {
+          const box = body.getBoundingClientRect();
+          const r = anchor.getBoundingClientRect();
+          body.scrollTop += r.top - (box.top + snap.anchor.delta);
+        } else body.scrollTop = snap.bodyTop;
+      }
+      const ta = panel.querySelector('#taskText');
+      if (ta && typeof snap.ta === 'number') ta.scrollTop = snap.ta;
+    };
+    apply();
+    requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
+  }
+  function initLightbox() {
+    const box = document.createElement('div');
+    box.id = 'lightbox';
+    box.innerHTML = `<button type="button" class="icon-btn lb-close" aria-label="Закрыть">${ico('x')}</button><img alt=""><a class="btn ghost" download>Скачать</a>`;
+    box.onclick = (e) => { if (e.target === box || e.target.closest('.lb-close')) box.classList.remove('show'); };
+    $('#app').appendChild(box);
+  }
+  function openLightbox(url, name) {
+    const box = $('#lightbox');
+    if (!box) return;
+    const img = box.querySelector('img');
+    const link = box.querySelector('a');
+    img.src = url;
+    img.alt = name || 'Вложение';
+    link.href = url;
+    if (/^https?:/i.test(url)) link.removeAttribute('download'); else link.setAttribute('download', name || 'file');
+    box.classList.add('show');
+  }
+
   // ── Выбор агента и панель ────────────────────────────────────────────────
   function select(id) {
     const prev = S.selected;
@@ -453,7 +636,8 @@
       return;
     }
     if (prev !== S.selected) blip(prev ? 820 : 700);
-    renderPanel();
+    renderPanel({ preserveScroll: prev === S.selected });
+    S.panelSig = panelContentSig(S.selected);
     panel.classList.add('open');
     updateAgents();
     const a = S.byId.get(S.selected);
@@ -477,6 +661,7 @@
     pin: '<path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
     task: '<path d="M8 6h11M8 12h11M8 18h11M4 6h.5M4 12h.5M4 18h.5"/>',
+    clip: '<path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7L13 5.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 8"/>',
   };
   const ico = (n) => `<svg viewBox="0 0 24 24">${ICONS[n]}</svg>`;
   const fmtTime = (iso) => { try { const d = new Date(iso); return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + (Date.now() - d > 864e5 ? ' · ' + d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : ''); } catch (_) { return ''; } };
@@ -484,22 +669,61 @@
   function questHTML(t, showAgent) {
     const a = S.byId.get(t.agent) || { name: t.agent, color: '#64748b' };
     const [cls, label] = taskBadge(t);
-    return `<div class="quest" data-agent="${esc(t.agent)}" style="--c:${esc(a.color)}">
+    const title = t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение');
+    return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}" style="--c:${esc(a.color)}">
       <span class="qi">${ico(cls === 'done' ? 'check' : cls === 'fail' ? 'x' : 'send')}</span>
-      <span class="qt">${esc(t.text)}</span>
+      <span class="qt">${esc(title)}</span>
       <span class="qm"><span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(tierOf(a) === 'main' ? 'GROK' : a.name)}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
-      ${t.result ? `<div class="qr">${esc(t.result)}</div>` : ''}
+      ${attachmentsHTML(t.attachments)}
+      ${t.result ? `<div class="qr" data-scroll-key="result:${esc(t.id)}">${linkify(t.result)}</div>` : ''}
     </div>`;
   }
 
-  function renderPanel() {
+  function chatHTML(agent) {
+    const msgs = S.messages.filter((m) => m.agentId === agent.id).slice().sort((a, b) =>
+      String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
+    if (!msgs.length) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
+    return msgs.map((m) => {
+      const who = m.role === 'owner' ? 'Вы' : (tierOf(agent) === 'main' ? 'GROK' : agent.name);
+      return `<div class="msg-row ${m.role === 'owner' ? 'owner' : 'agent'}">
+        <div class="msg-bubble">
+          <div class="msg-meta"><b>${esc(who)}</b><span>${fmtTime(m.timestamp || m.createdAt)}</span></div>
+          ${m.text ? `<div class="msg-text">${linkify(m.text)}</div>` : ''}
+          ${attachmentsHTML(m.attachments)}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function panelContentSig(id) {
+    const a = S.byId.get(id);
+    if (!a) return '';
+    const L = levelInfo(a);
+    const tasks = tierOf(a) === 'main' ? S.tasks.slice(0, 8) : S.tasks.filter((t) => t.agent === a.id).slice(0, 12);
+    const taskKey = tasks.map((t) => [t.id, t.status, t.text, t.result, t.forwardStatus, JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
+    const msgKey = S.messages.filter((m) => m.agentId === a.id).map((m) => [m.id, m.role, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
+    const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).map((d) => `${d.id}:${d.name}`).join(',');
+    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey].join('\u0003');
+  }
+
+  function renderPanel(opts = {}) {
     const a = S.byId.get(S.selected);
     if (!a) return;
     const tier = tierOf(a), L = levelInfo(a);
     const tasks = S.tasks.filter((t) => t.agent === a.id);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant);
     const panel = $('#panel');
-    const keep = panel.dataset.agent === a.id ? { text: ($('#taskText') || {}).value || '', target: ($('#taskTarget') || {}).value } : null;
+    const snap = opts.preserveScroll ? capturePanelScroll(panel) : null;
+    const textEl = $('#taskText');
+    const keep = opts.preserveScroll && panel.dataset.agent === a.id ? {
+      text: textEl ? textEl.value : '',
+      selStart: textEl ? textEl.selectionStart : null,
+      selEnd: textEl ? textEl.selectionEnd : null,
+      target: ($('#taskTarget') || {}).value,
+      focused: document.activeElement && panel.contains(document.activeElement) ? document.activeElement.id : '',
+      msg: ($('#formMsg') || {}).textContent || '',
+      msgClass: ($('#formMsg') || {}).className || 'msg',
+    } : null;
     panel.dataset.agent = a.id;
     panel.style.setProperty('--c', a.color);
     let form;
@@ -512,11 +736,20 @@
             ${depts.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
-        <textarea id="taskText" maxlength="4000" placeholder="${tier === 'main' ? 'Например: собери итоги недели по всем направлениям' : 'Опиши, что нужно сделать…'}" required></textarea>
+        <textarea id="taskText" maxlength="4000" placeholder="${tier === 'main' ? 'Например: собери итоги недели по всем направлениям' : 'Опиши, что нужно сделать…'}"></textarea>
+        <div class="attach-row">
+          <button type="button" class="btn ghost" id="attachBtn">${ico('clip')}Прикрепить</button>
+          <input type="file" id="fileInput" multiple hidden>
+          <span class="hint">до 5 файлов, 10 МБ · перетащи или вставь скриншот</span>
+        </div>
+        <div class="attach-preview" id="attachPreview"></div>
         <div class="row"><span class="hint">Ctrl+Enter — отправить</span><button class="btn gold" type="submit">${ico('send')}Дать задачу</button></div>
         <div class="msg" id="formMsg"></div>
       </form>`;
     }
+    const taskBlock = tier === 'main'
+      ? `<div class="sec" data-anchor="tasks"><h4>Последние задачи штаба</h4><div class="quest-list" style="padding:0">${S.tasks.slice(0, 8).map((t) => questHTML(t, true)).join('') || emptyQuests()}</div></div>`
+      : `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${tasks.slice(0, 12).map((t) => questHTML(t, false)).join('') || emptyQuests()}</div></div>`;
     panel.innerHTML = `
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
@@ -525,23 +758,62 @@
           <h2>${esc(tier === 'main' ? 'Главный агент · GROK' : a.name)}</h2><div class="role">${esc(a.role || '')}</div></div>
       </div>
       <div class="p-body">
-        ${a.vacant ? '' : `<div class="p-row"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
+        ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
           <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>`}
-        <div class="sec"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
-        <div class="sec"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
-        ${tier === 'main' ? `<div class="sec"><h4>Последние задачи штаба</h4><div class="quest-list" style="padding:0">${S.tasks.slice(0, 8).map((t) => questHTML(t, true)).join('') || emptyQuests()}</div></div>`
-          : `<div class="sec"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${tasks.slice(0, 12).map((t) => questHTML(t, false)).join('') || emptyQuests()}</div></div>`}
-        ${a.done && a.done.length ? `<div class="sec"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : ''}
+        <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>`}
+        <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
+        <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
+        ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
+        ${a.vacant ? '' : taskBlock}
+        ${a.done && a.done.length ? `<div class="sec" data-anchor="done"><h4>Сделано недавно</h4><ul class="history">${a.done.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>` : ''}
       </div>`;
     $('#pClose').onclick = () => select(null);
     const f = $('#taskForm');
     if (f) {
-      if (keep) { $('#taskText').value = keep.text; if (keep.target && $('#taskTarget')) $('#taskTarget').value = keep.target; }
+      if (keep) {
+        const ta = $('#taskText');
+        ta.value = keep.text;
+        if (keep.selStart != null) { try { ta.setSelectionRange(keep.selStart, keep.selEnd); } catch (_) { /* поле ещё не в фокусе */ } }
+        if (keep.target && $('#taskTarget')) $('#taskTarget').value = keep.target;
+        const formMsg = $('#formMsg');
+        if (formMsg && keep.msg) { formMsg.className = keep.msgClass || 'msg'; formMsg.textContent = keep.msg; }
+        if (keep.focused) { const el = document.getElementById(keep.focused); if (el) el.focus({ preventScroll: true }); }
+      }
+      renderDrafts();
       f.onsubmit = (e) => { e.preventDefault(); submitTask(); };
-      $('#taskText').onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitTask(); } };
+      const ta = $('#taskText');
+      ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitTask(); } };
+      ta.addEventListener('paste', (e) => {
+        const items = [...(e.clipboardData && e.clipboardData.items ? e.clipboardData.items : [])];
+        const images = items.filter((i) => i.kind === 'file' && String(i.type || '').startsWith('image/')).map((i) => i.getAsFile()).filter(Boolean);
+        if (!images.length) return;
+        const pastedText = e.clipboardData.getData('text/plain');
+        if (!pastedText) e.preventDefault();
+        addDraftFiles(a.id, images);
+      });
+      const input = $('#fileInput');
+      $('#attachBtn').onclick = () => input.click();
+      input.onchange = () => { addDraftFiles(a.id, input.files); input.value = ''; };
+      f.addEventListener('dragover', (e) => { e.preventDefault(); f.classList.add('drag'); });
+      f.addEventListener('dragleave', (e) => { if (!f.contains(e.relatedTarget)) f.classList.remove('drag'); });
+      f.addEventListener('drop', (e) => {
+        e.preventDefault();
+        f.classList.remove('drag');
+        if (e.dataTransfer && e.dataTransfer.files) addDraftFiles(a.id, e.dataTransfer.files);
+      });
     }
-    panel.querySelectorAll('.quest').forEach((q) => (q.onclick = () => { if (q.dataset.agent !== S.selected) select(q.dataset.agent); }));
+    panel.querySelectorAll('.quest').forEach((q) => (q.onclick = (e) => {
+      if (e.target.closest('a,button,.qr')) return;
+      if (q.dataset.agent !== S.selected) select(q.dataset.agent);
+    }));
+    panel.querySelectorAll('.thumb').forEach((btn) => {
+      btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(btn.dataset.full, btn.dataset.name); };
+    });
+    if (snap) restorePanelScroll(panel, snap);
+    else {
+      const chat = panel.querySelector('[data-scroll-key="chat"]');
+      if (chat) { chat.scrollTop = chat.scrollHeight; requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; }); }
+    }
   }
   const emptyQuests = () => '<div class="empty"><b>Заданий пока нет</b>Дай первую задачу — и агент возьмётся за работу.</div>';
 
@@ -550,19 +822,37 @@
   let pending = null;
   async function submitTask() {
     const a = S.byId.get(S.selected);
+    if (!a) return;
     const txt = ($('#taskText').value || '').trim();
+    const draft = draftList(a.id);
     const msg = $('#formMsg');
-    if (!txt) { msg.className = 'msg err'; msg.textContent = 'Напиши, что нужно сделать.'; return; }
+    if (!txt && !draft.length) { msg.className = 'msg err'; msg.textContent = 'Напиши, что нужно сделать, или прикрепи файл.'; return; }
     if (!getPassword()) { pending = submitTask; openModal(); return; }
     let targets = [a.id];
     const sel = $('#taskTarget');
     if (sel) targets = sel.value === '__all' ? S.agents.filter((x) => tierOf(x) === 'dept' && !x.vacant).map((x) => x.id) : [sel.value];
     const btn = $('#taskForm button[type=submit]');
-    btn.disabled = true; msg.className = 'msg'; msg.textContent = 'Отправляю…';
+    btn.disabled = true; msg.className = 'msg'; msg.textContent = draft.length ? 'Загружаю файлы…' : 'Отправляю…';
+    let attachmentIds = [];
+    if (draft.length) {
+      try {
+        attachmentIds = await uploadDrafts(draft);
+      } catch (err) {
+        btn.disabled = false;
+        if (err.auth) { localStorage.removeItem('appPassword'); pending = submitTask; openModal('Пароль не подошёл. Попробуй ещё раз.'); msg.textContent = ''; return; }
+        msg.className = 'msg err'; msg.textContent = err.message || 'Не удалось загрузить файлы';
+        return;
+      }
+      msg.textContent = 'Отправляю…';
+    }
     let ok = 0, lastErr = '';
     for (const id of targets) {
       try {
-        const res = await fetch('/api/task', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() }, body: JSON.stringify({ agent: id, text: txt }) });
+        const res = await fetch('/api/task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+          body: JSON.stringify({ agent: id, text: txt, attachmentIds }),
+        });
         const data = await res.json().catch(() => ({}));
         if (res.status === 401) { localStorage.removeItem('appPassword'); pending = submitTask; openModal('Пароль не подошёл. Попробуй ещё раз.'); lastErr = 'auth'; break; }
         if (!res.ok) { lastErr = data.error || `Ошибка ${res.status}`; continue; }
@@ -576,8 +866,10 @@
     if (ok) {
       whoosh();
       const names = targets.length > 1 ? `${ok} направлениям` : (tierOf(S.byId.get(targets[0])) === 'main' ? 'GROK' : S.byId.get(targets[0]).name);
-      toast('Задача отправлена', `${names}: «${txt.slice(0, 80)}»`, 'send');
+      const preview = txt || (draft.length ? draft.map((d) => d.file.name).join(', ') : 'вложение');
+      toast('Задача отправлена', `${names}: «${preview.slice(0, 80)}»`, 'send');
       $('#taskText').value = '';
+      clearDrafts(a.id);
       msg.className = lastErr ? 'msg err' : 'msg ok';
       msg.textContent = lastErr || 'Готово! Агент взялся за работу.';
       await loadState();
@@ -661,9 +953,26 @@
 
   // ── Журнал и HUD ─────────────────────────────────────────────────────────
   function renderJournal() {
+    const list = $('#jList');
+    const top = list.scrollTop;
+    const saved = {};
+    list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
+    const sig = S.tasks.map((t) => [t.id, t.status, t.result, (t.attachments || []).length].join(':')).join('|');
     $('#jCount').textContent = S.tasks.length;
-    $('#jList').innerHTML = S.tasks.slice(0, 60).map((t) => questHTML(t, true)).join('') || '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
-    $('#jList').querySelectorAll('.quest').forEach((q) => (q.onclick = () => select(q.dataset.agent)));
+    if (list.dataset.sig === sig) return;
+    list.dataset.sig = sig;
+    list.innerHTML = S.tasks.slice(0, 60).map((t) => questHTML(t, true)).join('') || '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
+    list.scrollTop = top;
+    list.querySelectorAll('[data-scroll-key]').forEach((el) => {
+      if (typeof saved[el.dataset.scrollKey] === 'number') el.scrollTop = saved[el.dataset.scrollKey];
+    });
+    list.querySelectorAll('.quest').forEach((q) => (q.onclick = (e) => {
+      if (e.target.closest('a,button,.qr')) return;
+      select(q.dataset.agent);
+    }));
+    list.querySelectorAll('.thumb').forEach((btn) => {
+      btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(btn.dataset.full, btn.dataset.name); };
+    });
   }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
@@ -703,7 +1012,7 @@
       a.status = ['working', 'idle', 'waiting'].includes(a.status) ? a.status : 'idle';
     }
     const prevStatus = S.taskStatus;
-    S.agents = agents; S.tasks = data.tasks || [];
+    S.agents = agents; S.tasks = data.tasks || []; S.messages = data.messages || [];
     S.byId = new Map(agents.map((a) => [a.id, a]));
     const sig = agentSig(agents);
     if (sig !== S.sig) { S.sig = sig; buildAgents(); }
@@ -721,7 +1030,13 @@
     }
     S.taskStatus = next;
     updateAgents(); renderJournal(); renderHUD();
-    if (S.selected && !$('#panel').contains(document.activeElement)) renderPanel();
+    if (S.selected) {
+      const sig = panelContentSig(S.selected);
+      if (sig !== S.panelSig) {
+        S.panelSig = sig;
+        renderPanel({ preserveScroll: true });
+      }
+    }
     if (!S.loaded) {
       S.loaded = true;
       goHome(false);
@@ -734,7 +1049,7 @@
   }
 
   // ── Старт ────────────────────────────────────────────────────────────────
-  initTheme(); initSound(); buildStatic(); initInput(); initMinimap(); initModal(); initJournal();
+  initTheme(); initSound(); buildStatic(); initLightbox(); initInput(); initMinimap(); initModal(); initJournal();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeOverlay());
   addEventListener('resize', () => { if (!S.userMoved && !S.selected) goHome(false); else { clampCam(); applyCam(); } });
   // Кварталы строятся после первой загрузки, чтобы не застраивать участки агентов.
