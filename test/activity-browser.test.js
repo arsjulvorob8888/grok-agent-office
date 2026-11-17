@@ -14,6 +14,7 @@ process.env.GROK_WEBHOOK_URL = '';
 process.env.GROK_WEBHOOK_KEY = '';
 process.env.PUBLIC_URL = 'http://127.0.0.1';
 delete process.env.AGENT_ACTIVE_MINUTES;
+delete process.env.ACTIVITY_WINDOW_MIN;
 
 const { app, state } = require('../server.js');
 const puppeteer = require('puppeteer-core');

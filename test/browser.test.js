@@ -312,7 +312,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
       const br = btn.getBoundingClientRect();
       const popBox = pop.getBoundingClientRect();
       const roster = document.querySelector('#roster').getBoundingClientRect();
-      const items = [...document.querySelectorAll('#needsPop .need-item')].map((el) => {
+      const items = [...document.querySelectorAll('#needsList > .need-item')].map((el) => {
         const link = el.querySelector('a.need-action');
         const hint = el.querySelector('.need-action-hint');
         const box = el.getBoundingClientRect();
@@ -347,7 +347,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
         btnInView: br.width > 20 && br.top >= 0 && br.left >= 0 && br.right <= window.innerWidth + 1 && br.bottom <= window.innerHeight,
         hierInView: hier.width > 20 && hier.left >= 0 && hier.right <= window.innerWidth + 1,
         notify: document.querySelector('#needsNotify').textContent,
-        rowsFit: [...document.querySelectorAll('#needsPop .need-item')].every((el) => {
+        rowsFit: [...document.querySelectorAll('#needsList > .need-item')].every((el) => {
           const urg = el.querySelector('.need-urg').getBoundingClientRect();
           const box = el.getBoundingClientRect();
           return el.scrollHeight <= el.clientHeight + 1 && urg.top >= box.top - 1 && urg.bottom <= box.bottom + 1;
@@ -355,7 +355,8 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
       };
     });
     assert.equal(info.vw, 390);
-    assert.ok(Number(info.count) >= 3, info.count);
+    assert.ok(Number(info.count) >= 2, info.count);
+    assert.equal(info.count, String(info.items.length));
     assert.match(info.label, /Нужно от вас/);
     assert.equal(info.expanded, 'true');
     assert.equal(info.btnInView, true, 'бейдж не помещается в шапку');
@@ -364,24 +365,18 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.equal(info.rowsFit, true, 'строка пункта обрезана');
     const text = info.items.map((i) => `${i.what} ${i.from} ${i.where} ${i.urg}`).join('\n');
     assert.doesNotMatch(text, /Ключ Render API/);
-    assert.match(text, /Академию агентов/);
-    assert.match(text, /Программирования и Тестировщика/);
+    assert.doesNotMatch(text, /Академию агентов/);
     assert.doesNotMatch(text, /Business Adviser/);
-    assert.match(text, /Чаты агентов в Grok/);
+    assert.doesNotMatch(text, /ТЕСТ:/);
     assert.match(text, /Чат Путина или Финансов/);
     assert.match(text, /Instagram и YouTube/);
     assert.match(text, /Соцсети/);
     assert.match(text, /финансовых вопросов/);
     assert.match(text, /Финансы/);
     const byId = Object.fromEntries(info.items.map((item) => [item.id, item]));
-    const academy = byId['need-academy'];
     const finance = byId['need-finance'];
     const social = byId['need-social'];
-    assert.equal(academy.label, 'Решить');
-    assert.equal(academy.href, '/needs/need-academy');
-    assert.equal(academy.target, null);
-    assert.equal(academy.rel, null);
-    assert.equal(academy.hint, '');
+    assert.ok(finance && social);
     assert.equal(finance.label, 'Решить');
     assert.equal(finance.href, '/needs/need-finance');
     assert.equal(finance.target, null);
@@ -412,7 +407,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.ok(after.until > Date.now() + 59 * 60 * 1000, String(after.until));
 
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => Number(document.querySelector('#needsBadge')?.textContent) >= 3, { timeout: 8000 });
+    await page.waitForFunction(() => Number(document.querySelector('#needsBadge')?.textContent) >= 2, { timeout: 8000 });
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await page.$eval('#needsPop', (el) => el.classList.contains('open')), false);
 
@@ -420,7 +415,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     await page.waitForSelector('#needsPop.open .need-item a.need-action');
     const opened = await page.evaluate(() => {
       const pop = document.querySelector('#needsPop');
-      const items = [...pop.querySelectorAll('.need-item')];
+      const items = [...pop.querySelectorAll('#needsList > .need-item')];
       return {
         open: pop.classList.contains('open'),
         hidden: pop.getAttribute('aria-hidden'),
@@ -441,18 +436,15 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.equal(opened.open, true);
     assert.equal(opened.hidden, 'false');
     assert.equal(String(opened.buttons.length), opened.badge);
-    assert.ok(opened.buttons.length >= 3, JSON.stringify(opened));
+    assert.ok(opened.buttons.length >= 2, JSON.stringify(opened));
     for (const button of opened.buttons) {
       assert.equal(button.label, 'Решить', JSON.stringify(button));
       assert.equal(button.href, `/needs/${button.id}`, JSON.stringify(button));
       assert.equal(button.https, null);
     }
     const popupFinance = opened.buttons.find((button) => button.id === 'need-finance');
-    const popupAcademy = opened.buttons.find((button) => button.id === 'need-academy');
     const popupSocial = opened.buttons.find((button) => button.id === 'need-social');
-    assert.equal(popupAcademy.href, '/needs/need-academy');
-    assert.equal(popupAcademy.https, null);
-    assert.equal(popupAcademy.hint, '');
+    assert.ok(popupSocial);
     assert.equal(popupFinance.href, '/needs/need-finance');
     assert.equal(popupFinance.hint, '');
     assert.equal(popupSocial.href, '/needs/need-social');
@@ -1183,7 +1175,7 @@ test('страница вопроса на 390px показывает текст
         grokLink: !!document.querySelector('#needDetails a[href^="grokbot:"]'),
         script: !!document.querySelector('#needDetails script'),
         form: document.querySelector('#needAnswerForm').hidden,
-        label: document.querySelector('label[for="needAnswer"]').textContent,
+        label: document.querySelector('#needYes').textContent,
         sendH: sendBox.height,
         overflow: pageEl.scrollWidth <= pageEl.clientWidth + 1,
       };
@@ -1198,25 +1190,25 @@ test('страница вопроса на 390px показывает текст
     assert.equal(view.script, false);
     assert.match(view.html, /&lt;script&gt;/);
     assert.equal(view.form, false);
-    assert.equal(view.label, 'Ваш ответ');
+    assert.equal(view.label, 'Да');
     assert.ok(view.sendH >= 40, String(view.sendH));
     assert.equal(view.overflow, true);
     const external = await page.$eval('#needExternal', (el) => el.textContent);
     assert.match(external, /grokbot:\/\/app\/v1\/agent\?id=8b9d4ad0/);
     assert.equal(await page.$('#needExternal a'), null);
 
-    await page.type('#needAnswer', 'Откладываю десять');
-    await page.click('#needAnswerForm button[type=submit]');
-    await page.waitForFunction(() => (document.querySelector('#needAnswerMsg')?.textContent || '').includes('Ответ отправлен'), { timeout: 8000 });
+    await page.click('#needYes');
+    await page.waitForFunction(() => (document.querySelector('#needAnswerMsg')?.textContent || '').includes('закрыт'), { timeout: 8000 });
     assert.equal(await page.$eval('#needAnswerBadge', (el) => el.hidden), false);
 
     const saved = await api('/api/state', { headers: { 'x-app-password': 'pw-ui' } });
     const finance = saved.body.needs.find((n) => n.id === 'need-finance');
     assert.equal(finance.answerStatus, 'answered');
-    assert.equal(finance.closedAt, null);
-    assert.equal(finance.answers.at(-1).text, 'Откладываю десять');
-    const task = saved.body.tasks.find((t) => t.agent === 'finance' && t.text.includes('Откладываю десять'));
-    assert.equal(task.text, 'Ответ Арсения на «Ответить на шесть финансовых вопросов»: Откладываю десять');
+    assert.equal(finance.answer, 'yes');
+    assert.ok(finance.closedAt);
+    assert.equal(finance.closedBy, 'owner');
+    const task = saved.body.tasks.find((t) => t.agent === 'finance' && t.text.includes(': Да'));
+    assert.equal(task.text, 'Ответ Арсения на «Ответить на шесть финансовых вопросов»: Да');
     const pub = await api('/api/state');
     const hidden = pub.body.needs.find((n) => n.id === 'need-finance');
     assert.equal(hidden.answers, undefined);

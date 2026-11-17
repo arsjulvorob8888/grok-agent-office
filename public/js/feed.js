@@ -167,16 +167,36 @@
     return at >= closed && at - closed <= RECENT_CLOSED_MS;
   }
 
+  function isTestNeed(need) {
+    return !!(need && (need.kind === 'test' || need.id === 'need-test-qa'));
+  }
+
   function needsForGeneral(needs) {
-    return (needs || []).filter(isOpenNeed);
+    return (needs || []).filter((need) => isOpenNeed(need) && !isTestNeed(need));
+  }
+
+  function testNeeds(needs) {
+    return (needs || []).filter((need) => isTestNeed(need) && isOpenNeed(need));
+  }
+
+  function needAudience(need) {
+    const ids = new Set();
+    if (!need) return ids;
+    if (need.fromAgentId) ids.add(need.fromAgentId);
+    if (Array.isArray(need.participants)) {
+      for (const id of need.participants) {
+        if (typeof id === 'string' && id.trim()) ids.add(id.trim());
+      }
+    }
+    return ids;
   }
 
   function needsForAgent(needs, agentId, now) {
-    return (needs || []).filter((need) => need && need.fromAgentId === agentId && (isOpenNeed(need) || isRecentClosed(need, now)));
+    return (needs || []).filter((need) => need && !isTestNeed(need) && needAudience(need).has(agentId) && (isOpenNeed(need) || isRecentClosed(need, now)));
   }
 
   function openNeedsForAgent(needs, agentId) {
-    return (needs || []).filter((need) => need && need.fromAgentId === agentId && isOpenNeed(need));
+    return (needs || []).filter((need) => need && !isTestNeed(need) && needAudience(need).has(agentId) && isOpenNeed(need));
   }
 
   function openNeedCount(needs, agentId) {
@@ -200,7 +220,7 @@
     const messagesOk = messagesForAgent(messages, tasks, agentId).length
       === messagesForGeneral(messages).filter((message) => seesMessage(message, tasks, agentId)).length;
     const needsOk = needsForAgent(needs, agentId, now).filter(isOpenNeed).length
-      === needsForGeneral(needs).filter((need) => need.fromAgentId === agentId).length;
+      === needsForGeneral(needs).filter((need) => needAudience(need).has(agentId)).length;
     return ordersOk && messagesOk && needsOk;
   }
 
@@ -216,8 +236,11 @@
     seesMessage,
     messagesForGeneral,
     messagesForAgent,
+    isTestNeed,
+    testNeeds,
     isOpenNeed,
     isRecentClosed,
+    needAudience,
     needsForGeneral,
     needsForAgent,
     openNeedsForAgent,

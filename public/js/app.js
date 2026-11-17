@@ -218,7 +218,7 @@
       const e = S.els.get(a.id);
       if (!e) continue;
       const tier = tierOf(a), L = levelInfo(a);
-      const act = a.activity === 'working' ? ' pulse' : ' sleep';
+      const act = activityClass(a);
       e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${act}${S.selected === a.id ? ' sel' : ''}`);
       e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}`;
       e.tag.innerHTML = `<span class="lvl">${a.vacant ? '?' : L.lvl}</span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
@@ -433,9 +433,10 @@
       if (e.key === 'Escape') {
         const lb = $('#lightbox');
         if (lb && lb.classList.contains('show')) { lb.classList.remove('show'); return; }
+        if ($('#modal').classList.contains('show')) { e.preventDefault(); closeModal(); return; }
       }
       if (e.target.closest('input,textarea,select')) return;
-      if (e.key === 'Escape') { if ($('#modal').classList.contains('show')) closeModal(); else select(null); }
+      if (e.key === 'Escape') select(null);
       if (e.key === '+' || e.key === '=') zoomAt(innerWidth / 2, innerHeight / 2, 1.2);
       if (e.key === '-') zoomAt(innerWidth / 2, innerHeight / 2, 1 / 1.2);
     });
@@ -639,8 +640,9 @@
       const a = S.byId.get(c.dataset.id);
       if (!a) return;
       c.classList.toggle('sel', S.selected === a.id);
-      c.classList.toggle('pulse', a.activity === 'working');
-      c.classList.toggle('sleep', a.activity !== 'working');
+      c.classList.toggle('pulse', activityMode(a) === 'working');
+      c.classList.toggle('wait', activityMode(a) === 'waiting');
+      c.classList.toggle('sleep', activityMode(a) === 'resting');
       c.querySelector('.st').className = `st ${a.status}`;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
       paintAwaitBadge(c.querySelector('.await-you'), a.id);
@@ -875,6 +877,27 @@
   }
 
   const STATUS_TEXT = { working: 'Работает', idle: 'Свободен', waiting: 'Ждёт тебя' };
+  const ACTIVITY_TEXT = { working: 'Работает', waiting: 'Ждёт', resting: 'Спит' };
+  function activityMode(a) {
+    if (a && a.activity === 'working') return 'working';
+    if (a && a.activity === 'waiting') return 'waiting';
+    return 'resting';
+  }
+  function activityClass(a) {
+    const mode = activityMode(a);
+    if (mode === 'working') return ' pulse';
+    if (mode === 'waiting') return ' wait';
+    return ' sleep';
+  }
+  function activityLabel(a) {
+    return ACTIVITY_TEXT[activityMode(a)] || STATUS_TEXT[a && a.status] || '';
+  }
+  function activityDot(a) {
+    const mode = activityMode(a);
+    if (mode === 'working') return 'working';
+    if (mode === 'waiting') return 'waiting';
+    return 'idle';
+  }
   function taskBadge(t) {
     if (t.orderStatus === 'failed') return ['fail', 'Не выполнен'];
     if (t.orderStatus === 'done' || t.status === 'выполнена') return ['done', 'Выполнена'];
@@ -992,9 +1015,9 @@
     const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
     const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
-    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\u0002');
+    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
-    return [a.id, a.name, a.role, a.status, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
+    return [a.id, a.name, a.role, a.status, a.activity, a.currentTask, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
 
   function renderPanel(opts = {}) {
@@ -1053,7 +1076,7 @@
         ${panelNeedsHTML(a)}
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
           <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${a.status}">${STATUS_TEXT[a.status] || a.status}</span><span class="now">${esc(a.now || '')}</span></div>
+        <div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}">${esc(activityLabel(a))}</span><span class="now">${esc(a.now || '')}</span></div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
@@ -1107,7 +1130,12 @@
       btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(btn.dataset.full, btn.dataset.name); };
     });
     panel.querySelectorAll('.need-close').forEach((btn) => {
-      btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeNeed(btn.dataset.need); };
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (Date.now() < blockAuthClicksUntil) return;
+        closeNeed(btn.dataset.need);
+      };
     });
     if (snap) restorePanelScroll(panel, snap);
     else {
@@ -1137,7 +1165,12 @@
 
   // ── Отправка задач ───────────────────────────────────────────────────────
   const getPassword = () => localStorage.getItem('appPassword') || '';
+  // Очередь действия, которое ждёт пароль: закрытие пункта, отправка задачи.
+  // Отмена пропуска увеличивает authToken и глушит клик, который после скрытия
+  // диалога попал бы в «Закрыть» под ним и повторил бы действие уже сохранённым паролем.
   let pending = null;
+  let authToken = 1;
+  let blockAuthClicksUntil = 0;
   const FILE_TOO_BIG = 'Файл слишком большой (макс. 10 МБ)';
   const BAD_PASSWORD = 'Неверный пароль';
   const SERVER_RESTART = 'Сервер перезапускается, попробуйте через минуту';
@@ -1171,8 +1204,7 @@
   }
   function noteBadPassword() {
     localStorage.removeItem('appPassword');
-    pending = submitTask;
-    openModal('Пароль не подошёл. Попробуй ещё раз.');
+    queueAuth(submitTask, 'Пароль не подошёл. Попробуй ещё раз.');
   }
   async function submitTask() {
     const a = S.byId.get(S.selected);
@@ -1186,7 +1218,8 @@
       msg.textContent = rejectedOversize ? FILE_TOO_BIG : 'Напиши, что нужно сделать, или прикрепи файл.';
       return;
     }
-    if (!getPassword()) { pending = submitTask; openModal(); return; }
+    if (!getPassword()) { queueAuth(submitTask); return; }
+    const token = authToken;
     let targets = [a.id];
     const sel = $('#taskTarget');
     if (sel) targets = sel.value === '__all' ? S.agents.filter((x) => tierOf(x) === 'dept' && !x.vacant).map((x) => x.id) : [sel.value];
@@ -1209,6 +1242,7 @@
     for (const id of targets) {
       try {
         const fromAgentId = tier === 'main' && id !== a.id ? a.id : 'owner';
+        if (token !== authToken) { btn.disabled = false; return; }
         const res = await fetch('/api/task', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
@@ -1294,6 +1328,19 @@
   }
 
   // ── Модалка пароля ───────────────────────────────────────────────────────
+  function queueAuth(run, err) {
+    const token = authToken;
+    pending = () => {
+      if (token !== authToken) return;
+      return run();
+    };
+    openModal(err);
+  }
+  function dropPendingAuth() {
+    authToken += 1;
+    pending = null;
+    blockAuthClicksUntil = Date.now() + 900;
+  }
   function openModal(err) {
     const modal = $('#modal');
     modal.classList.add('show');
@@ -1302,19 +1349,41 @@
     $('#pwInput').value = '';
     setTimeout(() => $('#pwInput').focus(), 60);
   }
-  function closeModal() { $('#modal').classList.remove('show'); pending = null; }
+  function closeModal() {
+    dropPendingAuth();
+    const modal = $('#modal');
+    if (modal) modal.classList.remove('show');
+    const input = $('#pwInput');
+    if (input) input.value = '';
+  }
   function initModal() {
+    document.addEventListener('click', (e) => {
+      if (Date.now() >= blockAuthClicksUntil) return;
+      const t = e.target && e.target.closest ? e.target.closest('.need-close, #taskSubmit') : null;
+      if (!t) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
     $('#pwForm').onsubmit = (e) => {
       e.preventDefault();
+      const token = authToken;
       const v = $('#pwInput').value.trim();
       if (!v) return;
+      if (token !== authToken) return;
+      const p = pending;
+      pending = null;
       localStorage.setItem('appPassword', v);
       $('#modal').classList.remove('show');
       blip(990);
-      const p = pending; pending = null;
+      if (token !== authToken) return;
       if (p) p(); else toast('Пароль сохранён', 'Теперь можно давать задачи агентам.', 'check');
     };
-    $('#pwCancel').onclick = closeModal;
+    const cancel = (e) => {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      closeModal();
+    };
+    $('#pwCancel').addEventListener('pointerdown', cancel);
+    $('#pwCancel').onclick = cancel;
     $('#pwForget').onclick = () => { localStorage.removeItem('appPassword'); closeModal(); toast('Пароль удалён', 'В этом браузере он больше не хранится.', 'x'); };
     // Тот же тап, который открыл пропуск, в мобильной эмуляции приходит кликом уже по фону
     // и сразу закрывал окно. Короткое окно после открытия этот клик не считает отменой.
@@ -1323,7 +1392,7 @@
       if (Date.now() - Number($('#modal').dataset.openedAt || 0) < 500) return;
       closeModal();
     };
-    $('#btnKey').onclick = () => openModal();
+    $('#btnKey').onclick = () => { dropPendingAuth(); blockAuthClicksUntil = 0; openModal(); };
   }
 
   // ── Тосты ────────────────────────────────────────────────────────────────
@@ -1388,12 +1457,12 @@
     const kids = treeChildren(a);
     const shut = S.hierFold.has(a.id);
     const n = openTaskCount(a.id);
-    const st = STATUS_TEXT[a.status] || a.status || '';
+    const st = activityLabel(a);
     return `<div class="org-item">
       <div class="org-row">
         <button type="button" class="org-twist${kids.length ? '' : ' leaf'}${shut ? ' shut' : ''}" data-fold="${esc(a.id)}" aria-label="${shut ? 'Развернуть' : 'Свернуть'}">${kids.length ? '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>' : ''}</button>
         <button type="button" class="org-card${S.selected === a.id ? ' sel' : ''}" data-id="${esc(a.id)}">
-          <span class="top"><span class="dot ${esc(a.status)}"></span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>${n ? `<span class="pill">${n}</span>` : ''}</span>
+          <span class="top"><span class="dot ${esc(activityDot(a))}"></span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>${n ? `<span class="pill">${n}</span>` : ''}</span>
           <span class="meta">${esc(st)}${n ? ` · ${n} ${taskWord(n)}` : ''}</span>
         </button>
       </div>
@@ -1402,7 +1471,7 @@
   }
   function hierSig() {
     const fold = [...S.hierFold].sort().join(',');
-    return S.agents.map((a) => [a.id, a.number, a.parentId, a.status, a.name, openTaskCount(a.id)].join(':')).join('|') + '#' + fold + '#' + (S.selected || '');
+    return S.agents.map((a) => [a.id, a.number, a.parentId, a.status, a.activity, a.name, openTaskCount(a.id)].join(':')).join('|') + '#' + fold + '#' + (S.selected || '');
   }
   function renderHierarchy(force) {
     const tree = $('#hTree');
@@ -1449,7 +1518,7 @@
   }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
-    const active = staff.filter((a) => (a.activity ? a.activity === 'working' : a.status === 'working')).length;
+    const active = staff.filter((a) => activityMode(a) === 'working').length;
     const done = S.agents.reduce((s, a) => s + (a.completed || 0), 0);
     const energy = Math.min(100, Math.round(20 + (active / Math.max(1, staff.length)) * 50 + Math.min(30, done * 3)));
     $('#stTasks').textContent = S.tasks.length;
@@ -1527,36 +1596,61 @@
   function needSolveHref(n) {
     return `/needs/${encodeURIComponent(String(n && n.id || ''))}`;
   }
+  function needDocHTML(n) {
+    const url = String(n && n.docUrl || '').trim();
+    if (!url || url.length > 500) return '';
+    if (/^https:\/\/\S+$/i.test(url)) {
+      return `<a class="need-doc" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Прочитать</a>`;
+    }
+    if (/^grokbot:\/\/\S+$/i.test(url)) {
+      return `<p class="need-doc-hint">Прочитать: ${esc(url)} <span class="md-grok-hint">Откройте в Grok — браузер эту ссылку не откроет</span></p>`;
+    }
+    return '';
+  }
   function needActionHTML(n) {
     if (!n || !n.id) return '';
     const label = String(n.actionLabel ?? '').trim() || 'Решить';
-    return `<div class="need-action-wrap"><a class="need-action" href="${esc(needSolveHref(n))}">${esc(label)}</a></div>`;
+    const href = String(n.actionUrl || '').startsWith('/needs/') ? n.actionUrl : needSolveHref(n);
+    return `<div class="need-action-wrap"><a class="need-action" href="${esc(href)}">${esc(label)}</a>${needDocHTML(n)}</div>`;
   }
   function needCardHTML(n, withClose) {
     const view = Feed.needUrgencyView(n);
-    const close = withClose && !n.closedAt
+    const test = Feed.isTestNeed(n);
+    const close = withClose && !n.closedAt && !test
       ? `<div class="need-top"><button type="button" class="need-close" data-need="${esc(n.id)}">Закрыть</button></div>`
       : '';
-    return `<article class="need-item urg-${view}${n.closedAt ? ' is-closed' : ''}${view === 'stale' ? ' is-stale' : ''}" data-id="${esc(n.id)}">
+    return `<article class="need-item urg-${view}${n.closedAt ? ' is-closed' : ''}${view === 'stale' ? ' is-stale' : ''}${test ? ' is-test' : ''}" data-id="${esc(n.id)}">
       ${close}
-      <div class="need-what">${esc(n.what)}</div>
+      <div class="need-what">${test ? '<span class="test-mark">тест</span>' : ''}${esc(n.what)}</div>
       <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span>${n.answerStatus === 'answered' ? '<span class="need-answered">ответ получен</span>' : ''}</div>
       ${needActionHTML(n)}
     </article>`;
   }
-  async function closeNeed(id) {
-    if (!id) return;
-    if (!getPassword()) { pending = () => closeNeed(id); openModal(); return; }
+  function closeNeed(id) {
+    if (!id || Date.now() < blockAuthClicksUntil) return;
+    return closeNeedAuthed(id);
+  }
+  async function closeNeedAuthed(id) {
+    const token = authToken;
+    if (!id || token !== authToken) return;
+    const password = getPassword();
+    if (!password) {
+      if (token !== authToken) return;
+      queueAuth(() => closeNeedAuthed(id));
+      return;
+    }
+    if (token !== authToken) return;
     const res = await fetch(`/api/needs/${encodeURIComponent(id)}/close`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+      headers: { 'Content-Type': 'application/json', 'x-app-password': password },
       body: '{}',
     });
     const data = await res.json().catch(() => ({}));
+    if (token !== authToken) return;
     if (res.status === 401) {
       localStorage.removeItem('appPassword');
-      pending = () => closeNeed(id);
-      openModal('Пароль не подошёл. Попробуй ещё раз.');
+      if (token !== authToken) return;
+      queueAuth(() => closeNeedAuthed(id), 'Пароль не подошёл. Попробуй ещё раз.');
       return;
     }
     if (!res.ok) { toast('Не закрылось', data.error || `Ошибка ${res.status}`, 'x', true); return; }
@@ -1577,12 +1671,18 @@
     if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
     const box = $('#needsList');
     if (!box) return;
-    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.stale, n.checkedAt, n.actionUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\n');
+    const tests = Feed.testNeeds(S.needs || []);
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.kind, n.stale, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\n')
+      + '\n#test\n' + tests.map((n) => [n.id, n.what, n.closedAt].join('\u0001')).join('\n');
     if (box.dataset.sig === sig) return;
     const top = box.scrollTop;
-    box.innerHTML = list.length
+    const main = list.length
       ? list.map((n) => needCardHTML(n, false)).join('')
       : '<div class="empty"><b>Пусто</b>Сейчас от вас ничего не ждут.</div>';
+    const testBlock = tests.length
+      ? `<details class="needs-test"><summary>Тестовые</summary>${tests.map((n) => needCardHTML(n, false)).join('')}</details>`
+      : '';
+    box.innerHTML = main + testBlock;
     box.dataset.sig = sig;
     box.scrollTop = top;
   }
@@ -1734,17 +1834,17 @@
 
     function paintExternal() {
       if (!external) return;
-      const url = String(need && need.actionUrl || '').trim();
-      if (/^https:\/\/\S+$/i.test(url) && url.length <= 500) {
-        const label = String(need.actionLabel || '').trim() || 'Открыть ссылку';
-        external.innerHTML = `<a class="need-action" id="needExternalLink" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
-        return;
-      }
-      if (/^grokbot:\/\/\S+$/i.test(url) && url.length <= 500) {
-        external.innerHTML = `<p class="need-action-hint">${esc(url)} <span class="md-grok-hint">Откройте в Grok — браузер эту ссылку не откроет</span></p>`;
-        return;
-      }
-      external.innerHTML = '';
+      external.innerHTML = needDocHTML(need);
+    }
+    function showAnswerForm(data) {
+      if (!form) return;
+      const yesNo = !!(data && (data.yesNo || data.kind === 'approval' || data.kind === 'test' || data.answerable));
+      const textBox = $('#needTextAnswer');
+      const choice = $('#needYesNo');
+      form.hidden = !yesNo;
+      if (choice) choice.hidden = !yesNo;
+      if (textBox) textBox.hidden = true;
+      form.classList.toggle('is-test', !!(data && data.kind === 'test'));
     }
     function paintPublic() {
       if (title) title.textContent = need.what || 'Вопрос';
@@ -1758,17 +1858,19 @@
       paintPublic();
       const markdown = typeof data.details === 'string' ? data.details : '';
       if (details) details.innerHTML = markdown && window.renderSafeMarkdown ? window.renderSafeMarkdown(markdown) : '';
-      if (form) form.hidden = data.answerable !== true;
+      showAnswerForm(data);
     }
     async function loadPrivate() {
+      const token = authToken;
       const res = await fetch(`/api/needs/${encodeURIComponent(NEED_ID)}`, {
         headers: { 'x-app-password': getPassword() },
         cache: 'no-store',
       });
+      if (token !== authToken) return;
       if (res.status === 401) {
         localStorage.removeItem('appPassword');
-        pending = loadPrivate;
-        openModal('Пароль не подошёл. Попробуй ещё раз.');
+        if (token !== authToken) return;
+        queueAuth(loadPrivate, 'Пароль не подошёл. Попробуй ещё раз.');
         return;
       }
       const data = await res.json().catch(() => ({}));
@@ -1787,16 +1889,63 @@
       }
       need = data;
       paintPublic();
+      if (data.kind === 'test') {
+        showAnswerForm(data);
+        if (details) details.innerHTML = '';
+        return;
+      }
       if (details) details.innerHTML = '';
       if (form) form.hidden = true;
       if (!getPassword()) {
-        pending = loadPrivate;
-        openModal();
+        queueAuth(loadPrivate);
         return;
       }
       await loadPrivate();
     }
+    async function sendAnswer(body) {
+      const token = authToken;
+      const test = need && need.kind === 'test';
+      if (!test && !getPassword()) {
+        queueAuth(() => sendAnswer(body));
+        return;
+      }
+      if (token !== authToken) return;
+      if (msg) msg.textContent = 'Отправляю…';
+      let res;
+      let data = {};
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (!test && getPassword()) headers['x-app-password'] = getPassword();
+        res = await fetch(`/api/needs/${encodeURIComponent(NEED_ID)}/answer`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        });
+        data = await res.json().catch(() => ({}));
+      } catch (err) {
+        if (msg) msg.textContent = messageForClientException(err);
+        return;
+      }
+      if (token !== authToken) return;
+      if (res.status === 401) {
+        localStorage.removeItem('appPassword');
+        if (token !== authToken) return;
+        queueAuth(() => sendAnswer(body), 'Пароль не подошёл. Попробуй ещё раз.');
+        return;
+      }
+      if (!res.ok) {
+        if (msg) msg.textContent = data.error || 'Не удалось отправить';
+        return;
+      }
+      if (area) area.value = '';
+      if (msg) msg.textContent = data.closedAt ? 'Ответ записан, пункт закрыт' : 'Ответ отправлен';
+      paintPrivate(data);
+    }
     if (form) {
+      const yes = $('#needYes');
+      const no = $('#needNo');
+      if (yes) yes.onclick = () => sendAnswer({ answer: 'yes' });
+      if (no) no.onclick = () => sendAnswer({ answer: 'no' });
       form.onsubmit = async (e) => {
         e.preventDefault();
         const text = (area && area.value || '').trim();
@@ -1804,38 +1953,7 @@
           if (msg) msg.textContent = 'Напишите ответ';
           return;
         }
-        if (!getPassword()) {
-          pending = () => form.requestSubmit();
-          openModal();
-          return;
-        }
-        if (msg) msg.textContent = 'Отправляю…';
-        let res;
-        let data = {};
-        try {
-          res = await fetch(`/api/needs/${encodeURIComponent(NEED_ID)}/answer`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
-            body: JSON.stringify({ text }),
-          });
-          data = await res.json().catch(() => ({}));
-        } catch (err) {
-          if (msg) msg.textContent = messageForClientException(err);
-          return;
-        }
-        if (res.status === 401) {
-          localStorage.removeItem('appPassword');
-          pending = () => form.requestSubmit();
-          openModal('Пароль не подошёл. Попробуй ещё раз.');
-          return;
-        }
-        if (!res.ok) {
-          if (msg) msg.textContent = data.error || 'Не удалось отправить';
-          return;
-        }
-        if (area) area.value = '';
-        if (msg) msg.textContent = 'Ответ отправлен';
-        paintPrivate(data);
+        await sendAnswer({ text });
       };
     }
     loadPublic().catch(() => {
