@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 
 const received = [];
+const grokHits = [];
 const hook = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => (body += c));
@@ -18,6 +19,12 @@ const hook = http.createServer((req, res) => {
     res.end('{"ok":true}');
   });
 });
+const grokHook = http.createServer((req, res) => {
+  grokHits.push(req.url || '');
+  req.resume();
+  res.writeHead(204);
+  res.end();
+});
 
 let base;
 let server;
@@ -25,11 +32,15 @@ let office;
 
 before(async () => {
   await new Promise((r) => hook.listen(0, '127.0.0.1', r));
+  await new Promise((r) => grokHook.listen(0, '127.0.0.1', r));
   process.env.UPLOAD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'kremlin-uploads-'));
   process.env.APP_PASSWORD = 'pw-test';
   process.env.AGENT_TOKEN = 'tok-test';
-  process.env.GROK_WEBHOOK_URL = `http://127.0.0.1:${hook.address().port}/hook`;
+  process.env.GROK_WEBHOOK_URL = `http://127.0.0.1:${grokHook.address().port}/old`;
   process.env.GROK_WEBHOOK_KEY = 'hook-key';
+  process.env.KREMLIN_WEBHOOK_URL = `http://127.0.0.1:${hook.address().port}/hook`;
+  process.env.KREMLIN_WEBHOOK_KEY = 'hook-key';
+  delete process.env.KREMLIN_WEBHOOK_HEADER;
   process.env.PUBLIC_URL = 'https://example.test';
   delete process.env.PORYADOK_INGEST_TOKEN;
   office = require('../server.js');
@@ -43,6 +54,7 @@ before(async () => {
 after(() => {
   server && server.close();
   hook.close();
+  grokHook.close();
 });
 
 const json = (path, opts = {}) =>
@@ -185,19 +197,22 @@ test('задача создаётся и пересылается в вебху�
   });
   assert.equal(r.status, 201);
   assert.match(r.body.id, /^t-\d+$/);
-  assert.equal(r.body.status, 'отправлена');
+  assert.equal(r.body.status, 'отправлена Путину');
+  assert.equal(r.body.delivery, 'queue');
   assert.equal(r.body.forwardStatus, 200);
   const hit = received.find((x) => x.body && x.body.taskId === r.body.id);
   assert.ok(hit);
   assert.equal(hit.headers.authorization, 'Bearer hook-key');
   assert.equal(hit.headers['x-webhook-key'], 'hook-key');
-  assert.deepEqual(hit.body, {
-    agent: 'army',
-    text: 'Сделай дашборд по личному составу',
-    taskId: r.body.id,
-    messageId: `task:${r.body.id}`,
-    appUrl: 'https://example.test',
-  });
+  assert.equal(hit.body.type, 'owner_task');
+  assert.equal(hit.body.agentId, 'army');
+  assert.equal(hit.body.text, 'Сделай дашборд по личному составу');
+  assert.equal(hit.body.taskId, r.body.id);
+  assert.equal(hit.body.needId, undefined);
+  assert.equal(hit.body.appUrl, 'https://example.test');
+  assert.match(hit.body.at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(hit.body.atMsk, /^\d{2}\.\d{2} \d{2}:\d{2} МСК$/);
+  assert.equal(grokHits.length, 0);
   const st = await json('/api/state');
   const army = st.body.agents.find((a) => a.id === 'army');
   assert.equal(army.status, 'working');
@@ -334,9 +349,10 @@ test('вложение сохраняется, отдаётся и попада�
 
   const hit = received.find((x) => x.body && x.body.taskId === task.body.id);
   assert.ok(hit);
-  assert.match(hit.body.text, /Посмотри скриншот/);
-  assert.match(hit.body.text, new RegExp(`https://example\\.test/api/files/${att.id}`));
-  assert.equal(hit.body.attachments[0].url, `https://example.test/api/files/${att.id}`);
+  assert.equal(hit.body.type, 'owner_task');
+  assert.equal(hit.body.text, 'Посмотри скриншот');
+  assert.equal(hit.body.agentId, 'dev');
+  assert.equal(hit.body.attachments, undefined);
 
   const st = await json('/api/state');
   const saved = st.body.tasks.find((t) => t.id === task.body.id);
@@ -503,7 +519,7 @@ test('приказ: отправитель, цепочка и жизненный
     body: JSON.stringify({ agent: 'dev', text: 'Поправь экран' }),
   });
   assert.equal(dev.status, 201);
-  assert.equal(dev.body.status, 'отправлена');
+  assert.equal(dev.body.status, 'отправлена Путину');
   assert.equal(dev.body.agent, 'dev');
   assert.equal(dev.body.agentId, 'dev');
   assert.equal(dev.body.fromAgentId, 'grok');
@@ -580,7 +596,7 @@ test('приказ: отправитель, цепочка и жизненный
   assert.equal(progress.body.task.orderStatus, 'in_progress');
   assert.equal(progress.body.task.progress, 40);
   assert.equal(progress.body.task.note, 'Смотрю вёрстку');
-  assert.equal(progress.body.task.status, 'отправлена');
+  assert.equal(progress.body.task.status, 'отправлена Путину');
   const sameProgress = await json(`/api/orders/${dev.body.id}`, {
     method: 'POST', headers: tok,
     body: JSON.stringify({ status: 'in_progress', progress: 40, note: 'Смотрю вёрстку' }),
@@ -1231,10 +1247,14 @@ test('архивные агенты не принимают задачи, ист
     method: 'POST', headers: pw,
     body: JSON.stringify({ text: 'Ответ архивному репетитору' }),
   });
-  assert.ok(langAnswer.status >= 400 && langAnswer.status < 500, String(langAnswer.status));
-  assert.equal(langAnswer.status, 409);
+  assert.equal(langAnswer.status, 201);
+  assert.equal(langAnswer.body.answers.at(-1).text, 'Ответ архивному репетитору');
   const after = await json('/api/state');
   assert.equal(after.body.tasks.some((t) => t.agent === 'lang' && /Ответ архивному репетитору/.test(t.text || '')), false);
+  const queuedLang = after.body.tasks.find((t) => t.agent === 'grok' && /Ответ архивному репетитору/.test(t.text || ''));
+  assert.ok(queuedLang);
+  assert.equal(queuedLang.delivery, 'queue');
+  assert.equal(queuedLang.fromAgentId, 'owner');
   assert.ok(after.body.needs.some((n) => n.id === langNeed.body.id && n.fromAgentId === 'lang'));
 });
 

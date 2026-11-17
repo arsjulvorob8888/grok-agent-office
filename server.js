@@ -13,10 +13,15 @@ const { createPoryadokSync } = require('./lib/poryadok-sync');
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
 const AGENT_TOKEN = process.env.AGENT_TOKEN || '';
-const GROK_WEBHOOK_URL = process.env.GROK_WEBHOOK_URL || '';
-const GROK_WEBHOOK_KEY = process.env.GROK_WEBHOOK_KEY || '';
-const GROK_WEBHOOK_HEADER = process.env.GROK_WEBHOOK_HEADER || 'Authorization';
 const PUBLIC_URL = process.env.PUBLIC_URL || '';
+
+// GROK_WEBHOOK_* больше не маршрут. Значения не читаем в запросы и не пишем в лог.
+function noteIgnoredGrokWebhook() {
+  const names = ['GROK_WEBHOOK_URL', 'GROK_WEBHOOK_KEY', 'GROK_WEBHOOK_HEADER'];
+  const present = names.some((name) => String(process.env[name] || '').trim() !== '');
+  if (present) console.log('GROK_WEBHOOK_URL больше не используется');
+}
+noteIgnoredGrokWebhook();
 
 // Приказы, переписка, «Нужно от вас» и байты вложений пишет lib/store.js в Postgres,
 // если DATABASE_URL задан и база доступна при старте. Иначе всё остаётся в памяти,
@@ -461,6 +466,7 @@ const state = {
   nextMessageId: 1,
   nextNeedId: 1,
   nextRoutineId: 1,
+  migrations: { financeTextReopen: false },
 };
 
 const NEED_URGENCY = new Set(['low', 'normal', 'high']);
@@ -579,6 +585,11 @@ function resolveNeedsByEnv(env = process.env, now = new Date().toISOString()) {
     item.closedBy = 'auto-env';
     item.updatedAt = now;
     closed += 1;
+    if (!isTestNeedItem(item)) {
+      void deliverNeedEvent({ item, type: 'close', text: needCloseText(item) }).catch(() => {
+        console.error('Не удалось поставить закрытие в очередь');
+      });
+    }
   }
   return closed;
 }
@@ -706,8 +717,79 @@ function migrateOwnerNeeds(list = state.needs) {
     if (!item || item.id !== RENDER_NEED_ID) continue;
     if (!item.closedAt) item.closedAt = now;
   }
+  const reopenedFinance = reopenFinanceTextNeed(list);
   if (list === state.needs) resolveNeedsByEnv();
+  if (reopenedFinance && list === state.needs) schedulePoryadok();
   return list;
+}
+
+const FINANCE_TEXT_NOTE = 'до текстового поля';
+
+function migrationFlags(list) {
+  if (list === state.needs) {
+    if (!state.migrations || typeof state.migrations !== 'object') state.migrations = {};
+    return state.migrations;
+  }
+  if (!Object.prototype.hasOwnProperty.call(list, 'migrationFlags')) {
+    Object.defineProperty(list, 'migrationFlags', { value: {}, enumerable: false, writable: true });
+  }
+  return list.migrationFlags;
+}
+
+function yesNoLabel(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'no' || text === 'нет') return 'Нет';
+  if (text === 'yes' || text === 'да') return 'Да';
+  return '';
+}
+
+function needHasTextAnswer(item) {
+  const answers = Array.isArray(item && item.answers) ? item.answers : [];
+  return answers.some((entry) => {
+    const text = entry && typeof entry.text === 'string' ? entry.text.trim() : '';
+    return !!text && !yesNoLabel(text);
+  });
+}
+
+// Один раз: need-finance, закрытый кнопкой «Да» до текстового поля, снова открыт.
+// need-social не трогаем. Флаг в состоянии не даёт открыть пункт повторно.
+function reopenFinanceTextNeed(list) {
+  if (!Array.isArray(list)) return false;
+  const flags = migrationFlags(list);
+  if (flags.financeTextReopen) return false;
+  flags.financeTextReopen = true;
+  const item = list.find((n) => n && n.id === FINANCE_NEED_ID);
+  if (!item || !item.closedAt || needHasTextAnswer(item)) return false;
+  if (!Array.isArray(item.answers)) item.answers = [];
+  let marked = false;
+  for (const entry of item.answers) {
+    if (!entry || typeof entry !== 'object') continue;
+    if (!yesNoLabel(entry.text)) continue;
+    entry.note = FINANCE_TEXT_NOTE;
+    marked = true;
+  }
+  if (!marked && yesNoLabel(item.answer)) {
+    item.answers.push({
+      text: yesNoLabel(item.answer),
+      at: item.answeredAt || item.closedAt || new Date().toISOString(),
+      by: 'owner',
+      note: FINANCE_TEXT_NOTE,
+    });
+  }
+  item.answer = null;
+  item.answeredAt = null;
+  item.answerStatus = null;
+  item.answerMode = 'text';
+  item.closedAt = null;
+  item.closedBy = null;
+  item.updatedAt = new Date().toISOString();
+  return true;
+}
+
+function schedulePoryadok() {
+  try {
+    if (poryadokSync && typeof poryadokSync.schedule === 'function') poryadokSync.schedule();
+  } catch (_) { /* синхронизация ещё не собрана или выключена */ }
 }
 
 function migrateExternalNeedStore() {
@@ -722,7 +804,10 @@ function migrateExternalNeedStore() {
   }
   if (typeof store.withNeeds === 'function') {
     try {
-      store.withNeeds((list) => { if (Array.isArray(list)) migrateOwnerNeeds(list); });
+      store.withNeeds((list) => {
+        if (Array.isArray(list)) migrateOwnerNeeds(list);
+        if (list === state.needs && state.migrations) store.noteMigrations(state.migrations);
+      });
     } catch (err) {
       console.error('Миграция needs в хранилище не выполнена', err && err.message);
     }
@@ -865,11 +950,15 @@ function isFixtureTestNeed(item) {
 
 function publicAnswers(item) {
   const list = Array.isArray(item && item.answers) ? item.answers : [];
-  return list.slice(-ANSWERS_MAX).map((answer) => ({
-    text: typeof answer.text === 'string' ? answer.text : '',
-    at: answer.at || null,
-    by: typeof answer.by === 'string' && answer.by ? answer.by : null,
-  }));
+  return list.slice(-ANSWERS_MAX).map((answer) => {
+    const view = {
+      text: typeof answer.text === 'string' ? answer.text : '',
+      at: answer.at || null,
+      by: typeof answer.by === 'string' && answer.by ? answer.by : null,
+    };
+    if (typeof answer.note === 'string' && answer.note.trim()) view.note = answer.note.trim();
+    return view;
+  });
 }
 
 function publicNeed(item, now = Date.now(), opts = {}) {
@@ -1098,19 +1187,47 @@ function nextSlot() {
   return { x: 40 + (i % 5) * 170, y: 40 + Math.floor(i / 5) * 160 };
 }
 
-function webhookHeaders() {
+// Голый ключ → `Bearer <key>`. Уже готовое значение (`Bearer …`, `Basic …`
+// или целиком `Authorization: …`) уходит как есть. x-webhook-key всегда голый ключ.
+function parseKremlinKey(raw) {
+  let value = String(raw == null ? '' : raw).trim();
+  if (!value) return { authorization: '', bare: '' };
+  value = value.replace(/^authorization:\s*/i, '').trim();
+  if (!value) return { authorization: '', bare: '' };
+  const scheme = value.match(/^(bearer|basic)\s+(\S[\s\S]*)$/i);
+  if (scheme) return { authorization: value, bare: scheme[2].trim() };
+  return { authorization: `Bearer ${value}`, bare: value };
+}
+
+function kremlinWebhookHeaders(env = process.env) {
   const headers = { 'Content-Type': 'application/json' };
-  if (!GROK_WEBHOOK_KEY) return headers;
-  headers['x-webhook-key'] = GROK_WEBHOOK_KEY;
-  const name = GROK_WEBHOOK_HEADER || 'Authorization';
-  if (name.toLowerCase() !== 'x-webhook-key') {
-    if (name.toLowerCase() === 'authorization') {
-      headers[name] = `Bearer ${GROK_WEBHOOK_KEY}`;
-    } else {
-      headers[name] = GROK_WEBHOOK_KEY;
-    }
+  const parsed = parseKremlinKey(env && env.KREMLIN_WEBHOOK_KEY);
+  if (!parsed.authorization) return headers;
+  if (parsed.bare) headers['x-webhook-key'] = parsed.bare;
+  headers.Authorization = parsed.authorization;
+  const name = String((env && env.KREMLIN_WEBHOOK_HEADER) || '').trim();
+  if (name && name.toLowerCase() !== 'authorization' && name.toLowerCase() !== 'x-webhook-key') {
+    headers[name] = parsed.authorization;
   }
   return headers;
+}
+
+function formatAtMsk(iso) {
+  const date = new Date(iso);
+  const when = Number.isNaN(date.getTime()) ? new Date() : date;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(when);
+  const pick = (type) => {
+    const part = parts.find((p) => p.type === type);
+    return part ? part.value : '00';
+  };
+  return `${pick('day')}.${pick('month')} ${pick('hour')}:${pick('minute')} МСК`;
 }
 
 function pushTask(task) {
@@ -1126,14 +1243,6 @@ function httpError(status, error) {
   return err;
 }
 
-function absoluteUrl(urlPath) {
-  if (!urlPath) return '';
-  if (/^https?:\/\//i.test(urlPath)) return urlPath;
-  const base = String(PUBLIC_URL || '').replace(/\/$/, '');
-  if (!base) return urlPath;
-  return base + (urlPath.startsWith('/') ? urlPath : `/${urlPath}`);
-}
-
 const PRIVATE_FIELDS = new Set(['seq', 'ord', 'bytes', 'extra', 'storedName', 'createdAtMs', 'forwardError']);
 
 function withStoredFields(base, source) {
@@ -1143,7 +1252,6 @@ function withStoredFields(base, source) {
   }
   return base;
 }
-
 function publicAttachment(rec) {
   return {
     id: rec.id || null,
@@ -1154,8 +1262,9 @@ function publicAttachment(rec) {
   };
 }
 
-// Приказ поверх старой задачи. Поле status (отправлена / выполнена / …) не трогаем:
-// его уже читают вебхук, опыт и старые клиенты. Жизнь приказа живёт в orderStatus.
+// Приказ поверх старой задачи. Поле status («в очереди агента», «отправлена Путину»,
+// «выполнена») не трогаем при смене orderStatus: его читают очередь и старые клиенты.
+// Жизнь приказа живёт в orderStatus.
 // Цепочка: sent → accepted → in_progress (шаг можно пропустить) → done, либо failed.
 const ORDER_NEXT = {
   sent: new Set(['accepted', 'failed']),
@@ -1182,6 +1291,7 @@ function publicTask(t) {
     parentOrderId: t.parentOrderId || null,
     text: t.text,
     status: t.status,
+    delivery: t.delivery || null,
     orderStatus: t.orderStatus || 'sent',
     progress: t.progress ?? null,
     note: t.note || '',
@@ -1296,7 +1406,10 @@ function applyOrderUpdate(task, input, opts = {}) {
     task.status = 'выполнена';
     if (firstDone) {
       const owner = findAgent(task.agent) || opts.creditAgent || null;
-      if (owner) owner.completed = (owner.completed || 0) + 1;
+      if (owner) {
+        owner.completed = (owner.completed || 0) + 1;
+        store.noteAgent(owner);
+      }
     }
   }
   pushOrderHistory(task, entry);
@@ -1560,13 +1673,6 @@ function addMessage(input) {
   return { message: publicMessage(message), duplicate: false };
 }
 
-function textForAgent(text, attachments) {
-  if (!attachments || !attachments.length) return text;
-  const lines = attachments.map((a) => `- ${a.name}: ${a.url}`);
-  const head = text ? text : '(без текста)';
-  return `${head}\n\nВложения:\n${lines.join('\n')}`;
-}
-
 function readTimestamp(body) {
   const raw = body.timestamp != null && body.timestamp !== '' ? body.timestamp : body.createdAt;
   if (raw == null || raw === '') return new Date().toISOString();
@@ -1810,7 +1916,10 @@ app.post('/api/needs/:id/close', requireUserOrAgent, async (req, res) => {
   item.updatedAt = item.closedAt;
   console.log(`need closed: ${item.id} by ${who.id}`);
   store.noteNeed(item);
-  if (!isTestNeedItem(item)) poryadokSync.schedule();
+  if (!isTestNeedItem(item)) {
+    poryadokSync.schedule();
+    await deliverNeedEvent({ item, type: 'close', text: needCloseText(item) });
+  }
   await store.flush();
   res.json(publicNeed(item));
 });
@@ -1819,6 +1928,7 @@ app.patch('/api/needs/:id', requireUserOrAgent, async (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  let justClosed = false;
   try {
     if (Object.prototype.hasOwnProperty.call(body, 'what')) item.what = needText(body.what, 'what', 500);
     if (Object.prototype.hasOwnProperty.call(body, 'where')) item.where = needText(body.where, 'where', 300);
@@ -1838,6 +1948,7 @@ app.patch('/api/needs/:id', requireUserOrAgent, async (req, res) => {
         if (who.error) throw httpError(400, who.error);
         item.closedAt = new Date().toISOString();
         item.closedBy = who.id;
+        justClosed = true;
       }
     }
   } catch (err) {
@@ -1847,6 +1958,7 @@ app.patch('/api/needs/:id', requireUserOrAgent, async (req, res) => {
   item.updatedAt = new Date().toISOString();
   store.noteNeed(item);
   if (!isTestNeedItem(item)) poryadokSync.schedule();
+  if (justClosed) await deliverNeedEvent({ item, type: 'close', text: needCloseText(item) });
   await store.flush();
   res.json(publicNeed(item, Date.now(), { includePrivate: hqPasswordOk(req) }));
 });
@@ -1907,11 +2019,82 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
   }
 });
 
-async function issueOwnerTask({ agentId, text, fromAgentId, parentOrderId, attachments }) {
+function needCloseText(item) {
+  return `Пункт «${item && item.what ? item.what : ''}» закрыт`;
+}
+
+function needAnswerText(item, text) {
+  return `Ответ Арсения на «${item && item.what ? item.what : ''}»: ${text}`;
+}
+
+// Ждущий агент забирает задачу сам. Нет способа забрать — запись в очереди Путина (grok).
+function queueRecipient(fromAgentId) {
+  const id = typeof fromAgentId === 'string' ? fromAgentId.trim() : '';
+  if (!id || id === 'owner' || id === 'grok') return 'grok';
+  const agent = findAgent(id);
+  if (!agent || agent.archived || agent.vacant) return 'grok';
+  return agent.id;
+}
+
+function openTask(task) {
+  if (!task) return false;
+  if (task.orderStatus === 'done' || task.orderStatus === 'failed') return false;
+  if (task.status === 'выполнена') return false;
+  return true;
+}
+
+async function notifyKremlin(event) {
+  const url = String(process.env.KREMLIN_WEBHOOK_URL || '').trim();
+  if (!url) return { sent: false, attempted: false };
+  const at = event.at || new Date().toISOString();
+  const payload = {
+    type: event.type,
+    agentId: event.agentId,
+    text: event.text || '',
+    at,
+    atMsk: formatAtMsk(at),
+    appUrl: PUBLIC_URL,
+  };
+  if (event.needId) payload.needId = event.needId;
+  if (event.taskId) payload.taskId = event.taskId;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: kremlinWebhookHeaders(),
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (response && typeof response.arrayBuffer === 'function') await response.arrayBuffer().catch(() => {});
+    if (!response || !response.ok) {
+      const code = response && Number.isFinite(Number(response.status)) ? response.status : 0;
+      console.error(`Вебхук Кремля не доставлен: HTTP ${code}`);
+      return { sent: false, attempted: true, status: code, error: `HTTP ${code}` };
+    }
+    return { sent: true, attempted: true, status: response.status };
+  } catch (err) {
+    const timeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    const kind = timeout ? 'timeout' : 'network_error';
+    console.error(`Вебхук Кремля не доставлен: ${kind}`);
+    return { sent: false, attempted: true, status: 0, error: kind };
+  }
+}
+
+function applyKremlinResult(task, result) {
+  if (!task || !result || !result.attempted) return;
+  if (result.sent) {
+    task.status = 'отправлена Путину';
+    task.forwardStatus = result.status;
+    task.forwardError = null;
+    return;
+  }
+  task.status = 'в очереди агента';
+  task.forwardStatus = result.status;
+  if (result.error) task.forwardError = result.error;
+}
+
+async function enqueueQueueTask({ agentId, text, fromAgentId, parentOrderId, attachments, event }) {
   const agent = findAgent(agentId);
   if (!agent) throw httpError(400, 'Неизвестный агент');
-  if (agent.vacant) throw httpError(400, 'Это свободное направление: сначала дай ему название');
-  if (agent.archived) throw httpError(409, 'Агент в архиве: новые задачи и приказы ему не ставятся');
   const bodyText = typeof text === 'string' ? text : '';
   const files = Array.isArray(attachments) ? attachments : [];
   if (bodyText.length > 20000) throw httpError(400, 'Слишком длинная задача (максимум 20000 символов)');
@@ -1924,12 +2107,14 @@ async function issueOwnerTask({ agentId, text, fromAgentId, parentOrderId, attac
     fromAgentId: fromAgentId || 'owner',
     parentOrderId: parentOrderId || null,
     text: bodyText,
-    status: GROK_WEBHOOK_URL ? 'отправлена' : 'не отправлена: вебхук не настроен',
+    status: 'в очереди агента',
+    delivery: 'queue',
     orderStatus: 'sent',
     progress: null,
     note: '',
     createdAt: new Date().toISOString(),
     forwardStatus: null,
+    forwardError: null,
     result: null,
     history: [],
     attachments: files,
@@ -1956,40 +2141,62 @@ async function issueOwnerTask({ agentId, text, fromAgentId, parentOrderId, attac
   });
 
   agent.status = 'working';
-  agent.now = bodyText || `Файлы: ${files.map((a) => a.name).join(', ')}`.slice(0, 300);
+  agent.now = (bodyText || `Файлы: ${files.map((a) => a.name).join(', ')}`).slice(0, 300);
+  store.noteAgent(agent);
   pushTask(task);
   releaseUnusedFiles();
 
-  const forwardedAttachments = files.map((a) => ({
-    name: a.name,
-    mime: a.mime,
-    size: a.size,
-    url: absoluteUrl(a.url),
-  }));
-  const payload = {
-    agent: agentId,
-    text: textForAgent(bodyText, forwardedAttachments),
-    taskId: task.id,
-    messageId: task.messageId,
-    appUrl: PUBLIC_URL,
+  const notice = {
+    type: event && event.type ? event.type : 'owner_task',
+    agentId: event && event.agentId ? event.agentId : agentId,
+    text: event && event.text != null ? event.text : bodyText,
+    at: task.createdAt,
   };
-  if (forwardedAttachments.length) payload.attachments = forwardedAttachments;
-
-  if (GROK_WEBHOOK_URL) {
-    try {
-      const response = await fetch(GROK_WEBHOOK_URL, {
-        method: 'POST',
-        headers: webhookHeaders(),
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(10000),
-      });
-      task.forwardStatus = response.status;
-    } catch (err) {
-      task.forwardStatus = 0;
-      task.forwardError = err && err.name === 'TimeoutError' ? 'timeout' : 'network_error';
-    }
+  if (event && event.needId) notice.needId = event.needId;
+  if (!notice.needId) notice.taskId = task.id;
+  try {
+    applyKremlinResult(task, await notifyKremlin(notice));
+  } catch (_) {
+    task.status = 'в очереди агента';
+    task.forwardStatus = 0;
+    task.forwardError = 'network_error';
+    console.error('Вебхук Кремля не доставлен: network_error');
   }
   return task;
+}
+
+async function issueOwnerTask({ agentId, text, fromAgentId, parentOrderId, attachments }) {
+  const agent = findAgent(agentId);
+  if (!agent) throw httpError(400, 'Неизвестный агент');
+  if (agent.vacant) throw httpError(400, 'Это свободное направление: сначала дай ему название');
+  if (agent.archived) throw httpError(409, 'Агент в архиве: новые задачи и приказы ему не ставятся');
+  const bodyText = typeof text === 'string' ? text : '';
+  return enqueueQueueTask({
+    agentId,
+    text: bodyText,
+    fromAgentId,
+    parentOrderId,
+    attachments,
+    event: { type: 'owner_task', agentId, text: bodyText },
+  });
+}
+
+async function deliverNeedEvent({ item, type, text }) {
+  if (!item || isTestNeedItem(item)) return null;
+  const agentId = queueRecipient(item.fromAgentId);
+  try {
+    return await enqueueQueueTask({
+      agentId,
+      text,
+      fromAgentId: 'owner',
+      parentOrderId: null,
+      attachments: [],
+      event: { type, needId: item.id, agentId, text },
+    });
+  } catch (_) {
+    console.error('Не удалось поставить событие пункта в очередь');
+    return null;
+  }
 }
 
 function parseYesNo(body) {
@@ -2056,21 +2263,7 @@ app.post('/api/needs/:id/answer', async (req, res) => {
       }
       if (!choice) return res.status(400).json({ error: 'answer должен быть yes или no' });
       const word = yesNoWord(choice);
-      if (!testNeed) {
-        try {
-          await issueOwnerTask({
-            agentId: item.fromAgentId,
-            text: `Ответ Арсения на «${item.what || ''}»: ${word}`,
-            fromAgentId: 'owner',
-            parentOrderId: null,
-            attachments: [],
-          });
-        } catch (err) {
-          const status = err.status || 500;
-          if (!err.status) console.error(err);
-          return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
-        }
-      }
+      if (!testNeed) await deliverNeedEvent({ item, type: 'answer', text: needAnswerText(item, word) });
       if (item.closedAt) return res.status(409).json({ error: 'Пункт уже закрыт' });
       item.answer = choice;
       item.answeredAt = nowIso;
@@ -2089,21 +2282,7 @@ app.post('/api/needs/:id/answer', async (req, res) => {
     if (text.length > ANSWER_MAX) {
       return res.status(400).json({ error: `Слишком длинный ответ (максимум ${ANSWER_MAX} символов)` });
     }
-    if (!testNeed) {
-      try {
-        await issueOwnerTask({
-          agentId: item.fromAgentId,
-          text: `Ответ Арсения на «${item.what || ''}»: ${text}`,
-          fromAgentId: 'owner',
-          parentOrderId: null,
-          attachments: [],
-        });
-      } catch (err) {
-        const status = err.status || 500;
-        if (!err.status) console.error(err);
-        return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
-      }
-    }
+    if (!testNeed) await deliverNeedEvent({ item, type: 'answer', text: needAnswerText(item, text) });
     if (item.closedAt) return res.status(409).json({ error: 'Пункт уже закрыт' });
     pushNeedAnswer(item, { text, at: nowIso, by: 'owner' });
     settleNeedAnswer(item, nowIso, partial);
@@ -2391,6 +2570,18 @@ registerHeartbeat(app, {
 
 // Рутина сообщает старт и финиш. Пока finishedAt пустой, агент не спит,
 // даже если старт был раньше окна ACTIVITY_WINDOW_MIN.
+app.get('/api/agents/:id/tasks', requireAgentToken, (req, res) => {
+  const agent = findAgent(String(req.params.id || ''));
+  if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
+  const raw = req.query.status == null || req.query.status === '' ? 'open' : String(req.query.status);
+  if (raw !== 'open' && raw !== 'all') {
+    return res.status(400).json({ error: 'status должен быть open или all' });
+  }
+  let tasks = state.tasks.filter((task) => (task.agentId || task.agent) === agent.id);
+  if (raw === 'open') tasks = tasks.filter(openTask);
+  res.json({ agentId: agent.id, tasks: tasks.map(publicTask) });
+});
+
 app.post('/api/agents/:id/routine', requireAgentToken, async (req, res) => {
   const agent = findAgent(String(req.params.id || ''));
   if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
@@ -2516,4 +2707,8 @@ module.exports = {
   SOCIAL_ACTION_URL,
   SOCIAL_ACTION_HINT,
   ACTION_URL_MAX,
+  parseKremlinKey,
+  kremlinWebhookHeaders,
+  formatAtMsk,
+  FINANCE_TEXT_NOTE,
 };

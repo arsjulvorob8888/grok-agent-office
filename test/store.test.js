@@ -243,6 +243,13 @@ async function seedOffice(base) {
   });
   assert.equal(closedTest.status, 201);
   assert.ok(closedTest.body.closedAt);
+  const marked = await json(base, '/api/status', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-test' },
+    body: JSON.stringify({ agent: 'dev', status: 'idle', now: 'Жду следующую', done: 'Сохранил опыт' }),
+  });
+  assert.equal(marked.status, 200);
+  assert.equal(marked.body.agent.completed, 2);
 
   return {
     png: png.body.attachments[0],
@@ -395,7 +402,7 @@ describe('хранилище', { concurrency: 1 }, () => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
     try {
       const version = await pool.query(`SELECT version FROM ${schema}.schema_version ORDER BY version`);
-      assert.deepEqual(version.rows.map((row) => row.version), [1, 2, 3]);
+      assert.deepEqual(version.rows.map((row) => row.version), [1, 2, 3, 4]);
       await pool.query(`UPDATE ${schema}.needs SET what = $1 WHERE id = $2`, ['Отредактировано вручную', 'need-finance']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-social']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-academy']);
@@ -479,6 +486,11 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(ids.includes('need-render-api'), false);
       assert.equal(state.body.needs.some((item) => item.id === 'need-academy' || item.id === 'need-render-api'), false);
       assert.equal(state.body.agents.find((agent) => agent.id === 'advisor').analysis, 'смотрит риски');
+      const dev = state.body.agents.find((agent) => agent.id === 'dev');
+      assert.equal(dev.completed, 2);
+      assert.equal(dev.status, 'idle');
+      assert.equal(dev.now, 'Жду следующую');
+      assert.equal(dev.done[0], 'Сохранил опыт');
       assert.ok(ids.includes('need-finance'));
       const finance = needs.body.needs.find((item) => item.id === 'need-finance');
       assert.equal(finance.what, 'Отредактировано вручную');
@@ -542,7 +554,7 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.notEqual(third.body.id, made.parent.id);
       assert.notEqual(third.body.id, made.child.id);
       const nums = [made.parent.id, made.child.id, third.body.id].map((id) => Number(id.slice(2)));
-      assert.deepEqual(nums, [1, 2, 4]);
+      assert.deepEqual(nums, [1, 2, 5]);
       assert.equal(made.autoId, 'm-1');
       const nextMessage = await json(second.base, '/api/messages', {
         method: 'POST',
@@ -553,6 +565,63 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(nextMessage.body.message.id, 'm-2');
     } finally {
       await stopOffice(second);
+      await dropSchema(schema);
+    }
+  });
+
+  test('financeTextReopen один раз и не повторяется после рестарта', { skip: process.env.DATABASE_URL ? false : 'DATABASE_URL не задан' }, async () => {
+    const schema = `m_${crypto.randomBytes(4).toString('hex')}`;
+    const env = { DATABASE_URL: process.env.DATABASE_URL, STORE_SCHEMA: schema };
+    const first = await startOffice(env);
+    await stopOffice(first);
+    const { Pool } = require('pg');
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+    try {
+      await pool.query(
+        `UPDATE ${schema}.needs SET closed_at = now(), extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb WHERE id = 'need-finance'`,
+        [JSON.stringify({
+          answer: 'yes',
+          answers: [{ text: 'Да', at: '2026-11-17T12:00:00.000Z', by: 'owner' }],
+          closedBy: 'owner',
+          answerMode: 'text',
+        })],
+      );
+      await pool.query(
+        `INSERT INTO ${schema}.app_state (key, value) VALUES ('migrations', '{"financeTextReopen":false}'::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      );
+    } finally {
+      await pool.end();
+    }
+
+    const second = await startOffice(env);
+    try {
+      const finance = await json(second.base, '/api/needs/need-finance', {
+        headers: { 'x-app-password': 'pw-test' },
+      });
+      assert.equal(finance.status, 200);
+      assert.equal(finance.body.closedAt, null);
+      assert.equal(finance.body.answerMode, 'text');
+      assert.equal((finance.body.answers || []).some((entry) => entry.note === 'до текстового поля'), true);
+      const closed = await json(second.base, '/api/needs/need-finance/close', {
+        method: 'POST',
+        headers: { 'x-app-password': 'pw-test' },
+        body: '{}',
+      });
+      assert.equal(closed.status, 200);
+      assert.ok(closed.body.closedAt);
+    } finally {
+      await stopOffice(second);
+    }
+
+    const third = await startOffice(env);
+    try {
+      const finance = await json(third.base, '/api/needs/need-finance', {
+        headers: { 'x-app-password': 'pw-test' },
+      });
+      assert.ok(finance.body.closedAt);
+    } finally {
+      await stopOffice(third);
       await dropSchema(schema);
     }
   });

@@ -100,6 +100,8 @@
     });
     const seen = new Set();
     for (const a of agents) {
+      const drawn = document.querySelector(`#agents .agent[data-id="${CSS.escape(a.id)}"]`);
+      if (!drawn) continue;
       const el = markerFor(a.id);
       if (!el) continue;
       seen.add(a.id);
@@ -118,8 +120,9 @@
         ? `${name} работает${a.currentTask ? `: ${a.currentTask}` : ''}`
         : (mode === 'waiting' ? `${name} ждёт` : `${name} спит`);
       el.setAttribute('aria-label', label);
-      el.dataset.x = String(a.x);
-      el.dataset.y = String(a.y);
+      const at = /translate\(\s*([-\d.]+)[ ,]([-\d.]+)/.exec(drawn.getAttribute('transform') || '');
+      el.dataset.x = at ? at[1] : String(a.x);
+      el.dataset.y = at ? at[2] : String(a.y);
     }
     document.querySelectorAll('#overlay .act-marker').forEach((el) => {
       if (!seen.has(el.dataset.id)) el.remove();
