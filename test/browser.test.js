@@ -108,6 +108,8 @@ test('на ширине 390 иерархия не прячется под пан
     assert.match(treeText, /8\.\s*Тестировщик ПО/);
     assert.match(treeText, /9\.\s*Technology Blog/);
     assert.match(treeText, /10\.\s*Language Coach/);
+    assert.match(treeText, /11\.\s*Соцсети/);
+    assert.match(treeText, /12\.\s*Рутины/);
     assert.doesNotMatch(treeText, /Business Adviser/);
     assert.doesNotMatch(treeText, /Трейдинг/);
     assert.equal(hit.panelOpen, false);
@@ -343,6 +345,7 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.match(text, /Академию агентов/);
     assert.match(text, /Чаты агентов в Grok/);
     assert.match(text, /Instagram и YouTube/);
+    assert.match(text, /Соцсети/);
     assert.match(text, /финансовых вопросов/);
     assert.match(text, /Финансы/);
     assert.ok(info.popLeft >= -1 && info.popRight <= info.vw + 1, `попап шире экрана: ${info.popLeft}..${info.popRight}`);
@@ -514,7 +517,7 @@ test('файл больше 10 МБ не уходит на сервер', { time
     await attachOnPage(page, big);
     const onAttach = await page.$eval('#formMsg', (el) => el.textContent);
     assert.equal(onAttach, 'Файл слишком большой (макс. 10 МБ)');
-    await page.click('#taskForm button[type=submit]');
+    await page.click('#taskSubmit');
     const after = await page.$eval('#formMsg', (el) => el.textContent);
     assert.equal(after, 'Файл слишком большой (макс. 10 МБ)');
     assert.equal(posts.some((p) => p === '/api/upload' || p === '/api/task'), false);
@@ -533,7 +536,7 @@ test('неверный пароль показывает «Неверный па
   try {
     await page.evaluate(() => localStorage.setItem('appPassword', 'wrong-password'));
     await page.$eval('#taskText', (el) => { el.value = 'Это не должно сохраниться'; });
-    await page.click('#taskForm button[type=submit]');
+    await page.click('#taskSubmit');
     await page.waitForFunction(() => document.querySelector('#formMsg')?.textContent === 'Неверный пароль', { timeout: 8000 });
     assert.ok(posts.includes('/api/task'));
     assert.equal(await page.$eval('#modal', (el) => el.classList.contains('show')), true);
@@ -625,7 +628,7 @@ test('остановленный сервер — это обрыв связи, 
     await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
     await page.$eval('#taskText', (el) => { el.value = 'Сервер уже ляжет'; });
     await new Promise((resolve, reject) => stopped.close((err) => (err ? reject(err) : resolve())));
-    await page.click('#taskForm button[type=submit]');
+    await page.click('#taskSubmit');
     await page.waitForFunction(() => document.querySelector('#formMsg')?.textContent === 'Нет связи с сервером', { timeout: 8000 });
   } finally {
     await page.close();

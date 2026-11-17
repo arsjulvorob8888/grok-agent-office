@@ -67,7 +67,7 @@ if (!CHROME || !puppeteer) {
           lastClipped: last.right > box.right + 1,
         };
       });
-      assert.ok(before.count >= 11, `агентов в полосе ${before.count}`);
+      assert.ok(before.count >= 14, `агентов в полосе ${before.count}`);
       assert.ok(before.max > 40, 'полоса не переполнена, листать нечего');
       assert.notEqual(before.scrollbar, 'none');
       assert.equal(before.touch, 'pan-x');
@@ -93,6 +93,7 @@ if (!CHROME || !puppeteer) {
           inside: last.left >= box.left - 1 && last.right <= box.right + 2,
         };
       });
+      assert.equal(end.id, 'routines', `последний в полосе ${end.id}, ждали Рутины`);
       assert.equal(end.inside, true, `последний агент ${end.id} не попал в видимую полосу`);
     } finally {
       await page.close();
@@ -103,11 +104,11 @@ if (!CHROME || !puppeteer) {
     const page = await pageAt(1280, 800, false);
     try {
       await page.goto(base + '/?theme=day&agent=grok', { waitUntil: 'networkidle0', timeout: 30000 });
-      await page.waitForSelector('#taskForm button[type=submit]');
+      await page.waitForSelector('#taskSubmit');
       const required = await page.$eval('#taskText', (el) => el.required);
       assert.equal(required, false, 'required снова блокирует submit и клик молчит');
 
-      await page.click('#taskForm button[type=submit]');
+      await page.click('#taskSubmit');
       const empty = await page.evaluate(() => ({
         modal: document.querySelector('#modal').classList.contains('show'),
         msg: document.querySelector('#formMsg').textContent,
@@ -116,7 +117,7 @@ if (!CHROME || !puppeteer) {
       assert.match(empty.msg, /Напиши, что нужно сделать/);
 
       await page.$eval('#taskText', (el) => { el.value = 'Проверь клик по кнопке'; });
-      await page.click('#taskForm button[type=submit]');
+      await page.click('#taskSubmit');
       await page.waitForSelector('#modal.show');
       const title = await page.$eval('#mTitle', (el) => el.textContent);
       assert.equal(title, 'Пропуск в штаб');
@@ -128,6 +129,71 @@ if (!CHROME || !puppeteer) {
       await page.keyboard.press('Enter');
       await page.keyboard.up('Control');
       await page.waitForSelector('#modal.show');
+    } finally {
+      await page.close();
+    }
+  });
+
+  const MOBILE = {
+    viewport: { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 },
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+  };
+
+  async function tapTask(page) {
+    await page.waitForSelector('#taskSubmit');
+    const box = await page.$eval('#taskSubmit', (el) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, vh: window.innerHeight, vw: window.innerWidth };
+    });
+    assert.ok(box.top >= 0 && box.bottom <= box.vh + 1, `кнопка вне экрана ${box.top}..${box.bottom}`);
+    assert.ok(box.left >= -1 && box.right <= box.vw + 1, `кнопка шире экрана ${box.left}..${box.right}`);
+    await page.$eval('#taskText', (el) => { el.value = 'Проверь тап на узком экране'; });
+    await page.tap('#taskSubmit');
+    await page.waitForSelector('#modal.show', { timeout: 4000 });
+    const title = await page.$eval('#mTitle', (el) => el.textContent);
+    assert.equal(title, 'Пропуск в штаб');
+  }
+
+  test('на 390px тап «Дать задачу» у тестировщика открывает пропуск', async () => {
+    const page = await browser.newPage();
+    try {
+      await page.emulate(MOBILE);
+      await page.evaluateOnNewDocument(() => {
+        localStorage.removeItem('appPassword');
+        localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+      });
+      await page.goto(base + '/?theme=day&agent=qa', { waitUntil: 'networkidle0', timeout: 30000 });
+      await page.waitForSelector('#panel.open h2');
+      const heading = await page.$eval('#panel .p-title h2', (el) => el.textContent);
+      assert.match(heading, /8\.\s*Тестировщик/);
+      await tapTask(page);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test('на 390px «Рутины» на карте и в полосе, тап открывает пропуск', async () => {
+    const page = await browser.newPage();
+    try {
+      await page.emulate(MOBILE);
+      await page.evaluateOnNewDocument(() => {
+        localStorage.removeItem('appPassword');
+        localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+      });
+      await page.goto(base + '/?theme=day&agent=routines', { waitUntil: 'networkidle0', timeout: 30000 });
+      await page.waitForSelector('#panel.open h2');
+      const heading = await page.$eval('#panel .p-title h2', (el) => el.textContent);
+      assert.match(heading, /12\.\s*Рутины/);
+      const placed = await page.evaluate(() => ({
+        map: !!document.querySelector('.agent[data-id="routines"]'),
+        chip: (document.querySelector('#roster .chip[data-id="routines"] .cn') || {}).textContent || '',
+        district: (document.querySelector('#panel .kicker') || {}).textContent || '',
+      }));
+      assert.equal(placed.map, true, 'домик Рутин не нарисован');
+      assert.match(placed.chip, /12\./);
+      assert.match(placed.chip, /Рутины/);
+      assert.match(placed.district, /Хамовники/);
+      await tapTask(page);
     } finally {
       await page.close();
     }
