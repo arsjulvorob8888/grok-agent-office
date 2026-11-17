@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
+const store = require('./lib/store');
 const { activityFor, activeWindowMs } = require('./lib/activity');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
@@ -22,9 +23,9 @@ function noteIgnoredGrokWebhook() {
 }
 noteIgnoredGrokWebhook();
 
-// Вложения лежат на диске процесса, метаданные — в памяти вместе с задачами.
-// На бесплатном Render диск эфемерный: файлы пропадают вместе с перезапуском,
-// засыпанием и новым деплоем, как и журнал задач. Платное хранилище не используется.
+// Приказы, переписка, «Нужно от вас» и байты вложений пишет lib/store.js в Postgres,
+// если DATABASE_URL задан и база доступна при старте. Иначе всё остаётся в памяти,
+// а файлы — в UPLOAD_DIR. Лимиты загрузки те же: 10 МБ и 5 файлов.
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_FILES = 5;
 const MAX_MESSAGES_PER_AGENT = 200;
@@ -618,9 +619,14 @@ function fillSeedActions(item, seed) {
 // Текст вопросов из NEEDS_DETAILS_JSON дописывается здесь же: и на старте, и при повторной миграции.
 function migrateOwnerNeeds(list = state.needs) {
   const now = new Date().toISOString();
+  // Посев только в пустой список. Непустая база или уже собранный список новые id не получают.
+  // need-render-api в needSeeds нет и сюда не добавляется.
+  const allowInsert = list.length === 0;
   for (const seed of needSeeds()) {
     let item = list.find((n) => n && n.id === seed.id);
     if (!item) {
+      if (seed.id === RENDER_NEED_ID || seed.id === ACADEMY_NEED_ID) continue;
+      if (!allowInsert && seed.id !== TEST_NEED_ID && seed.id !== QUESTION_NEED_ID) continue;
       item = {
         id: seed.id,
         what: seed.what,
@@ -798,7 +804,10 @@ function migrateExternalNeedStore() {
   }
   if (typeof store.withNeeds === 'function') {
     try {
-      store.withNeeds((list) => { if (Array.isArray(list)) migrateOwnerNeeds(list); });
+      store.withNeeds((list) => {
+        if (Array.isArray(list)) migrateOwnerNeeds(list);
+        if (list === state.needs && state.migrations) store.noteMigrations(state.migrations);
+      });
     } catch (err) {
       console.error('Миграция needs в хранилище не выполнена', err && err.message);
     }
@@ -808,7 +817,7 @@ function migrateExternalNeedStore() {
 }
 
 function reopenTestNeeds(now = Date.now(), force = false) {
-  let opened = 0;
+  const opened = [];
   for (const item of state.needs) {
     if (!isTestNeedItem(item)) continue;
     if (!item.closedAt) continue;
@@ -820,9 +829,11 @@ function reopenTestNeeds(now = Date.now(), force = false) {
     item.answeredAt = null;
     item.answerStatus = null;
     item.answers = [];
-    opened += 1;
+    opened.push(item);
   }
-  return opened;
+  for (const item of opened) store.noteNeed(item);
+  if (opened.length) store.flush().catch(() => {});
+  return opened.length;
 }
 
 migrateOwnerNeeds();
@@ -838,6 +849,13 @@ const needsResolveTimer = setInterval(() => {
   } catch (err) { console.error(err); }
 }, NEEDS_RESOLVE_MS);
 if (typeof needsResolveTimer.unref === 'function') needsResolveTimer.unref();
+
+store.init(state, {
+  uploadDir: UPLOAD_DIR,
+  maxMessagesPerAgent: MAX_MESSAGES_PER_AGENT,
+  maxTasks: 100,
+  seedAgentIds: SEED_AGENTS.map((agent) => agent.id),
+});
 
 // Снимок в «Порядок» отдельно от списка «Нужно от вас» и приказов.
 const poryadokSync = createPoryadokSync({ getState: () => state });
@@ -880,6 +898,7 @@ function publicState(opts = {}) {
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
       ...activityFor(a, state.tasks, Date.now(), activeWindowMs(), activityExtras()),
+      ...(a.analysis !== undefined ? { analysis: a.analysis } : {}),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
@@ -1214,6 +1233,7 @@ function formatAtMsk(iso) {
 function pushTask(task) {
   state.tasks.unshift(task);
   if (state.tasks.length > 100) state.tasks.length = 100;
+  store.noteTask(task);
 }
 
 function httpError(status, error) {
@@ -1223,6 +1243,15 @@ function httpError(status, error) {
   return err;
 }
 
+const PRIVATE_FIELDS = new Set(['seq', 'ord', 'bytes', 'extra', 'storedName', 'createdAtMs', 'forwardError']);
+
+function withStoredFields(base, source) {
+  for (const key of Object.keys(source || {})) {
+    if (PRIVATE_FIELDS.has(key) || base[key] !== undefined || source[key] === undefined) continue;
+    base[key] = source[key];
+  }
+  return base;
+}
 function publicAttachment(rec) {
   return {
     id: rec.id || null,
@@ -1254,7 +1283,7 @@ function publicHistoryEntry(h) {
 }
 
 function publicTask(t) {
-  return {
+  const base = {
     id: t.id,
     agent: t.agent,
     agentId: t.agentId || t.agent,
@@ -1273,6 +1302,7 @@ function publicTask(t) {
     history: (t.history || []).map(publicHistoryEntry),
     attachments: (t.attachments || []).map(publicAttachment),
   };
+  return withStoredFields(base, t);
 }
 
 function agentLabel(id) {
@@ -1309,6 +1339,7 @@ function pushOrderHistory(task, entry) {
     source: 'order',
     taskId: task.id,
   });
+  store.noteTask(task);
 }
 
 function orderSnapshot(task, status, progress, note, result) {
@@ -1348,7 +1379,11 @@ function applyOrderUpdate(task, input, opts = {}) {
     const last = task.history && task.history[task.history.length - 1];
     if (last && last.status === 'done') last.result = result;
     const msg = state.messages.find((m) => m.id === `order:${task.id}:${(task.history || []).length - 1}`);
-    if (msg && last) msg.text = orderEventText(task, last);
+    if (msg && last) {
+      msg.text = orderEventText(task, last);
+      store.noteMessage(msg);
+    }
+    store.noteTask(task);
     return { changed: false };
   }
   if (!opts.force && !(ORDER_NEXT[current] && ORDER_NEXT[current].has(status))) {
@@ -1371,7 +1406,10 @@ function applyOrderUpdate(task, input, opts = {}) {
     task.status = 'выполнена';
     if (firstDone) {
       const owner = findAgent(task.agent) || opts.creditAgent || null;
-      if (owner) owner.completed = (owner.completed || 0) + 1;
+      if (owner) {
+        owner.completed = (owner.completed || 0) + 1;
+        store.noteAgent(owner);
+      }
     }
   }
   pushOrderHistory(task, entry);
@@ -1434,7 +1472,7 @@ function cmpMsg(a, b) {
 }
 
 function publicMessage(m) {
-  return {
+  const base = {
     id: m.id,
     agentId: m.agentId,
     role: m.role,
@@ -1445,6 +1483,7 @@ function publicMessage(m) {
     source: m.source,
     taskId: m.taskId || null,
   };
+  return withStoredFields(base, m);
 }
 
 function messagesForState() {
@@ -1491,6 +1530,7 @@ function storeIncomingFiles(files) {
       url: `/api/files/${id}`,
     };
     state.files.set(id, rec);
+    store.noteFile(rec);
     return publicAttachment(rec);
   });
 }
@@ -1500,12 +1540,15 @@ function releaseUnusedFiles() {
   for (const t of state.tasks) for (const a of t.attachments || []) if (a.id) used.add(a.id);
   for (const m of state.messages) for (const a of m.attachments || []) if (a.id) used.add(a.id);
   const now = Date.now();
+  const removed = [];
   for (const [id, rec] of state.files) {
     if (used.has(id)) continue;
     if (now - rec.createdAtMs < 30 * 60 * 1000) continue;
     try { fs.unlinkSync(path.join(UPLOAD_DIR, rec.storedName)); } catch (_) { /* нет файла */ }
     state.files.delete(id);
+    removed.push(id);
   }
+  store.noteFilesRemoved(removed);
 }
 
 function parseIdList(value) {
@@ -1595,6 +1638,7 @@ function trimMessages(agentId) {
   if (list.length <= MAX_MESSAGES_PER_AGENT) return;
   const drop = new Set(list.slice(0, list.length - MAX_MESSAGES_PER_AGENT).map((m) => m.id));
   state.messages = state.messages.filter((m) => !drop.has(m.id));
+  store.noteMessagesRemoved(drop);
 }
 
 function addMessage(input) {
@@ -1604,6 +1648,7 @@ function addMessage(input) {
       if (input.source === 'status' && input.text && existing.text !== input.text) {
         existing.text = input.text;
         existing.createdAt = input.createdAt || existing.createdAt;
+        store.noteMessage(existing);
       }
       return { message: publicMessage(existing), duplicate: true };
     }
@@ -1624,6 +1669,7 @@ function addMessage(input) {
   };
   state.messages.push(message);
   trimMessages(message.agentId);
+  store.noteMessage(message);
   return { message: publicMessage(message), duplicate: false };
 }
 
@@ -1779,11 +1825,11 @@ const app = express();
 app.disable('x-powered-by');
 // Текст задачи и id вложений — это JSON до 1 МБ. Сами файлы принимает multer: 10 МБ и не больше 5.
 app.use(express.json({ limit: '1mb' }));
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
   res.on('finish', () => {
     try { poryadokSync.noteRequestFinished(); } catch (_) { /* ответ уже ушёл */ }
   });
-  next();
+  store.ready.then(() => next(), next);
 });
 
 app.get('/healthz', (_req, res) => {
@@ -1809,7 +1855,7 @@ app.get('/api/needs/:id', (req, res) => {
   res.json(publicNeed(item, Date.now(), { includePrivate: hqPasswordOk(req) }));
 });
 
-app.post('/api/needs', requireUserOrAgent, (req, res) => {
+app.post('/api/needs', requireUserOrAgent, async (req, res) => {
   try {
     const parsed = parseNeed(req.body);
     const createdAt = new Date().toISOString();
@@ -1838,7 +1884,9 @@ app.post('/api/needs', requireUserOrAgent, (req, res) => {
     };
     state.needs.unshift(item);
     resolveNeedsByEnv();
+    store.noteNeed(item);
     poryadokSync.schedule();
+    await store.flush();
     res.status(201).json(publicNeed(item));
   } catch (err) {
     const status = err.status || 500;
@@ -1847,11 +1895,13 @@ app.post('/api/needs', requireUserOrAgent, (req, res) => {
   }
 });
 
-app.post('/api/needs/:id/confirm', requireAgentToken, (req, res) => {
+app.post('/api/needs/:id/confirm', requireAgentToken, async (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
   item.checkedAt = new Date().toISOString();
+  store.noteNeed(item);
   poryadokSync.schedule();
+  await store.flush();
   res.json(publicNeed(item));
 });
 
@@ -1865,10 +1915,12 @@ app.post('/api/needs/:id/close', requireUserOrAgent, async (req, res) => {
   item.closedBy = who.id;
   item.updatedAt = item.closedAt;
   console.log(`need closed: ${item.id} by ${who.id}`);
+  store.noteNeed(item);
   if (!isTestNeedItem(item)) {
     poryadokSync.schedule();
     await deliverNeedEvent({ item, type: 'close', text: needCloseText(item) });
   }
+  await store.flush();
   res.json(publicNeed(item));
 });
 
@@ -1904,8 +1956,10 @@ app.patch('/api/needs/:id', requireUserOrAgent, async (req, res) => {
     return res.status(status).json({ error: err.expose || err.message || 'Некорректный пункт' });
   }
   item.updatedAt = new Date().toISOString();
+  store.noteNeed(item);
   if (!isTestNeedItem(item)) poryadokSync.schedule();
   if (justClosed) await deliverNeedEvent({ item, type: 'close', text: needCloseText(item) });
+  await store.flush();
   res.json(publicNeed(item, Date.now(), { includePrivate: hqPasswordOk(req) }));
 });
 
@@ -1956,6 +2010,7 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
 
   try {
     const task = await issueOwnerTask({ agentId, text, fromAgentId, parentOrderId, attachments });
+    await store.flush();
     res.status(201).json(publicTask(task));
   } catch (err) {
     const status = err.status || 500;
@@ -2087,6 +2142,7 @@ async function enqueueQueueTask({ agentId, text, fromAgentId, parentOrderId, att
 
   agent.status = 'working';
   agent.now = (bodyText || `Файлы: ${files.map((a) => a.name).join(', ')}`).slice(0, 300);
+  store.noteAgent(agent);
   pushTask(task);
   releaseUnusedFiles();
 
@@ -2213,6 +2269,8 @@ app.post('/api/needs/:id/answer', async (req, res) => {
       item.answeredAt = nowIso;
       pushNeedAnswer(item, { text: word, at: nowIso, by: 'owner' });
       settleNeedAnswer(item, nowIso, partial);
+      store.noteNeed(item);
+      await store.flush();
       return res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
     }
     const raw = req.body && typeof req.body.text === 'string' ? req.body.text : '';
@@ -2228,16 +2286,19 @@ app.post('/api/needs/:id/answer', async (req, res) => {
     if (item.closedAt) return res.status(409).json({ error: 'Пункт уже закрыт' });
     pushNeedAnswer(item, { text, at: nowIso, by: 'owner' });
     settleNeedAnswer(item, nowIso, partial);
+    store.noteNeed(item);
+    await store.flush();
     return res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
   } finally {
     item.answering = false;
   }
 });
 
-app.post('/api/upload', requireUserOrAgent, uploadArray, (req, res) => {
+app.post('/api/upload', requireUserOrAgent, uploadArray, async (req, res) => {
   const files = req.files || [];
   if (!files.length) return res.status(400).json({ error: 'Нужен хотя бы один файл в поле files' });
   const attachments = storeIncomingFiles(files);
+  await store.flush();
   res.status(201).json({ attachments });
 });
 
@@ -2245,18 +2306,27 @@ app.get('/api/files/:id', (req, res) => {
   const id = String(req.params.id || '');
   const rec = /^[a-f0-9]{32}$/.test(id) ? state.files.get(id) : null;
   if (!rec) return res.status(404).json({ error: 'Файл не найден' });
-  const root = path.resolve(UPLOAD_DIR);
-  const resolved = path.resolve(root, rec.storedName);
-  if (path.dirname(resolved) !== root || !fs.existsSync(resolved)) {
-    return res.status(404).json({ error: 'Файл не найден' });
+  const bytes = Buffer.isBuffer(rec.bytes) ? rec.bytes : null;
+  let resolved = null;
+  if (!bytes) {
+    const root = path.resolve(UPLOAD_DIR);
+    resolved = path.resolve(root, rec.storedName);
+    if (path.dirname(resolved) !== root || !fs.existsSync(resolved)) {
+      return res.status(404).json({ error: 'Файл не найден' });
+    }
   }
   const inline = INLINE_MIME.has(rec.mime);
   const encoded = encodeURIComponent(rec.name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'private, max-age=86400');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="file"; filename*=UTF-8''${encoded}`);
+  if (bytes) {
+    res.setHeader('Content-Type', inline ? rec.mime : 'application/octet-stream');
+    res.setHeader('Content-Length', String(bytes.length));
+    return res.end(bytes);
+  }
   res.type(inline ? rec.mime : 'application/octet-stream');
-  res.sendFile(resolved);
+  return res.sendFile(resolved);
 });
 
 app.get('/api/messages', requireAgentToken, (req, res) => {
@@ -2277,15 +2347,20 @@ app.get('/api/messages', requireAgentToken, (req, res) => {
 });
 
 function forgetUploads(files) {
+  const removed = [];
   for (const file of files || []) {
-    if (file && file.filename) state.files.delete(file.filename);
+    if (file && file.filename) {
+      state.files.delete(file.filename);
+      removed.push(file.filename);
+    }
     if (file && file.path) {
       try { fs.unlinkSync(file.path); } catch (_) { /* уже удалён */ }
     }
   }
+  store.noteFilesRemoved(removed);
 }
 
-app.post('/api/messages', requireAgentToken, maybeUpload, (req, res) => {
+app.post('/api/messages', requireAgentToken, maybeUpload, async (req, res) => {
   try {
     if (Array.isArray(req.body?.messages)) {
       if (req.files && req.files.length) {
@@ -2297,6 +2372,7 @@ app.post('/api/messages', requireAgentToken, maybeUpload, (req, res) => {
       const results = prepared.map((item) => (item.duplicate ? item : addMessage(item.input)));
       const created = results.some((r) => !r.duplicate);
       releaseUnusedFiles();
+      await store.flush();
       return res.status(created ? 201 : 200).json({ ok: true, results });
     }
     const body = req.body || {};
@@ -2312,16 +2388,18 @@ app.post('/api/messages', requireAgentToken, maybeUpload, (req, res) => {
     const prepared = prepareRelayMessage(body, uploaded);
     const result = prepared.duplicate ? prepared : addMessage(prepared.input);
     releaseUnusedFiles();
+    await store.flush();
     return res.status(result.duplicate ? 200 : 201).json({ ok: true, duplicate: result.duplicate, message: result.message });
   } catch (err) {
     forgetUploads(req.files);
+    await store.flush();
     const status = err.status || 500;
     if (!err.status) console.error(err);
     return res.status(status).json({ error: err.expose || 'Не удалось сохранить сообщение' });
   }
 });
 
-app.post('/api/status', requireAgentToken, (req, res) => {
+app.post('/api/status', requireAgentToken, async (req, res) => {
   const body = req.body || {};
   const agentId = typeof body.agent === 'string' ? body.agent.trim() : '';
   if (!agentId) {
@@ -2445,6 +2523,8 @@ app.post('/api/status', requireAgentToken, (req, res) => {
     agent.completed = (agent.completed || 0) + 1;
   }
 
+  store.noteAgent(agent);
+  await store.flush();
   res.json({
     ok: true,
     agent: {
@@ -2461,13 +2541,14 @@ app.post('/api/status', requireAgentToken, (req, res) => {
   });
 });
 
-app.post('/api/orders/:id', requireAgentToken, (req, res) => {
+app.post('/api/orders/:id', requireAgentToken, async (req, res) => {
   const task = state.tasks.find((t) => t.id === req.params.id);
   if (!task) return res.status(404).json({ error: 'Приказ не найден' });
   try {
     const input = parseOrderUpdate(req.body);
     const result = applyOrderUpdate(task, input);
     if (result.changed && (task.orderStatus === 'done' || task.orderStatus === 'failed')) poryadokSync.schedule();
+    await store.flush();
     return res.json({ ok: true, unchanged: !result.changed, task: publicTask(task) });
   } catch (err) {
     const status = err.status || 500;
@@ -2480,6 +2561,10 @@ registerHeartbeat(app, {
   requireAgentToken,
   findAgent,
   orders: () => state.tasks,
+  onSeen: async (agent) => {
+    store.noteAgent(agent);
+    await store.flush();
+  },
   activityExtras,
 });
 
@@ -2497,7 +2582,7 @@ app.get('/api/agents/:id/tasks', requireAgentToken, (req, res) => {
   res.json({ agentId: agent.id, tasks: tasks.map(publicTask) });
 });
 
-app.post('/api/agents/:id/routine', requireAgentToken, (req, res) => {
+app.post('/api/agents/:id/routine', requireAgentToken, async (req, res) => {
   const agent = findAgent(String(req.params.id || ''));
   if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
   if (agent.archived) return res.status(409).json({ error: 'Агент в архиве' });
@@ -2529,14 +2614,22 @@ app.post('/api/agents/:id/routine', requireAgentToken, (req, res) => {
         finishedAt: null,
       };
       state.routines.unshift(routine);
-      if (state.routines.length > 100) state.routines.length = 100;
+      if (state.routines.length > 100) {
+        const dropped = state.routines.splice(100);
+        store.noteRoutinesRemoved(dropped.map((item) => item.id));
+      }
     }
   } else {
     const open = state.routines.filter((r) => r.agentId === agent.id && !r.finishedAt && (!name || r.name === name));
     if (!open.length) return res.status(404).json({ error: 'Активная рутина не найдена' });
-    for (const item of open) item.finishedAt = nowIso;
+    for (const item of open) {
+      item.finishedAt = nowIso;
+      store.noteRoutine(item);
+    }
     routine = open[0];
   }
+  store.noteRoutine(routine);
+  await store.flush();
   const view = activityFor(agent, state.tasks, Date.now(), activeWindowMs(), activityExtras());
   res.json({ ok: true, routine: publicRoutine(routine), ...view });
 });
@@ -2577,13 +2670,18 @@ app.listen = function listenWithPoryadokSync(...args) {
 };
 
 if (require.main === module) {
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Агенты Москвы (GROK) слушают 0.0.0.0:${PORT}`);
+  store.ready.then(() => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      store.unrefIdle();
+      console.log(`Агенты Москвы (GROK) слушают 0.0.0.0:${PORT}`);
+    });
+    // Дольше типичной загрузки 10 МБ, но не дольше прокси Render, чтобы зависший сокет не держал процесс.
+    server.requestTimeout = 100000;
+    server.headersTimeout = 60000;
+    server.timeout = 100000;
   });
-  // Дольше типичной загрузки 10 МБ, но не дольше прокси Render, чтобы зависший сокет не держал процесс.
-  server.requestTimeout = 100000;
-  server.headersTimeout = 60000;
-  server.timeout = 100000;
+} else {
+  store.ready.then(() => store.unrefIdle());
 }
 
 module.exports = {

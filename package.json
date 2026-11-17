@@ -6,14 +6,15 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test --test-concurrency=1 test/feed.test.js test/server.test.js test/kremlin-route.test.js test/ui-bugs.test.js test/activity.test.js test/poryadok-sync.test.js test/browser.test.js test/activity-browser.test.js"
+    "test": "node --test --test-concurrency=1 test/feed.test.js test/server.test.js test/kremlin-route.test.js test/ui-bugs.test.js test/activity.test.js test/poryadok-sync.test.js test/browser.test.js test/activity-browser.test.js test/store.test.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "multer": "^2.5.0"
+    "multer": "^2.5.0",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "puppeteer-core": "^25.18.0"
