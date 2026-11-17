@@ -188,7 +188,8 @@ test('на широком экране пульс, сон, стрелка и «�
     await page.waitForSelector('#processes.open .proc-row');
     const listed = await page.$eval('#processes', (el) => el.innerText);
     assert.match(listed, /Процессы сейчас/);
-    assert.match(listed, /Главный агент/);
+    assert.match(listed, /1\.\s*Путин/);
+    assert.doesNotMatch(listed, /Главный агент/);
     assert.match(listed, /Программирование/);
     assert.match(listed, /ACTIVITY-DESKTOP/);
     assert.match(listed, /Принял/);
