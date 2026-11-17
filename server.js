@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
+const { createPoryadokSync } = require('./lib/poryadok-sync');
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -521,9 +522,15 @@ function migrateExternalNeedStore() {
 migrateOwnerNeeds();
 migrateExternalNeedStore();
 const needsResolveTimer = setInterval(() => {
-  try { resolveNeedsByEnv(); } catch (err) { console.error(err); }
+  try {
+    if (resolveNeedsByEnv()) poryadokSync.schedule();
+  } catch (err) { console.error(err); }
 }, NEEDS_RESOLVE_MS);
 if (typeof needsResolveTimer.unref === 'function') needsResolveTimer.unref();
+
+// Снимок в «Порядок» отдельно от списка «Нужно от вас» и приказов.
+const poryadokSync = createPoryadokSync({ getState: () => state });
+poryadokSync.start();
 
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -563,6 +570,7 @@ function publicState() {
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
     needs: state.needs.map((item) => publicNeed(item)),
+    poryadokSync: poryadokSync.publicStatus(),
   };
 }
 
@@ -1198,6 +1206,12 @@ function requireUserOrAgent(req, res, next) {
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
+app.use((_req, res, next) => {
+  res.on('finish', () => {
+    try { poryadokSync.noteRequestFinished(); } catch (_) { /* ответ уже ушёл */ }
+  });
+  next();
+});
 
 app.get('/healthz', (_req, res) => {
   res.status(200).type('text/plain').send('ok');
@@ -1229,6 +1243,7 @@ app.post('/api/needs', requireAgentToken, (req, res) => {
     };
     state.needs.unshift(item);
     resolveNeedsByEnv();
+    poryadokSync.schedule();
     res.status(201).json(publicNeed(item));
   } catch (err) {
     const status = err.status || 500;
@@ -1241,6 +1256,7 @@ app.post('/api/needs/:id/confirm', requireAgentToken, (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
   item.checkedAt = new Date().toISOString();
+  poryadokSync.schedule();
   res.json(publicNeed(item));
 });
 
@@ -1248,6 +1264,7 @@ app.post('/api/needs/:id/close', requireUserOrAgent, (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
   if (!item.closedAt) item.closedAt = new Date().toISOString();
+  poryadokSync.schedule();
   res.json(publicNeed(item));
 });
 
@@ -1598,6 +1615,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+const listen = app.listen.bind(app);
+app.listen = function listenWithPoryadokSync(...args) {
+  const server = listen(...args);
+  if (server && server.listening) poryadokSync.onListening();
+  else if (server && typeof server.once === 'function') {
+    server.once('listening', () => poryadokSync.onListening());
+  }
+  return server;
+};
 
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
