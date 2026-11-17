@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
+const { createPoryadokSync } = require('./lib/poryadok-sync');
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -37,7 +38,8 @@ const STATUS_LABELS = {
 // kind — тип фигурки на клиенте: putin, army, poker, trading, devops, dev, qa,
 //        temshik, blog, finance, invest, analyst, lang, biz, vacant, generic.
 // tier — main (главный), dept (направление), sub (помощник, parentId), extra (союзник).
-// Номер на карте стабилен: сверху вниз по этому списку, помощники — 8.1, 8.2.
+// Номер на карте — среди видимых агентов, без пропусков. Помощники Финансов: 7.1, 7.2.
+// trading и biz в архиве: записи остаются, на карту и в новые приказы не попадают.
 // ─────────────────────────────────────────────────────────────────────────────
 const SEED_AGENTS = [
   {
@@ -51,7 +53,7 @@ const SEED_AGENTS = [
     tier: 'main',
     x: 800,
     y: 540,
-    links: ['army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'lang', 'biz'],
+    links: ['army', 'poker', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'lang'],
     responsibilities: [
       'Принимает задачи и распределяет их по направлениям',
       'Следит за сроками и качеством результатов',
@@ -107,6 +109,7 @@ const SEED_AGENTS = [
     district: 'Москва-Сити',
     kind: 'trading',
     tier: 'dept',
+    archived: true,
     x: 345,
     y: 415,
     links: [],
@@ -178,7 +181,7 @@ const SEED_AGENTS = [
     district: 'Останкино',
     kind: 'blog',
     tier: 'dept',
-    order: 10,
+    order: 9,
     x: 845,
     y: 150,
     links: [],
@@ -188,7 +191,7 @@ const SEED_AGENTS = [
       'Контент-план и аналитика охватов',
     ],
   },
-  // ── 8-е направление: Финансы, Китай-город (Ильинка, квартал банков и казны).
+  // ── 7-е направление: Финансы, Китай-город (Ильинка, квартал банков и казны).
   {
     id: 'finance',
     name: 'Финансы',
@@ -198,7 +201,7 @@ const SEED_AGENTS = [
     district: 'Китай-город · Ильинка',
     kind: 'finance',
     tier: 'dept',
-    order: 8,
+    order: 7,
     x: 1080,
     y: 340,
     links: ['invest', 'analyst'],
@@ -246,9 +249,7 @@ const SEED_AGENTS = [
       'Проверяет, сходятся ли цифры в планах',
     ],
   },
-  // ── 9-е направление по приказу главного агента.
-  // Technology Blog был 9 и стал 10, Language Coach 10→11, Business Adviser 11→12.
-  // Id не менялись: старые реле и сохранённые ссылки на агентов продолжают работать.
+  // ── 8-е направление: тестировщик. Id не менялись.
   {
     id: 'qa',
     name: 'Тестировщик ПО',
@@ -258,7 +259,7 @@ const SEED_AGENTS = [
     district: 'Лефортово',
     kind: 'qa',
     tier: 'dept',
-    order: 9,
+    order: 8,
     x: 1304,
     y: 512,
     links: [],
@@ -278,7 +279,7 @@ const SEED_AGENTS = [
     district: 'МГУ · Воробьёвы горы',
     kind: 'lang',
     tier: 'extra',
-    order: 11,
+    order: 10,
     x: 420,
     y: 905,
     links: [],
@@ -293,7 +294,7 @@ const SEED_AGENTS = [
     district: 'Сколково',
     kind: 'biz',
     tier: 'extra',
-    order: 12,
+    archived: true,
     x: 150,
     y: 640,
     links: [],
@@ -315,6 +316,7 @@ function seedAgent(base) {
   return {
     ...base,
     parentId: base.parentId || null,
+    archived: !!base.archived,
     status: 'idle',
     now: base.vacant ? 'Ждёт названия' : 'Жду задач',
     done: [],
@@ -324,18 +326,20 @@ function seedAgent(base) {
   };
 }
 
-// Номера стабильны: направления и союзники идут по порядку в SEED_AGENTS,
-// помощники получают 8.1, 8.2 по порядку среди детей одного родителя.
+// Номера видимых направлений и союзников идут по порядку, без архивных.
+// Помощники получают 7.1, 7.2 по порядку среди видимых детей одного родителя.
 function prepareRoster(list) {
   let top = 0;
   const sib = {};
   const agents = list.map((base) => {
     const agent = seedAgent(base);
     if (agent.parentId) {
-      sib[agent.parentId] = (sib[agent.parentId] || 0) + 1;
-      agent.order = agent.order || sib[agent.parentId];
       agent.tier = 'sub';
-    } else {
+      if (!agent.archived) {
+        sib[agent.parentId] = (sib[agent.parentId] || 0) + 1;
+        agent.order = agent.order || sib[agent.parentId];
+      }
+    } else if (!agent.archived) {
       top += 1;
       agent.order = agent.order || top;
     }
@@ -349,26 +353,30 @@ function prepareRoster(list) {
   return agents;
 }
 
+function visibleRoster(list) {
+  return list.filter((a) => !a.archived);
+}
+
 function agentNumber(agent) {
-  if (!agent) return '';
+  if (!agent || agent.archived) return '';
   if (agent.parentId) {
     const parent = findAgent(agent.parentId);
-    const parentNum = parent ? agentNumber(parent) : '?';
-    const siblings = state.agents
+    const parentNum = parent && !parent.archived ? agentNumber(parent) : '?';
+    const siblings = visibleRoster(state.agents)
       .filter((a) => a.parentId === agent.parentId)
       .sort((a, b) => (a.order || 0) - (b.order || 0) || a.id.localeCompare(b.id));
-    const idx = Math.max(1, siblings.findIndex((a) => a.id === agent.id) + 1);
-    return `${parentNum}.${idx}`;
+    const idx = siblings.findIndex((a) => a.id === agent.id);
+    return `${parentNum}.${idx >= 0 ? idx + 1 : 1}`;
   }
-  const tops = state.agents
+  const tops = visibleRoster(state.agents)
     .filter((a) => !a.parentId)
     .sort((a, b) => (a.order || 0) - (b.order || 0) || a.id.localeCompare(b.id));
   const idx = tops.findIndex((a) => a.id === agent.id);
-  return String(idx + 1);
+  return idx >= 0 ? String(idx + 1) : '';
 }
 
 function slotNear(parent) {
-  const n = state.agents.filter((a) => a.parentId === parent.id).length;
+  const n = state.agents.filter((a) => a.parentId === parent.id && !a.archived).length;
   const angle = -0.9 + n * 1.15;
   return {
     x: Math.round(Math.max(40, Math.min(1560, parent.x + Math.cos(angle) * 120))),
@@ -395,34 +403,40 @@ function socialAgentId() {
   return hit ? hit.id : 'grok';
 }
 
+function needAuthor(id) {
+  const agent = findAgent(id);
+  if (!agent || agent.archived) return 'grok';
+  return agent.id;
+}
+
 function seedOwnerNeeds() {
   const createdAt = new Date().toISOString();
   const seeds = [
     {
       id: 'need-render-api',
       what: 'Ключ Render API — ввести через защищённую форму в чате DevOps',
-      fromAgentId: 'devops',
+      fromAgentId: needAuthor('devops'),
       where: 'Защищённая форма в чате DevOps',
       urgency: 'high',
     },
     {
       id: 'need-academy',
       what: 'Одобрить «Академию агентов»',
-      fromAgentId: 'grok',
+      fromAgentId: needAuthor('grok'),
       where: 'Чат главного агента',
       urgency: 'normal',
     },
     {
       id: 'need-social',
       what: 'Войти в Instagram и YouTube для агента Соцсети',
-      fromAgentId: socialAgentId(),
+      fromAgentId: needAuthor(socialAgentId()),
       where: 'Instagram и YouTube',
       urgency: 'normal',
     },
     {
       id: 'need-finance',
       what: 'Ответить на шесть финансовых вопросов',
-      fromAgentId: 'finance',
+      fromAgentId: needAuthor('finance'),
       where: 'Чат Финансов',
       urgency: 'normal',
     },
@@ -436,7 +450,12 @@ store.init(state, {
   uploadDir: UPLOAD_DIR,
   maxMessagesPerAgent: MAX_MESSAGES_PER_AGENT,
   maxTasks: 100,
+  seedAgentIds: SEED_AGENTS.map((agent) => agent.id),
 });
+
+// Снимок в «Порядок» отдельно от списка «Нужно от вас» и приказов.
+const poryadokSync = createPoryadokSync({ getState: () => state });
+poryadokSync.start();
 
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -469,6 +488,7 @@ function publicState() {
       parentId: a.parentId || null,
       order: a.order || 0,
       number: agentNumber(a),
+      archived: !!a.archived,
       vacant: !!a.vacant,
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
@@ -476,11 +496,12 @@ function publicState() {
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
     needs: openNeeds().map(publicNeed),
+    poryadokSync: poryadokSync.publicStatus(),
   };
 }
 
 function publicNeed(item) {
-  return {
+  const base = {
     id: item.id,
     what: item.what,
     fromAgentId: item.fromAgentId,
@@ -489,6 +510,7 @@ function publicNeed(item) {
     createdAt: item.createdAt,
     closedAt: item.closedAt || null,
   };
+  return withStoredFields(base, item);
 }
 
 function openNeeds() {
@@ -572,6 +594,16 @@ function absoluteUrl(urlPath) {
   return base + (urlPath.startsWith('/') ? urlPath : `/${urlPath}`);
 }
 
+const PRIVATE_FIELDS = new Set(['seq', 'ord', 'bytes', 'extra', 'storedName', 'createdAtMs', 'forwardError']);
+
+function withStoredFields(base, source) {
+  for (const key of Object.keys(source || {})) {
+    if (PRIVATE_FIELDS.has(key) || base[key] !== undefined || source[key] === undefined) continue;
+    base[key] = source[key];
+  }
+  return base;
+}
+
 function publicAttachment(rec) {
   return {
     id: rec.id || null,
@@ -602,7 +634,7 @@ function publicHistoryEntry(h) {
 }
 
 function publicTask(t) {
-  return {
+  const base = {
     id: t.id,
     agent: t.agent,
     agentId: t.agentId || t.agent,
@@ -620,6 +652,7 @@ function publicTask(t) {
     history: (t.history || []).map(publicHistoryEntry),
     attachments: (t.attachments || []).map(publicAttachment),
   };
+  return withStoredFields(base, t);
 }
 
 function agentLabel(id) {
@@ -786,7 +819,7 @@ function cmpMsg(a, b) {
 }
 
 function publicMessage(m) {
-  return {
+  const base = {
     id: m.id,
     agentId: m.agentId,
     role: m.role,
@@ -797,6 +830,7 @@ function publicMessage(m) {
     source: m.source,
     taskId: m.taskId || null,
   };
+  return withStoredFields(base, m);
 }
 
 function messagesForState() {
@@ -1061,7 +1095,7 @@ function uploadArray(req, res, next) {
   upload.array('files', MAX_FILES)(req, res, (err) => {
     if (!err) return next();
     if (err instanceof multer.MulterError) {
-      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Файл больше 10 МБ' });
+      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Файл слишком большой (макс. 10 МБ)' });
       if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
         return res.status(400).json({ error: `Слишком много файлов (максимум ${MAX_FILES})` });
       }
@@ -1109,8 +1143,12 @@ function requireUserOrAgent(req, res, next) {
 
 const app = express();
 app.disable('x-powered-by');
+// Текст задачи и id вложений — это JSON до 1 МБ. Сами файлы принимает multer: 10 МБ и не больше 5.
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
+  res.on('finish', () => {
+    try { poryadokSync.noteRequestFinished(); } catch (_) { /* ответ уже ушёл */ }
+  });
   store.ready.then(() => next(), next);
 });
 
@@ -1137,6 +1175,7 @@ app.post('/api/needs', requireAgentToken, async (req, res) => {
     };
     state.needs.unshift(item);
     store.noteNeed(item);
+    poryadokSync.schedule();
     await store.flush();
     res.status(201).json(publicNeed(item));
   } catch (err) {
@@ -1151,6 +1190,7 @@ app.post('/api/needs/:id/close', requireAgentToken, async (req, res) => {
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
   if (!item.closedAt) item.closedAt = new Date().toISOString();
   store.noteNeed(item);
+  poryadokSync.schedule();
   await store.flush();
   res.json(publicNeed(item));
 });
@@ -1170,6 +1210,10 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
   if (agent.vacant) {
     discardUploads(req.files);
     return res.status(400).json({ error: 'Это свободное направление: сначала дай ему название' });
+  }
+  if (agent.archived) {
+    discardUploads(req.files);
+    return res.status(409).json({ error: 'Агент в архиве: новые задачи и приказы ему не ставятся' });
   }
   if (text.length > 4000) {
     discardUploads(req.files);
@@ -1400,8 +1444,8 @@ app.post('/api/status', requireAgentToken, async (req, res) => {
   let agent = findAgent(agentId);
   if (!agent) {
     const slot = parent ? slotNear(parent) : nextSlot();
-    const siblings = parent ? state.agents.filter((a) => a.parentId === parent.id) : [];
-    const tops = state.agents.filter((a) => !a.parentId);
+    const siblings = parent ? state.agents.filter((a) => a.parentId === parent.id && !a.archived) : [];
+    const tops = state.agents.filter((a) => !a.parentId && !a.archived);
     agent = {
       id: agentId,
       name: typeof body.name === 'string' && body.name.trim() ? body.name.trim() : agentId,
@@ -1411,6 +1455,7 @@ app.post('/api/status', requireAgentToken, async (req, res) => {
       district: typeof body.district === 'string' && body.district.trim() ? body.district.trim() : (parent ? parent.district : 'Окраина'),
       kind: typeof body.kind === 'string' && body.kind.trim() ? body.kind.trim() : 'generic',
       tier: parent ? 'sub' : 'dept',
+      archived: false,
       parentId: parent ? parent.id : null,
       order: parent
         ? siblings.reduce((m, a) => Math.max(m, a.order || 0), 0) + 1
@@ -1487,6 +1532,7 @@ app.post('/api/status', requireAgentToken, async (req, res) => {
     agent.completed = (agent.completed || 0) + 1;
   }
 
+  store.noteAgent(agent);
   await store.flush();
   res.json({
     ok: true,
@@ -1525,12 +1571,36 @@ app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Лимит JSON (1 МБ) и лимит multer (10 МБ) оба должны отвечать JSON, а не HTML-страницей Express.
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err && (err.status || err.statusCode);
+  if (status === 413 || (err && err.type === 'entity.too.large')) {
+    return res.status(413).json({ error: 'Файл слишком большой (макс. 10 МБ)' });
+  }
+  return next(err);
+});
+
+const listen = app.listen.bind(app);
+app.listen = function listenWithPoryadokSync(...args) {
+  const server = listen(...args);
+  if (server && server.listening) poryadokSync.onListening();
+  else if (server && typeof server.once === 'function') {
+    server.once('listening', () => poryadokSync.onListening());
+  }
+  return server;
+};
+
 if (require.main === module) {
   store.ready.then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
       store.unrefIdle();
       console.log(`Агенты Москвы (GROK) слушают 0.0.0.0:${PORT}`);
     });
+    // Дольше типичной загрузки 10 МБ, но не дольше прокси Render, чтобы зависший сокет не держал процесс.
+    server.requestTimeout = 100000;
+    server.headersTimeout = 60000;
+    server.timeout = 100000;
   });
 } else {
   store.ready.then(() => store.unrefIdle());

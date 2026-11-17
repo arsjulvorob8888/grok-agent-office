@@ -3,6 +3,7 @@
 // Память и Postgres: node --test. Сервер каждый раз в отдельном процессе,
 // чтобы перезапуск читал состояние заново. DATABASE_URL в окружении CI включает режим базы.
 const { describe, test } = require('node:test');
+const { missingSeeds } = require('../lib/store');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
@@ -33,6 +34,7 @@ function childEnv(extra) {
   const env = { ...process.env, ...extra };
   delete env.NODE_TEST_CONTEXT;
   delete env.NODE_CHANNEL_FD;
+  delete env.PORYADOK_INGEST_TOKEN;
   env.APP_PASSWORD = 'pw-test';
   env.AGENT_TOKEN = 'tok-test';
   env.GROK_WEBHOOK_URL = '';
@@ -204,6 +206,14 @@ async function seedOffice(base) {
     }),
   });
   assert.equal(need.status, 201);
+  const scout = await json(base, '/api/status', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-test' },
+    body: JSON.stringify({ agent: 'scout', name: 'Разведка', status: 'idle', now: 'Жду задач' }),
+  });
+  assert.equal(scout.status, 200);
+  assert.equal(scout.body.agent.id, 'scout');
+
   const closed = await json(base, '/api/needs/need-render-api/close', {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-test' },
@@ -224,6 +234,16 @@ async function seedOffice(base) {
 }
 
 describe('хранилище', { concurrency: 1 }, () => {
+  test('посев не возвращает пункт, которого нет в списке', () => {
+    const seeds = [
+      { id: 'need-academy', what: 'Академия' },
+      { id: 'need-finance', what: 'Финансы' },
+    ];
+    assert.deepEqual(missingSeeds(['need-academy', 'need-render-api'], seeds).map((item) => item.id), ['need-finance']);
+    assert.equal(missingSeeds([], seeds).some((item) => item.id === 'need-render-api'), false);
+    assert.deepEqual(missingSeeds(['need-academy', 'need-finance'], seeds), []);
+  });
+
   test('без DATABASE_URL данные не переживают перезапуск', async () => {
     const first = await startOffice({ DATABASE_URL: '', STORE_SCHEMA: '' });
     try {
@@ -243,6 +263,8 @@ describe('хранилище', { concurrency: 1 }, () => {
       const state = await json(second.base, '/api/state');
       assert.equal(state.body.tasks.length, 0);
       assert.equal(state.body.messages.length, 0);
+      assert.equal(state.body.agents.some((agent) => agent.id === 'scout'), false);
+      assert.equal(state.body.agents.find((agent) => agent.id === 'trading').archived, true);
       const needs = await json(second.base, '/api/needs');
       assert.equal(needs.body.needs.length, 4);
       assert.equal(needs.body.needs.find((item) => item.id === 'need-render-api').closedAt, null);
@@ -317,9 +339,16 @@ describe('хранилище', { concurrency: 1 }, () => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
     try {
       const version = await pool.query(`SELECT version FROM ${schema}.schema_version ORDER BY version`);
-      assert.deepEqual(version.rows.map((row) => row.version), [1]);
+      assert.deepEqual(version.rows.map((row) => row.version), [1, 2]);
       await pool.query(`UPDATE ${schema}.needs SET what = $1 WHERE id = $2`, ['Отредактировано вручную', 'need-finance']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-social']);
+      await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-academy']);
+      await pool.query(
+        `UPDATE ${schema}.orders SET extra = $2::jsonb WHERE id = $1`,
+        [made.parent.id, JSON.stringify({ deadline: '2031-11-17', priority: 'Срочно' })],
+      );
+      const flags = await pool.query(`SELECT id, archived FROM ${schema}.agent_state WHERE id IN ('trading', 'biz', 'grok') ORDER BY id`);
+      assert.deepEqual(flags.rows.map((row) => [row.id, row.archived]), [['biz', true], ['grok', false], ['trading', true]]);
     } finally {
       await pool.end();
     }
@@ -344,6 +373,27 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(parent.history.at(-1).result, 'Сохранено');
       assert.equal(parent.attachments[0].id, made.png.id);
       assert.equal(parent.attachments[0].name, 'экран.png');
+      assert.equal(parent.deadline, '2031-11-17');
+      assert.equal(parent.priority, 'Срочно');
+      const trading = state.body.agents.find((agent) => agent.id === 'trading');
+      const biz = state.body.agents.find((agent) => agent.id === 'biz');
+      const grok = state.body.agents.find((agent) => agent.id === 'grok');
+      assert.equal(trading.archived, true);
+      assert.equal(trading.number, '');
+      assert.equal(biz.archived, true);
+      assert.equal(grok.archived, false);
+      assert.equal(state.body.agents.find((agent) => agent.id === 'finance').number, '7');
+      const scout = state.body.agents.find((agent) => agent.id === 'scout');
+      assert.ok(scout);
+      assert.equal(scout.name, 'Разведка');
+      assert.equal(scout.archived, false);
+      assert.ok(state.body.agents.find((agent) => agent.id === 'grok').links.includes('scout'));
+      const blocked = await json(second.base, '/api/task', {
+        method: 'POST',
+        headers: { 'x-app-password': 'pw-test' },
+        body: JSON.stringify({ agent: 'trading', text: 'После перезапуска' }),
+      });
+      assert.equal(blocked.status, 409);
       assert.ok(child);
       assert.equal(child.agentId, 'qa');
       assert.equal(child.fromAgentId, 'dev');
@@ -367,6 +417,8 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(ids.includes('need-render-api'), false);
       const social = needs.body.needs.find((item) => item.id === 'need-social');
       assert.match(social.what, /Instagram и YouTube/);
+      const academy = needs.body.needs.find((item) => item.id === 'need-academy');
+      assert.match(academy.what, /Академию агентов/);
       const finance = needs.body.needs.find((item) => item.id === 'need-finance');
       assert.equal(finance.what, 'Отредактировано вручную');
       assert.equal(finance.createdAt, financeCreatedAt);
