@@ -281,6 +281,102 @@ test('бейдж, цепочка и тихий конверт при reduced-mot
   }
 });
 
+test('блок «Нужно от вас»: бейдж, попап и «Напомнить позже»', { timeout: 30000 }, async () => {
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    await page.evaluateOnNewDocument(() => {
+      if (!sessionStorage.getItem('needsTestReady')) {
+        localStorage.removeItem('needsSnoozeUntil');
+        localStorage.removeItem('needsNotify');
+        sessionStorage.setItem('needsTestReady', '1');
+      }
+    });
+    await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#needsPop.open .need-item', { timeout: 8000 });
+    const info = await page.evaluate(() => {
+      const pop = document.querySelector('#needsPop');
+      const badge = document.querySelector('#needsBadge');
+      const btn = document.querySelector('#btnNeeds');
+      const hier = document.querySelector('#btnHier').getBoundingClientRect();
+      const br = btn.getBoundingClientRect();
+      const popBox = pop.getBoundingClientRect();
+      const roster = document.querySelector('#roster').getBoundingClientRect();
+      const items = [...document.querySelectorAll('#needsPop .need-item')].map((el) => ({
+        what: el.querySelector('.need-what').textContent,
+        from: el.querySelector('.need-from').textContent,
+        where: el.querySelector('.need-where').textContent,
+        urg: el.className,
+      }));
+      return {
+        count: badge.textContent.trim(),
+        label: btn.getAttribute('aria-label'),
+        expanded: btn.getAttribute('aria-expanded'),
+        items,
+        popBottom: popBox.bottom,
+        popLeft: popBox.left,
+        popRight: popBox.right,
+        rosterTop: roster.top,
+        vw: window.innerWidth,
+        btnInView: br.width > 20 && br.top >= 0 && br.left >= 0 && br.right <= window.innerWidth + 1 && br.bottom <= window.innerHeight,
+        hierInView: hier.width > 20 && hier.left >= 0 && hier.right <= window.innerWidth + 1,
+        notify: document.querySelector('#needsNotify').textContent,
+        rowsFit: [...document.querySelectorAll('#needsPop .need-item')].every((el) => {
+          const urg = el.querySelector('.need-urg').getBoundingClientRect();
+          const box = el.getBoundingClientRect();
+          return el.scrollHeight <= el.clientHeight + 1 && urg.top >= box.top - 1 && urg.bottom <= box.bottom + 1;
+        }),
+      };
+    });
+    assert.equal(info.vw, 390);
+    assert.ok(Number(info.count) >= 4, info.count);
+    assert.match(info.label, /Нужно от вас/);
+    assert.equal(info.expanded, 'true');
+    assert.equal(info.btnInView, true, 'бейдж не помещается в шапку');
+    assert.equal(info.hierInView, true, 'кнопка иерархии уехала с экрана');
+    assert.equal(info.notify, 'Включить уведомления');
+    assert.equal(info.rowsFit, true, 'строка пункта обрезана');
+    const text = info.items.map((i) => `${i.what} ${i.from} ${i.where} ${i.urg}`).join('\n');
+    assert.match(text, /Ключ Render API/);
+    assert.match(text, /DevOps/);
+    assert.match(text, /urg-high/);
+    assert.match(text, /Академию агентов/);
+    assert.match(text, /Instagram и YouTube/);
+    assert.match(text, /финансовых вопросов/);
+    assert.match(text, /Финансы/);
+    assert.ok(info.popLeft >= -1 && info.popRight <= info.vw + 1, `попап шире экрана: ${info.popLeft}..${info.popRight}`);
+    assert.ok(info.popBottom <= info.rosterTop + 1, `попап перекрыл полосу: ${info.popBottom} / ${info.rosterTop}`);
+
+    await page.click('#needsLater');
+    await page.waitForFunction(() => !document.querySelector('#needsPop').classList.contains('open'));
+    const after = await page.evaluate(() => {
+      const until = Number(localStorage.getItem('needsSnoozeUntil') || 0);
+      const badge = document.querySelector('#needsBadge');
+      return {
+        open: document.querySelector('#needsPop').classList.contains('open'),
+        count: badge.textContent.trim(),
+        until,
+        badgeShown: badge.getBoundingClientRect().width > 0,
+      };
+    });
+    assert.equal(after.open, false);
+    assert.equal(after.count, info.count);
+    assert.equal(after.badgeShown, true);
+    assert.ok(after.until > Date.now() + 59 * 60 * 1000, String(after.until));
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => Number(document.querySelector('#needsBadge')?.textContent) >= 4, { timeout: 8000 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.$eval('#needsPop', (el) => el.classList.contains('open')), false);
+
+    await page.click('#btnNeeds');
+    await page.waitForSelector('#needsPop.open .need-item');
+    await page.screenshot({ path: '/tmp/needs-390.png' });
+  } finally {
+    await page.close();
+  }
+});
+
 test('без reduced-motion новый приказ запускает полёт конверта', { timeout: 30000 }, async () => {
   const page = await openPage({ width: 390, height: 844 }, { path: '/' });
   try {
