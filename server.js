@@ -48,8 +48,9 @@ const STATUS_LABELS = {
 // tier — main (Путин), dept (направление), sub (помощник, parentId), extra (союзник).
 // Номер на карте — среди видимых агентов, без пропусков. Помощники Финансов: 7.1, 7.2.
 // trading, biz и lang в архиве: записи остаются, на карту и в новые приказы не попадают.
-// grokAgentId — id агента в Grok, если он известен (у советника; у соцсетей и рутин
-// отдельного поля в ростере нет, их чаты лежат на ссылках пунктов «Нужно от вас»).
+// grokAgentId — id агента в Grok. Для посевного агента это поле карточки из кода:
+// после рестарта оно не берётся из payload в agent_state. У finance и помощников
+// invest (7.1) и analyst (7.2) один и тот же id.
 // ─────────────────────────────────────────────────────────────────────────────
 const SEED_AGENTS = [
   {
@@ -61,6 +62,7 @@ const SEED_AGENTS = [
     district: 'Кремль',
     kind: 'putin',
     tier: 'main',
+    grokAgentId: '8b9d4ad0-4222-49a8-84b4-b125d3b7ec01',
     x: 800,
     y: 540,
     links: ['army', 'poker', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'advisor', 'social', 'routines'],
@@ -79,6 +81,7 @@ const SEED_AGENTS = [
     district: 'Фрунзенская набережная',
     kind: 'army',
     tier: 'dept',
+    grokAgentId: 'b174ea11-d3ab-4ad7-ab65-8feacca27cf4',
     x: 590,
     y: 655,
     links: [],
@@ -99,6 +102,7 @@ const SEED_AGENTS = [
     district: 'Арбат',
     kind: 'poker',
     tier: 'dept',
+    grokAgentId: 'e15adfa3-6299-4980-a224-1b7adea71c45',
     x: 545,
     y: 470,
     links: [],
@@ -120,6 +124,7 @@ const SEED_AGENTS = [
     kind: 'trading',
     tier: 'dept',
     archived: true,
+    grokAgentId: '504035c8-ccd8-467b-9e34-f16305493533',
     x: 345,
     y: 415,
     links: [],
@@ -137,6 +142,7 @@ const SEED_AGENTS = [
     district: 'Таганка',
     kind: 'devops',
     tier: 'dept',
+    grokAgentId: 'd2ed048e-12e7-4b0e-b42c-36225ed71745',
     x: 1110,
     y: 640,
     links: [],
@@ -155,6 +161,7 @@ const SEED_AGENTS = [
     district: 'Тверская',
     kind: 'dev',
     tier: 'dept',
+    grokAgentId: '8117cf6a-c57d-42cc-ba6f-2421fe7af6ad',
     x: 640,
     y: 290,
     links: [],
@@ -173,6 +180,7 @@ const SEED_AGENTS = [
     district: 'Замоскворечье',
     kind: 'temshik',
     tier: 'dept',
+    grokAgentId: '6a1deccc-2411-4fd1-8da7-e7ba9fce6df2',
     x: 960,
     y: 790,
     links: [],
@@ -192,6 +200,7 @@ const SEED_AGENTS = [
     kind: 'blog',
     tier: 'dept',
     order: 9,
+    grokAgentId: '118a97ac-2030-4f25-b684-ac19252fb4aa',
     x: 845,
     y: 150,
     links: [],
@@ -212,6 +221,7 @@ const SEED_AGENTS = [
     kind: 'finance',
     tier: 'dept',
     order: 7,
+    grokAgentId: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
     x: 1080,
     y: 340,
     links: ['invest', 'analyst'],
@@ -231,6 +241,7 @@ const SEED_AGENTS = [
     district: 'Китай-город · Ильинка',
     kind: 'invest',
     tier: 'sub',
+    grokAgentId: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
     x: 1190,
     y: 270,
     links: [],
@@ -250,6 +261,7 @@ const SEED_AGENTS = [
     district: 'Китай-город · Ильинка',
     kind: 'analyst',
     tier: 'sub',
+    grokAgentId: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
     x: 980,
     y: 450,
     links: [],
@@ -270,6 +282,7 @@ const SEED_AGENTS = [
     kind: 'qa',
     tier: 'dept',
     order: 8,
+    grokAgentId: '892a92c9-8133-48d2-b22d-c77e653309af',
     x: 1304,
     y: 512,
     links: [],
@@ -290,6 +303,7 @@ const SEED_AGENTS = [
     kind: 'lang',
     tier: 'extra',
     archived: true,
+    grokAgentId: '5f09e2b6-ec92-44ef-bcbd-b1f848daed18',
     x: 420,
     y: 905,
     links: [],
@@ -305,6 +319,7 @@ const SEED_AGENTS = [
     kind: 'biz',
     tier: 'extra',
     archived: true,
+    grokAgentId: 'a64c9436-36bc-4122-af1b-89d56950b0c1',
     x: 150,
     y: 640,
     links: [],
@@ -343,6 +358,7 @@ const SEED_AGENTS = [
     kind: 'social',
     tier: 'dept',
     order: 11,
+    grokAgentId: 'a1bd53f2-5655-446b-8207-393e61fc20e1',
     x: 1160,
     y: 100,
     links: [],
@@ -362,6 +378,7 @@ const SEED_AGENTS = [
     kind: 'routines',
     tier: 'dept',
     order: 12,
+    grokAgentId: 'd6b45571-e211-4218-a1e2-1c0918973ddc',
     x: 360,
     y: 630,
     links: [],

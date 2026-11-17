@@ -114,6 +114,28 @@ test('state содержит новый ростер без секретов', a
   assert.equal(advisor.tier, 'dept');
   assert.equal(advisor.parentId, null);
   assert.equal(advisor.district, 'Кремль');
+  const grokAgentIds = {
+    grok: '8b9d4ad0-4222-49a8-84b4-b125d3b7ec01',
+    army: 'b174ea11-d3ab-4ad7-ab65-8feacca27cf4',
+    poker: 'e15adfa3-6299-4980-a224-1b7adea71c45',
+    devops: 'd2ed048e-12e7-4b0e-b42c-36225ed71745',
+    dev: '8117cf6a-c57d-42cc-ba6f-2421fe7af6ad',
+    temshik: '6a1deccc-2411-4fd1-8da7-e7ba9fce6df2',
+    finance: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+    invest: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+    analyst: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+    qa: '892a92c9-8133-48d2-b22d-c77e653309af',
+    blog: '118a97ac-2030-4f25-b684-ac19252fb4aa',
+    advisor: '961b2d3d-5f80-4891-b87a-c6913bbf2971',
+    social: 'a1bd53f2-5655-446b-8207-393e61fc20e1',
+    routines: 'd6b45571-e211-4218-a1e2-1c0918973ddc',
+    trading: '504035c8-ccd8-467b-9e34-f16305493533',
+    biz: 'a64c9436-36bc-4122-af1b-89d56950b0c1',
+    lang: '5f09e2b6-ec92-44ef-bcbd-b1f848daed18',
+  };
+  for (const [id, grokAgentId] of Object.entries(grokAgentIds)) {
+    assert.equal(body.agents.find((a) => a.id === id).grokAgentId, grokAgentId, id);
+  }
   assert.equal(advisor.grokAgentId, '961b2d3d-5f80-4891-b87a-c6913bbf2971');
   assert.ok(Math.hypot(advisor.x - grok.x, advisor.y - grok.y) < 220);
   const finance = body.agents.find((a) => a.id === 'finance');
