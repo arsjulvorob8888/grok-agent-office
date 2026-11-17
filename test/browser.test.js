@@ -1092,6 +1092,7 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.match(chip('blog'), /^9\./);
     assert.match(chip('lang'), /^10\./);
     assert.equal(ui.options.some((o) => o.value === 'trading' || o.value === 'biz'), false);
+    assert.equal(ui.options.find((o) => o.value === 'grok').text, '1. Путину лично');
     assert.match(ui.options.find((o) => o.value === 'devops').text, /^4\./);
     assert.match(ui.options.find((o) => o.value === 'invest').text, /7\.1/);
     assert.match(ui.options.find((o) => o.value === 'lang').text, /10\./);

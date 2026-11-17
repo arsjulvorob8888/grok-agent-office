@@ -1019,7 +1019,7 @@
     } else {
       form = `<form class="task-form" id="taskForm">
         ${tier === 'main' ? `<label for="taskTarget">Кому поручить</label><select id="taskTarget">
-            <option value="${esc(a.id)}">1. GROK лично</option>
+            <option value="${esc(a.id)}">1. Путину лично</option>
             ${depts.map((d) => `<option value="${esc(d.id)}">${esc(titled(d))}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
