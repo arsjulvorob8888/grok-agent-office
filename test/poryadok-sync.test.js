@@ -493,23 +493,23 @@ test('после listen Кремль сам шлёт открытые пункт
 
     const ids = hit.body.tasks.map((task) => task.externalId);
     for (const id of [
-      'kremlin-need-need-render-api',
       'kremlin-need-need-academy',
       'kremlin-need-need-social',
       'kremlin-need-need-finance',
     ]) {
       assert.ok(ids.includes(id), id);
     }
+    assert.equal(ids.includes('kremlin-need-need-render-api'), false);
     assert.equal(ids.some((id) => id.startsWith('kremlin-order-')), false);
 
-    const render = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-render-api');
-    assert.deepEqual(Object.keys(render).sort(), ['deadline', 'description', 'externalId', 'priority', 'status', 'title']);
-    assert.equal(render.title, 'Ключ Render API — ввести через защищённую форму в чате DevOps');
-    assert.equal(render.priority, 'Срочно');
-    assert.equal(render.status, 'В ожидании');
-    assert.equal(render.deadline, null);
-    assert.match(render.description, /От: 4\. DevOps/);
-    assert.match(render.description, /Где: Защищённая форма в чате DevOps/);
+    const academy = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-academy');
+    assert.deepEqual(Object.keys(academy).sort(), ['deadline', 'description', 'externalId', 'priority', 'status', 'title']);
+    assert.equal(academy.title, 'Одобрить Академию агентов: нажать «Да» в чатах Программирования, Тестировщика и Business Adviser');
+    assert.equal(academy.priority, 'Средний');
+    assert.equal(academy.status, 'В ожидании');
+    assert.equal(academy.deadline, null);
+    assert.match(academy.description, /От: 1\. Главный агент/);
+    assert.match(academy.description, /Где: Чаты агентов в Grok/);
     for (const task of hit.body.tasks) assert.equal(task.status, 'В ожидании');
 
     const income = hit.body.goals.find((goal) => goal.externalId === 'kremlin-goal-income');
@@ -527,7 +527,7 @@ test('после listen Кремль сам шлёт открытые пункт
     });
     assert.equal(after.poryadokSync.enabled, true);
     assert.equal(after.poryadokSync.lastError, null);
-    assert.deepEqual(after.poryadokSync.lastCounts, { needs: 4, orders: 0, goals: 2 });
+    assert.deepEqual(after.poryadokSync.lastCounts, { needs: 3, orders: 0, goals: 2 });
     assert.equal(JSON.stringify(after).includes('ingest-secret'), false);
     assert.equal(boot.stderr().includes('ingest-secret'), false);
   } finally {
@@ -581,7 +581,7 @@ test('пункт и смена статуса приказа запускают 
     assert.equal(need.status, 'В ожидании');
     assert.match(need.description, /От: 7\. Финансы/);
     assert.match(need.description, /Где: Кабинет/);
-    assert.ok(opened.body.tasks.some((task) => task.externalId === 'kremlin-need-need-render-api'));
+    assert.equal(opened.body.tasks.some((task) => task.externalId === 'kremlin-need-need-render-api'), false);
     assert.equal(opened.body.goals.length, 2);
 
     const beforeClose = receiver.hits.length;
