@@ -351,7 +351,7 @@
 
   // ── Здания направлений ─────────────────────────────────────────────────
   // Высота «шапки» здания над точкой агента (для расстановки облачков).
-  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, qa: 108, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, generic: 110 };
+  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, qa: 108, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, social: 100, routines: 110, generic: 110 };
 
   function building(kind, color) {
     const R = rng(color.length * 97 + kind.length * 13);
@@ -442,6 +442,25 @@
         let s = box(-40, -34, 80, 30, 66, '#0e7c74', { top: '#16a39a', front: '#0b5f59' });
         for (let x = -36; x < 40; x += 10) s += `<path d="M${x},-96v92" stroke="#7de3d9" stroke-opacity=".4"/>`;
         for (let y = -90; y < 0; y += 10) s += `<path d="M-40,${y}h80" stroke="#7de3d9" stroke-opacity=".4"/>`;
+        return s;
+      }
+      case 'social': {
+        let s = box(-50, -18, 100, 18, 36, '#fbcfe8', { top: '#fce7f3', front: '#f9a8d4', windows: true, rand: R });
+        s += `<rect x="-12" y="-90" width="24" height="44" rx="4" fill="#1c1224" stroke="#f0abfc" stroke-width="1.5"/>`;
+        s += `<rect x="-8" y="-84" width="16" height="30" rx="1.5" fill="#4a044e"/>`;
+        s += `<path d="M-3,-74c0,-3 2.2,-4 3.4,-1.8 1.2,-2.2 3.4,-1.2 3.4,1.8 0,3.2-3.4,5.4-3.4,5.4s-3.4,-2.2-3.4,-5.4z" fill="#fb7185"/>`;
+        s += `<circle cx="0" cy="-50" r="1.4" fill="#f0abfc"/>`;
+        s += `<rect x="-50" y="-2" width="100" height="3" fill="${c}"/>`;
+        return s;
+      }
+      case 'routines': {
+        let s = box(-58, -22, 116, 20, 42, '#f3e6d4', { top: '#faf3e8', front: '#e4d2b8', windows: true, rand: R });
+        s += `<path d="M-64,-64 L0,-96 L64,-64 Z" fill="#7c2d12"/>`;
+        s += `<path d="M-64,-64 L0,-96 L0,-64 Z" fill="#9a3412"/>`;
+        s += `<circle cx="0" cy="-56" r="8" fill="#fff7ed" stroke="#f5c451" stroke-width="1.4"/>`;
+        s += `<path d="M0,-56 v-3.4 M0,-56 l2.6,1.8" stroke="#7c2d12" stroke-width="1.2" fill="none"/>`;
+        s += `<rect x="-14" y="-22" width="28" height="18" fill="#5c3317"/><rect x="-6" y="-16" width="12" height="12" fill="#3f2412"/>`;
+        s += `<rect x="-58" y="-2" width="116" height="3" fill="${c}"/>`;
         return s;
       }
       case 'finance': {

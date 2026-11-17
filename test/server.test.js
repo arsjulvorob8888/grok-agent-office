@@ -61,7 +61,7 @@ test('state содержит новый ростер без секретов', a
   const { status, body } = await json('/api/state');
   assert.equal(status, 200);
   const ids = body.agents.map((a) => a.id);
-  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst']) {
+  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst', 'lang', 'biz', 'social', 'routines']) {
     assert.ok(ids.includes(id), `нет агента ${id}`);
   }
   const grok = body.agents.find((a) => a.id === 'grok');
@@ -103,6 +103,24 @@ test('state содержит новый ростер без секретов', a
   const qa = body.agents.find((a) => a.id === 'qa');
   assert.equal(qa.name, 'Тестировщик ПО');
   assert.equal(qa.kind, 'qa');
+  const socialAgent = body.agents.find((a) => a.id === 'social');
+  assert.equal(socialAgent.name, 'Соцсети');
+  assert.equal(socialAgent.number, '11');
+  assert.equal(socialAgent.kind, 'social');
+  assert.equal(socialAgent.tier, 'dept');
+  assert.equal(socialAgent.parentId, null);
+  assert.equal(socialAgent.archived, false);
+  assert.equal(socialAgent.district, 'ВДНХ');
+  const routines = body.agents.find((a) => a.id === 'routines');
+  assert.equal(routines.name, 'Рутины · Кремль');
+  assert.equal(routines.number, '12');
+  assert.equal(routines.kind, 'routines');
+  assert.equal(routines.tier, 'dept');
+  assert.equal(routines.parentId, null);
+  assert.equal(routines.archived, false);
+  assert.equal(routines.district, 'Хамовники');
+  assert.match(routines.role, /рутинам и автоматизации/);
+  assert.match(routines.role, /обучает владельца/);
   for (const id of ['trading', 'biz']) {
     const archived = body.agents.find((a) => a.id === id);
     assert.equal(archived.archived, true, id);
@@ -216,7 +234,7 @@ test('неизвестный агент создаётся на лету и по
   const a = st.body.agents.find((x) => x.id === 'crypto');
   assert.equal(a.name, 'Крипта');
   assert.equal(a.status, 'working');
-  assert.equal(a.number, '11');
+  assert.equal(a.number, '13');
   assert.equal(a.archived, false);
   assert.ok(Number.isFinite(a.x) && Number.isFinite(a.y));
   assert.ok(st.body.agents.find((x) => x.id === 'grok').links.includes('crypto'));
@@ -633,13 +651,19 @@ test('пункты «нужно от вас»: посев, токен, созд�
   assert.equal(academy.where, 'Чаты агентов в Grok');
   assert.ok(academy.checkedAt);
   assert.match(social.what, /Instagram и YouTube/);
+  assert.equal(social.fromAgentId, 'social');
   assert.equal(finance.fromAgentId, 'finance');
   assert.equal(finance.urgency, 'normal');
   assert.match(finance.what, /шесть финансовых вопросов/);
 
   const st = await json('/api/state');
-  const socialAgent = st.body.agents.find((a) => /соцсет/i.test(`${a.name} ${a.id}`));
-  assert.equal(social.fromAgentId, socialAgent ? socialAgent.id : 'grok');
+  const socialAgent = st.body.agents.find((a) => a.id === 'social');
+  const routinesAgent = st.body.agents.find((a) => a.id === 'routines');
+  assert.ok(socialAgent);
+  assert.equal(socialAgent.number, '11');
+  assert.equal(routinesAgent.number, '12');
+  assert.equal(social.fromAgentId, 'social');
+  assert.equal(social.fromAgentId, socialAgent.id);
   assert.equal(st.body.needs.filter((n) => n.id === 'need-render-api').length, 0);
   assert.equal(st.body.needs.filter((n) => ['need-academy', 'need-social', 'need-finance'].includes(n.id)).length, 3);
   assert.equal(st.body.needs.filter((n) => n.id === 'need-academy').length, 1);
