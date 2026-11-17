@@ -445,6 +445,79 @@ test('задача идёт агенту, потом Путину, потом в
   process.env.KREMLIN_WEBHOOK_KEY = '';
 });
 
+test('2xx через вебхук агента или Путина делает working, недоставка нет', async () => {
+  delete process.env.KREMLIN_WEBHOOK_URL;
+  delete process.env.KREMLIN_WEBHOOK_KEY;
+  process.env.KREMLIN_WEBHOOK_URL = '';
+  process.env.KREMLIN_WEBHOOK_KEY = '';
+  for (const id of ['putin', 'qa', 'temshik', 'devops', 'routines']) {
+    const path = id === 'putin' ? '/api/delivery/putin' : `/api/agents/${id}/delivery`;
+    const cleared = await call(path, {
+      method: 'PUT',
+      headers: { 'x-app-password': 'pw-delivery' },
+      body: JSON.stringify({ url: '' }),
+    });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.url, '');
+  }
+  async function activityOf(id) {
+    const state = await call('/api/state');
+    const agent = state.body.agents.find((item) => item.id === id);
+    return agent ? agent.activity : '';
+  }
+  const quiet = await call('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ agent: 'qa', text: 'fixture-task-quiet' }),
+  });
+  assert.equal(quiet.status, 201);
+  assert.equal(quiet.body.forwardStatus, null);
+  assert.equal(quiet.body.deliveryLabel, 'В очереди, доставка не подключена');
+  assert.equal(await activityOf('qa'), 'resting');
+
+  await call('/api/delivery/putin', {
+    method: 'PUT',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: `${hookOrigin}/putin-live`, key: PUTIN_KEY }),
+  });
+  const viaPutin = await call('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ agent: 'temshik', text: 'fixture-task-putin-live' }),
+  });
+  assert.equal(viaPutin.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaPutin.body.forwardStatus >= 200 && viaPutin.body.forwardStatus < 300, true);
+  assert.equal(await activityOf('temshik'), 'working');
+
+  await call('/api/agents/devops/delivery', {
+    method: 'PUT',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: `${hookOrigin}/fail/devops-live`, key: AGENT_KEY }),
+  });
+  const failed = await call('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ agent: 'devops', text: 'fixture-task-devops-live' }),
+  });
+  assert.equal(failed.body.deliveryLabel, 'Ошибка доставки 500');
+  assert.notEqual(await activityOf('devops'), 'working');
+
+  await call('/api/agents/routines/delivery', {
+    method: 'PUT',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ url: `${hookOrigin}/routines-live`, key: AGENT_KEY }),
+  });
+  const viaAgent = await call('/api/task', {
+    method: 'POST',
+    headers: { 'x-app-password': 'pw-delivery' },
+    body: JSON.stringify({ agent: 'routines', text: 'fixture-task-routines-live' }),
+  });
+  assert.equal(viaAgent.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaAgent.body.forwardStatus >= 200 && viaAgent.body.forwardStatus < 300, true);
+  assert.equal(await activityOf('routines'), 'working');
+  assert.equal(await activityOf('qa'), 'resting');
+});
+
 test('без ключа шифра сохранение отказывает и не подменяет адрес', async () => {
   const savedKey = process.env.WEBHOOK_SECRETS_KEY;
   process.env.WEBHOOK_SECRETS_KEY = '';
