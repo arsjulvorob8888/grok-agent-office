@@ -14,6 +14,7 @@ const { createPoryadokSync } = require('./lib/poryadok-sync');
 const { senderName } = require('./public/js/sender-label');
 const live = require('./lib/live-status');
 const streamHub = require('./lib/stream');
+const delivery = require('./lib/delivery');
 
 // Поток «состояние изменилось». Живой TTL агента в этот хаб не кладёт секретов.
 const hub = streamHub.createHub();
@@ -488,6 +489,7 @@ const state = {
   needs: [],
   routines: [],
   outbox: [],
+  webhookTargets: {},
   nextTaskId: 1,
   nextMessageId: 1,
   nextNeedId: 1,
@@ -1928,8 +1930,25 @@ app.get('/api/health/delivery', (req, res) => {
   });
 });
 
+delivery.register(app, {
+  state,
+  store,
+  requireAppPassword,
+  findAgent,
+  formatAtMsk,
+  publicUrl: PUBLIC_URL,
+  headersFor(hookKey) {
+    return kremlinWebhookHeaders({
+      KREMLIN_WEBHOOK_KEY: hookKey || '',
+      KREMLIN_WEBHOOK_HEADER: process.env.KREMLIN_WEBHOOK_HEADER,
+    });
+  },
+});
+
 app.post('/api/outbox/retry', requireAppPassword, async (req, res) => {
-  if (!webhookUrl()) return res.status(409).json({ error: 'KREMLIN_WEBHOOK_URL не задан' });
+  if (!delivery.anyConfigured(state, process.env)) {
+    return res.status(409).json({ error: 'KREMLIN_WEBHOOK_URL не задан' });
+  }
   const result = await flushOutbox();
   res.json({ ok: true, sent: result.sent, failed: result.failed });
 });
@@ -2213,15 +2232,26 @@ function markDeliveredAgent(item, task) {
 async function sendOutboxItem(item) {
   if (!item || item.status === 'delivered') return { sent: false, attempted: false, skipped: true };
   if (outboxInflight.has(item.id)) return { sent: false, attempted: false, skipped: true };
-  const url = webhookUrl();
-  if (!url) return { sent: false, attempted: false };
+  let dest = null;
+  try {
+    dest = delivery.resolveDestination(item.agentId, state, process.env);
+  } catch (_) {
+    item.attempts = (Number(item.attempts) || 0) + 1;
+    console.error('Вебхук Кремля не доставлен: decrypt_error');
+    logDeliveryAttempt(item, 'error=decrypt_error', 0);
+    return { sent: false, attempted: true, status: 0, error: 'decrypt_error' };
+  }
+  if (!dest || !dest.url) return { sent: false, attempted: false };
   outboxInflight.add(item.id);
   item.attempts = (Number(item.attempts) || 0) + 1;
   const started = Date.now();
   try {
-    const headers = kremlinWebhookHeaders();
+    const headers = kremlinWebhookHeaders({
+      KREMLIN_WEBHOOK_KEY: dest.key || '',
+      KREMLIN_WEBHOOK_HEADER: process.env.KREMLIN_WEBHOOK_HEADER,
+    });
     headers['x-outbox-id'] = String(item.id);
-    const response = await fetch(url, {
+    const response = await fetch(dest.url, {
       method: 'POST',
       headers,
       body: JSON.stringify(item.payload),
@@ -2249,8 +2279,6 @@ async function sendOutboxItem(item) {
 }
 
 async function drainOutbox() {
-  const url = webhookUrl();
-  if (!url) return { sent: 0, failed: 0 };
   const pending = (state.outbox || [])
     .filter((item) => item && item.status === 'queued')
     .slice()
