@@ -203,6 +203,9 @@ async function seedOffice(base) {
       where: 'Чат Темщика',
       fromAgentId: 'temshik',
       urgency: 'low',
+      kind: 'approval',
+      docUrl: 'https://example.com/doc',
+      participants: ['dev', 'temshik'],
     }),
   });
   assert.equal(need.status, 201);
@@ -379,7 +382,7 @@ describe('хранилище', { concurrency: 1 }, () => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
     try {
       const version = await pool.query(`SELECT version FROM ${schema}.schema_version ORDER BY version`);
-      assert.deepEqual(version.rows.map((row) => row.version), [1, 2]);
+      assert.deepEqual(version.rows.map((row) => row.version), [1, 2, 3]);
       await pool.query(`UPDATE ${schema}.needs SET what = $1 WHERE id = $2`, ['Отредактировано вручную', 'need-finance']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-social']);
       await pool.query(`DELETE FROM ${schema}.needs WHERE id = $1`, ['need-academy']);
@@ -470,12 +473,19 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(finance.answer, 'краткий ответ');
       assert.equal(finance.answeredAt, '2026-11-17T12:30:00.000Z');
       assert.equal(finance.updatedAt, '2026-11-17T12:31:00.000Z');
+      assert.equal(finance.kind, 'money');
+      assert.ok(finance.docUrl);
+      assert.equal(finance.updatedAt, '2026-11-17T12:31:00.000Z');
       const savedNeed = await json(second.base, `/api/needs/${made.need.id}`, {
         headers: { 'x-app-password': 'pw-test' },
       });
       assert.equal(savedNeed.status, 200);
       assert.equal(savedNeed.body.closedBy, 'dev');
       assert.ok(savedNeed.body.closedAt);
+      assert.equal(savedNeed.body.kind, 'approval');
+      assert.equal(savedNeed.body.docUrl, 'https://example.com/doc');
+      assert.deepEqual(savedNeed.body.participants, ['dev', 'temshik']);
+      assert.ok(savedNeed.body.updatedAt);
       const savedFinance = await json(second.base, '/api/needs/need-finance', {
         headers: { 'x-app-password': 'pw-test' },
       });

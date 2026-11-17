@@ -6,6 +6,7 @@
   const LABEL = { sent: 'Отправлена', accepted: 'Принял', in_progress: 'В работе' };
   let tasks = [];
   let agents = [];
+  let routines = [];
   let lastEvent = 0;
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -48,6 +49,10 @@
       && !archivedParty(t.fromAgentId));
   }
 
+  function activeRoutines() {
+    return routines.filter((r) => r && r.active && !archivedParty(r.agentId));
+  }
+
   function setOpen(open) {
     const panel = document.getElementById('processes');
     const btn = document.getElementById('btnProcesses');
@@ -85,24 +90,35 @@
     const badge = document.getElementById('procBadge');
     if (!list) return;
     const rows = active();
-    if (count) count.textContent = String(rows.length);
+    const runs = activeRoutines();
+    const total = rows.length + runs.length;
+    if (count) count.textContent = String(total);
     if (badge) {
-      badge.textContent = String(rows.length);
-      badge.classList.toggle('zero', rows.length === 0);
+      badge.textContent = String(total);
+      badge.classList.toggle('zero', total === 0);
     }
-    const sig = rows.map((t) => [t.id, t.orderStatus, t.text, t.fromAgentId, t.agentId || t.agent, t.createdAt].join('\u0001')).join('\u0002');
+    const sig = rows.map((t) => [t.id, t.orderStatus, t.text, t.fromAgentId, t.agentId || t.agent, t.createdAt].join('\u0001')).join('\u0002')
+      + '\u0003' + runs.map((r) => [r.id, r.name, r.agentId, r.startedAt].join('\u0001')).join('\u0002');
     tick();
     if (list.dataset.sig === sig) return;
     const top = list.scrollTop;
     list.dataset.sig = sig;
     const map = byId();
-    if (!rows.length) {
+    if (!rows.length && !runs.length) {
       list.innerHTML = '<div class="proc-empty"><b>Сейчас тихо</b>Нет приказов в пути, принятых или в работе.</div>';
       list.scrollTop = 0;
       return;
     }
     const now = Date.now();
-    list.innerHTML = rows.map((t) => {
+    const routineHtml = runs.map((r) => {
+      const who = person(r.agentId, map);
+      return `<button type="button" class="proc-row in_progress" data-routine-id="${esc(r.id)}">
+        <span class="proc-route"><b>${esc(who)}</b><span class="arr" aria-hidden="true">·</span><b>рутина</b></span>
+        <span class="proc-what">${esc(r.name || 'Рутина')}</span>
+        <span class="proc-meta"><span class="proc-st in_progress">Идёт</span><time class="proc-elapsed" data-start="${esc(r.startedAt)}" datetime="${esc(r.startedAt)}">${esc(formatElapsed(r.startedAt, now))}</time></span>
+      </button>`;
+    }).join('');
+    list.innerHTML = routineHtml + rows.map((t) => {
       const from = person(t.fromAgentId || 'grok', map);
       const to = person(t.agentId || t.agent, map);
       const what = t.text || 'Задача';
@@ -126,6 +142,7 @@
   function take(data) {
     tasks = (data && data.tasks) || [];
     agents = (data && data.agents) || [];
+    routines = (data && data.routines) || [];
     render();
   }
 

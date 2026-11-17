@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
-const { activityFor } = require('./lib/activity');
+const { activityFor, activeWindowMs } = require('./lib/activity');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
 
@@ -456,9 +456,11 @@ const state = {
   messages: [],
   files: new Map(),
   needs: [],
+  routines: [],
   nextTaskId: 1,
   nextMessageId: 1,
   nextNeedId: 1,
+  nextRoutineId: 1,
 };
 
 const NEED_URGENCY = new Set(['low', 'normal', 'high']);
@@ -466,6 +468,10 @@ const RENDER_NEED_ID = 'need-render-api';
 const ACADEMY_NEED_ID = 'need-academy';
 const ACADEMY_WHAT = 'Одобрить Академию агентов: нажать «Да» в чатах Программирования и Тестировщика';
 const ACADEMY_WHERE = 'Чаты агентов в Grok';
+const TEST_NEED_ID = 'need-test-qa';
+const TEST_NEED_WHAT = 'ТЕСТ: пройдите кнопки «Да» и «Нет» на странице вопроса';
+const TEST_REOPEN_MS = 5 * 60 * 1000;
+const NEED_KINDS = new Set(['money', 'outside_message', 'delete', 'publish', 'secret', 'approval', 'test']);
 const FINANCE_NEED_ID = 'need-finance';
 const FINANCE_WHERE = 'Чат Путина или Финансов';
 const ACTION_URL_MAX = 500;
@@ -489,22 +495,13 @@ function needAuthor(id) {
 function needSeeds() {
   return [
     {
-      id: ACADEMY_NEED_ID,
-      what: ACADEMY_WHAT,
-      fromAgentId: needAuthor('grok'),
-      where: ACADEMY_WHERE,
-      urgency: 'normal',
-      actionUrl: ACADEMY_ACTION_URL,
-      actionLabel: null,
-      actionHint: null,
-    },
-    {
       id: 'need-social',
       what: 'Войти в Instagram и YouTube для агента Соцсети',
       fromAgentId: needAuthor('social'),
       where: 'Instagram и YouTube',
       urgency: 'normal',
-      actionUrl: SOCIAL_ACTION_URL,
+      kind: 'outside_message',
+      docUrl: SOCIAL_ACTION_URL,
       actionLabel: null,
       actionHint: SOCIAL_ACTION_HINT,
     },
@@ -514,9 +511,22 @@ function needSeeds() {
       fromAgentId: needAuthor('finance'),
       where: FINANCE_WHERE,
       urgency: 'normal',
-      actionUrl: FINANCE_ACTION_URL,
+      kind: 'money',
+      docUrl: FINANCE_ACTION_URL,
       actionLabel: null,
       actionHint: FINANCE_ACTION_HINT,
+    },
+    {
+      id: TEST_NEED_ID,
+      what: TEST_NEED_WHAT,
+      fromAgentId: needAuthor('qa'),
+      where: 'Страница вопроса',
+      urgency: 'low',
+      kind: 'test',
+      answerable: true,
+      docUrl: null,
+      actionLabel: null,
+      actionHint: null,
     },
   ];
 }
@@ -550,9 +560,15 @@ function resolveNeedsByEnv(env = process.env, now = new Date().toISOString()) {
     if (typeof value !== 'string' || value.trim() === '') continue;
     item.closedAt = now;
     item.closedBy = 'auto-env';
+    item.updatedAt = now;
     closed += 1;
   }
   return closed;
+}
+
+function seedParticipantList(seed) {
+  if (!seed || !Array.isArray(seed.participants)) return [];
+  return seed.participants.filter((id) => typeof id === 'string' && id.trim()).map((id) => id.trim());
 }
 
 function blankNeedField(value) {
@@ -581,20 +597,26 @@ function migrateOwnerNeeds(list = state.needs) {
   for (const seed of needSeeds()) {
     let item = list.find((n) => n && n.id === seed.id);
     if (!item) {
-      if (!allowInsert || seed.id === RENDER_NEED_ID) continue;
+      if (seed.id === RENDER_NEED_ID || seed.id === ACADEMY_NEED_ID) continue;
+      if (!allowInsert && seed.id !== TEST_NEED_ID) continue;
       item = {
         id: seed.id,
         what: seed.what,
         fromAgentId: seed.fromAgentId,
         where: seed.where,
         urgency: seed.urgency,
-        actionUrl: seed.actionUrl || null,
+        actionUrl: null,
+        docUrl: seed.docUrl || null,
+        kind: seed.kind || null,
         actionLabel: seed.actionLabel || null,
         actionHint: seed.actionHint || null,
         details: '',
-        answerable: false,
+        answerable: seed.answerable === true,
         answers: [],
+        answer: null,
+        answeredAt: null,
         answerStatus: null,
+        participants: seedParticipantList(seed),
         createdAt: now,
         checkedAt: now,
         closedAt: null,
@@ -608,14 +630,33 @@ function migrateOwnerNeeds(list = state.needs) {
       if (!Array.isArray(item.answers)) item.answers = [];
       if (item.answerStatus !== 'answered') item.answerStatus = null;
       if (typeof item.details !== 'string') item.details = '';
-      if (typeof item.answerable !== 'boolean') item.answerable = false;
+      if (typeof item.answerable !== 'boolean') item.answerable = seed.answerable === true;
+      if (!Array.isArray(item.participants)) item.participants = seedParticipantList(seed);
+      if (!item.docUrl && seed.docUrl) item.docUrl = seed.docUrl;
+      if (!item.kind && seed.kind) item.kind = seed.kind;
+      if (isExternalDoc(item.actionUrl) && !item.docUrl) item.docUrl = item.actionUrl;
     }
   }
   applyNeedsDetails(list, readNeedsDetailsCatalog());
   for (const item of list) {
     if (!item || item.id !== ACADEMY_NEED_ID) continue;
-    item.what = ACADEMY_WHAT;
+    item.what = stripAdvisor(item.what || ACADEMY_WHAT);
     item.where = ACADEMY_WHERE;
+    if (!item.closedAt) {
+      item.closedAt = now;
+      item.closedBy = 'putin';
+    }
+  }
+  for (const item of list) {
+    if (!item || item.id !== TEST_NEED_ID) continue;
+    if (!String(item.what || '').startsWith('ТЕСТ:')) item.what = TEST_NEED_WHAT;
+    item.kind = 'test';
+    item.answerable = true;
+    item.closedAt = null;
+    item.closedBy = null;
+    item.answer = null;
+    item.answeredAt = null;
+    item.answerStatus = null;
   }
   for (const item of list) {
     if (!item || item.id !== FINANCE_NEED_ID) continue;
@@ -650,8 +691,30 @@ function migrateExternalNeedStore() {
   if (store.state && Array.isArray(store.state.needs)) migrateOwnerNeeds(store.state.needs);
 }
 
+function reopenTestNeeds(now = Date.now(), force = false) {
+  let opened = 0;
+  for (const item of state.needs) {
+    if (!item || (item.kind !== 'test' && item.id !== TEST_NEED_ID)) continue;
+    if (!item.closedAt) continue;
+    const closed = Date.parse(item.closedAt);
+    if (!force && Number.isFinite(closed) && now - closed < TEST_REOPEN_MS) continue;
+    item.closedAt = null;
+    item.closedBy = null;
+    item.answer = null;
+    item.answeredAt = null;
+    item.answerStatus = null;
+    opened += 1;
+  }
+  return opened;
+}
+
 migrateOwnerNeeds();
 migrateExternalNeedStore();
+reopenTestNeeds(Date.now(), true);
+const testReopenTimer = setInterval(() => {
+  try { reopenTestNeeds(); } catch (err) { console.error(err); }
+}, 30 * 1000);
+if (typeof testReopenTimer.unref === 'function') testReopenTimer.unref();
 const needsResolveTimer = setInterval(() => {
   try {
     if (resolveNeedsByEnv()) poryadokSync.schedule();
@@ -706,18 +769,43 @@ function publicState(opts = {}) {
       vacant: !!a.vacant,
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
-      ...activityFor(a, state.tasks),
+      ...activityFor(a, state.tasks, Date.now(), activeWindowMs(), activityExtras()),
       ...(a.analysis !== undefined ? { analysis: a.analysis } : {}),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
     needs: state.needs.map((item) => publicNeed(item, Date.now(), opts)),
+    routines: state.routines.slice(0, 100).map(publicRoutine),
     poryadokSync: poryadokSync.publicStatus(),
+  };
+}
+
+function activityExtras() {
+  return { messages: state.messages, routines: state.routines };
+}
+
+function publicRoutine(item) {
+  return {
+    id: item.id,
+    agentId: item.agentId,
+    name: item.name,
+    startedAt: item.startedAt,
+    finishedAt: item.finishedAt || null,
+    active: !item.finishedAt,
   };
 }
 
 function needHasDetails(item) {
   return !!(item && typeof item.details === 'string' && item.details.trim());
+}
+
+function needPagePath(id) {
+  return `/needs/${encodeURIComponent(String(id))}`;
+}
+
+function isYesNoNeed(item) {
+  if (!item) return false;
+  return item.kind === 'approval' || item.kind === 'test' || item.answerable === true;
 }
 
 function publicNeed(item, now = Date.now(), opts = {}) {
@@ -727,10 +815,14 @@ function publicNeed(item, now = Date.now(), opts = {}) {
     fromAgentId: item.fromAgentId,
     where: item.where,
     urgency: item.urgency,
-    actionUrl: item.actionUrl || null,
+    kind: item.kind || null,
+    participants: Array.isArray(item.participants) ? item.participants.slice() : [],
+    actionUrl: needPagePath(item.id),
+    docUrl: item.docUrl || null,
     actionLabel: item.actionLabel || null,
     actionHint: item.actionHint || null,
     createdAt: item.createdAt,
+    updatedAt: item.updatedAt || item.createdAt || null,
     checkedAt: item.checkedAt || item.createdAt || null,
     closedAt: item.closedAt || null,
     closedBy: item.closedBy || null,
@@ -738,6 +830,9 @@ function publicNeed(item, now = Date.now(), opts = {}) {
     stale: isNeedStale(item, now),
     hasDetails: needHasDetails(item),
     answerable: item.answerable === true,
+    yesNo: isYesNoNeed(item),
+    answer: item.answer || null,
+    answeredAt: item.answeredAt || null,
     answerStatus: item.answerStatus === 'answered' ? 'answered' : null,
   };
   if (item.answer != null && item.answer !== '') view.answer = item.answer;
@@ -843,7 +938,10 @@ function parseNeed(body) {
   const actionHint = optionalNeedText(body.actionHint, 'actionHint', ACTION_HINT_MAX);
   const details = parseDetails(body.details);
   const answerable = parseAnswerable(body.answerable);
-  return { what, where, fromAgentId, urgency, resolvesWhenEnv, actionUrl, actionLabel, actionHint, details, answerable };
+  const participants = parseParticipants(body.participants);
+  const kind = parseKind(body.kind);
+  const docUrl = parseDocUrl(body.docUrl != null ? body.docUrl : (isExternalDoc(actionUrl) ? actionUrl : null));
+  return { what, where, fromAgentId, urgency, participants, kind, resolvesWhenEnv, docUrl, actionLabel, actionHint, details, answerable };
 }
 
 function parseDetails(value) {
@@ -857,6 +955,52 @@ function parseAnswerable(value) {
   if (value == null || value === '') return false;
   if (typeof value !== 'boolean') throw httpError(400, 'answerable должен быть boolean');
   return value;
+}
+
+function parseKind(value) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || !NEED_KINDS.has(value.trim())) {
+    throw httpError(400, 'kind должен быть money, outside_message, delete, publish, secret, approval или test');
+  }
+  return value.trim();
+}
+
+function isExternalDoc(value) {
+  return typeof value === 'string' && /^(https|grokbot):\/\/\S+$/i.test(value.trim());
+}
+
+function parseDocUrl(value) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') throw httpError(400, 'docUrl должен быть строкой');
+  const url = value.trim();
+  if (!url) return null;
+  if (!isExternalDoc(url) || url.length > ACTION_URL_MAX) {
+    throw httpError(400, 'docUrl должен начинаться с https:// или grokbot://');
+  }
+  return url;
+}
+
+function stripAdvisor(text) {
+  return String(text || '')
+    .replace(/,?\s*и Business Adviser/g, '')
+    .replace(/Business Adviser/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,:.])/g, '$1')
+    .trim();
+}
+
+function parseParticipants(value) {
+  if (value == null || value === '') return [];
+  if (!Array.isArray(value)) throw httpError(400, 'participants должен быть массивом id агентов');
+  const ids = [];
+  for (const raw of value) {
+    if (typeof raw !== 'string' || !raw.trim()) throw httpError(400, 'participants должен содержать id агентов');
+    const id = raw.trim();
+    if (!findAgent(id)) throw httpError(400, 'Неизвестный участник');
+    if (!ids.includes(id)) ids.push(id);
+    if (ids.length > 12) throw httpError(400, 'Слишком много участников (максимум 12)');
+  }
+  return ids;
 }
 
 function cleanList(value) {
@@ -1518,10 +1662,12 @@ app.get('/healthz', (_req, res) => {
 });
 
 app.get('/api/state', (req, res) => {
+  if (resolveNeedsByEnv()) poryadokSync.schedule();
   res.json(publicState({ includePrivate: hqPasswordOk(req) }));
 });
 
 app.get('/api/needs', (req, res) => {
+  if (resolveNeedsByEnv()) poryadokSync.schedule();
   const opts = { includePrivate: hqPasswordOk(req) };
   res.json({ needs: openNeeds().map((item) => publicNeed(item, Date.now(), opts)) });
 });
@@ -1534,7 +1680,7 @@ app.get('/api/needs/:id', (req, res) => {
   res.json(publicNeed(item, Date.now(), { includePrivate: hqPasswordOk(req) }));
 });
 
-app.post('/api/needs', requireAgentToken, async (req, res) => {
+app.post('/api/needs', requireUserOrAgent, async (req, res) => {
   try {
     const parsed = parseNeed(req.body);
     const createdAt = new Date().toISOString();
@@ -1544,15 +1690,18 @@ app.post('/api/needs', requireAgentToken, async (req, res) => {
       where: parsed.where,
       fromAgentId: parsed.fromAgentId,
       urgency: parsed.urgency,
-      actionUrl: parsed.actionUrl,
+      kind: parsed.kind || (parsed.answerable ? 'approval' : null),
+      participants: parsed.participants,
+      docUrl: parsed.docUrl,
       actionLabel: parsed.actionLabel,
       actionHint: parsed.actionHint,
       details: parsed.details,
-      answerable: parsed.answerable,
+      answerable: parsed.answerable || parsed.kind === 'approval' || parsed.kind === 'test',
       answers: [],
       answerStatus: null,
       resolvesWhenEnv: parsed.resolvesWhenEnv,
       createdAt,
+      updatedAt: createdAt,
       checkedAt: createdAt,
       closedAt: null,
       closedBy: null,
@@ -1588,11 +1737,46 @@ app.post('/api/needs/:id/close', requireUserOrAgent, async (req, res) => {
   if (who.error) return res.status(400).json({ error: who.error });
   item.closedAt = new Date().toISOString();
   item.closedBy = who.id;
+  item.updatedAt = item.closedAt;
   console.log(`need closed: ${item.id} by ${who.id}`);
   store.noteNeed(item);
-  poryadokSync.schedule();
+  if (item.kind !== 'test' && item.id !== TEST_NEED_ID) poryadokSync.schedule();
   await store.flush();
   res.json(publicNeed(item));
+});
+
+app.patch('/api/needs/:id', requireUserOrAgent, async (req, res) => {
+  const item = state.needs.find((n) => n.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'Пункт не найден' });
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  try {
+    if (Object.prototype.hasOwnProperty.call(body, 'what')) item.what = needText(body.what, 'what', 500);
+    if (Object.prototype.hasOwnProperty.call(body, 'where')) item.where = needText(body.where, 'where', 300);
+    if (Object.prototype.hasOwnProperty.call(body, 'urgency')) {
+      const urgency = typeof body.urgency === 'string' ? body.urgency.trim() : '';
+      if (!NEED_URGENCY.has(urgency)) throw httpError(400, 'urgency должен быть low, normal или high');
+      item.urgency = urgency;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'kind')) item.kind = parseKind(body.kind);
+    if (Object.prototype.hasOwnProperty.call(body, 'docUrl')) item.docUrl = parseDocUrl(body.docUrl);
+    if (Object.prototype.hasOwnProperty.call(body, 'details')) item.details = parseDetails(body.details);
+    if (body.closed === true || body.close === true) {
+      if (!item.closedAt) {
+        const who = needCloser(req);
+        if (who.error) throw httpError(400, who.error);
+        item.closedAt = new Date().toISOString();
+        item.closedBy = who.id;
+      }
+    }
+  } catch (err) {
+    const status = err.status || 400;
+    return res.status(status).json({ error: err.expose || err.message || 'Некорректный пункт' });
+  }
+  item.updatedAt = new Date().toISOString();
+  store.noteNeed(item);
+  if (item.kind !== 'test' && item.id !== TEST_NEED_ID) poryadokSync.schedule();
+  await store.flush();
+  res.json(publicNeed(item, Date.now(), { includePrivate: hqPasswordOk(req) }));
 });
 
 app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
@@ -1736,9 +1920,63 @@ async function issueOwnerTask({ agentId, text, fromAgentId, parentOrderId, attac
   return task;
 }
 
-app.post('/api/needs/:id/answer', requireAppPassword, async (req, res) => {
+function parseYesNo(body) {
+  if (!body || (body.answer == null && body.choice == null)) return null;
+  const raw = body.answer != null ? body.answer : body.choice;
+  if (typeof raw !== 'string') throw httpError(400, 'answer должен быть yes или no');
+  const value = raw.trim().toLowerCase();
+  if (value === 'yes' || value === 'да') return 'yes';
+  if (value === 'no' || value === 'нет') return 'no';
+  throw httpError(400, 'answer должен быть yes или no');
+}
+
+function yesNoWord(answer) {
+  return answer === 'no' ? 'Нет' : 'Да';
+}
+
+app.post('/api/needs/:id/answer', async (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
+  const testNeed = item.kind === 'test' || item.id === TEST_NEED_ID;
+  if (!testNeed && !hqPasswordOk(req)) {
+    if (!APP_PASSWORD) return res.status(503).json({ error: 'Пароль доступа не настроен (APP_PASSWORD)' });
+    return res.status(401).json({ error: 'Неверный пароль доступа' });
+  }
+  let choice = null;
+  try {
+    choice = parseYesNo(req.body);
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.expose || 'Некорректный ответ' });
+  }
+  const nowIso = new Date().toISOString();
+  if (choice) {
+    const word = yesNoWord(choice);
+    if (!testNeed) {
+      try {
+        await issueOwnerTask({
+          agentId: item.fromAgentId,
+          text: `Ответ Арсения на «${item.what || ''}»: ${word}`,
+          fromAgentId: 'owner',
+          parentOrderId: null,
+          attachments: [],
+        });
+      } catch (err) {
+        const status = err.status || 500;
+        if (!err.status) console.error(err);
+        return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
+      }
+    }
+    item.answer = choice;
+    item.answeredAt = nowIso;
+    item.answerStatus = 'answered';
+    item.closedAt = nowIso;
+    item.closedBy = 'owner';
+    item.updatedAt = nowIso;
+    store.noteNeed(item);
+    if (!testNeed) poryadokSync.schedule();
+    await store.flush();
+    return res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
+  }
   const raw = req.body && typeof req.body.text === 'string' ? req.body.text : '';
   if (req.body && req.body.text != null && typeof req.body.text !== 'string') {
     return res.status(400).json({ error: 'Нужен текст ответа' });
@@ -1748,25 +1986,27 @@ app.post('/api/needs/:id/answer', requireAppPassword, async (req, res) => {
   if (text.length > ANSWER_MAX) {
     return res.status(400).json({ error: `Слишком длинный ответ (максимум ${ANSWER_MAX} символов)` });
   }
-  const orderText = `Ответ Арсения на «${item.what || ''}»: ${text}`;
-  try {
-    await issueOwnerTask({
-      agentId: item.fromAgentId,
-      text: orderText,
-      fromAgentId: 'owner',
-      parentOrderId: null,
-      attachments: [],
-    });
-  } catch (err) {
-    const status = err.status || 500;
-    if (!err.status) console.error(err);
-    return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
+  if (!testNeed) {
+    try {
+      await issueOwnerTask({
+        agentId: item.fromAgentId,
+        text: `Ответ Арсения на «${item.what || ''}»: ${text}`,
+        fromAgentId: 'owner',
+        parentOrderId: null,
+        attachments: [],
+      });
+    } catch (err) {
+      const status = err.status || 500;
+      if (!err.status) console.error(err);
+      return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
+    }
   }
   if (!Array.isArray(item.answers)) item.answers = [];
-  item.answers.push({ text, at: new Date().toISOString() });
+  item.answers.push({ text, at: nowIso });
   item.answerStatus = 'answered';
+  item.updatedAt = nowIso;
   store.noteNeed(item);
-  poryadokSync.schedule();
+  if (!testNeed) poryadokSync.schedule();
   await store.flush();
   res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
 });
@@ -1885,6 +2125,12 @@ app.post('/api/status', requireAgentToken, async (req, res) => {
   if (body.status != null && !STATUS_LABELS[body.status]) {
     return res.status(400).json({ error: 'status должен быть working, idle или waiting' });
   }
+  if (body.dashboard != null && body.dashboard !== '' && typeof body.dashboard !== 'string') {
+    return res.status(400).json({ error: 'dashboard должен быть строкой' });
+  }
+  if (typeof body.dashboard === 'string' && body.dashboard.trim().length > 500) {
+    return res.status(400).json({ error: 'Слишком длинный dashboard (максимум 500 символов)' });
+  }
 
   let parent = null;
   if (typeof body.parentId === 'string' && body.parentId.trim()) {
@@ -1945,8 +2191,14 @@ app.post('/api/status', requireAgentToken, async (req, res) => {
     }
   }
 
+  if (typeof body.dashboard === 'string' && body.dashboard.trim()) {
+    agent.dashboardNote = body.dashboard.trim().slice(0, 300);
+    agent.lastDashboardAt = new Date().toISOString();
+  }
+
   if (body.status) agent.status = body.status;
   if (typeof body.now === 'string') agent.now = body.now;
+  agent.lastStatusAt = new Date().toISOString();
 
   if (typeof body.done === 'string' && body.done.trim()) {
     agent.done.unshift(body.done.trim());
@@ -1966,7 +2218,10 @@ app.post('/api/status', requireAgentToken, async (req, res) => {
       }, { force: true, creditAgent: agent });
       task.result = body.result;
       task.status = 'выполнена';
-      if (before !== 'выполнена') countedCompletion = true;
+      if (before !== 'выполнена') {
+        countedCompletion = true;
+        poryadokSync.schedule();
+      }
       if (body.result.trim()) {
         addMessage({
           id: `result:${task.id}`,
@@ -2009,6 +2264,7 @@ app.post('/api/orders/:id', requireAgentToken, async (req, res) => {
   try {
     const input = parseOrderUpdate(req.body);
     const result = applyOrderUpdate(task, input);
+    if (result.changed && (task.orderStatus === 'done' || task.orderStatus === 'failed')) poryadokSync.schedule();
     await store.flush();
     return res.json({ ok: true, unchanged: !result.changed, task: publicTask(task) });
   } catch (err) {
@@ -2026,11 +2282,70 @@ registerHeartbeat(app, {
     store.noteAgent(agent);
     await store.flush();
   },
+  activityExtras,
+});
+
+// Рутина сообщает старт и финиш. Пока finishedAt пустой, агент не спит,
+// даже если старт был раньше окна ACTIVITY_WINDOW_MIN.
+app.post('/api/agents/:id/routine', requireAgentToken, async (req, res) => {
+  const agent = findAgent(String(req.params.id || ''));
+  if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
+  if (agent.archived) return res.status(409).json({ error: 'Агент в архиве' });
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  let action = typeof body.action === 'string' ? body.action.trim() : '';
+  if (!action && typeof body.status === 'string') {
+    const status = body.status.trim();
+    if (status === 'active' || status === 'started' || status === 'start') action = 'start';
+    else if (status === 'finished' || status === 'finish' || status === 'done') action = 'finish';
+  }
+  if (action !== 'start' && action !== 'finish') {
+    return res.status(400).json({ error: 'action должен быть start или finish' });
+  }
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (name.length > 200) {
+    return res.status(400).json({ error: 'Слишком длинное имя рутины (максимум 200 символов)' });
+  }
+  const nowIso = new Date().toISOString();
+  let routine;
+  if (action === 'start') {
+    if (!name) return res.status(400).json({ error: 'Для старта нужно имя рутины' });
+    routine = state.routines.find((r) => r.agentId === agent.id && r.name === name && !r.finishedAt);
+    if (!routine) {
+      routine = {
+        id: `r-${state.nextRoutineId++}`,
+        agentId: agent.id,
+        name,
+        startedAt: nowIso,
+        finishedAt: null,
+      };
+      state.routines.unshift(routine);
+      if (state.routines.length > 100) {
+        const dropped = state.routines.splice(100);
+        store.noteRoutinesRemoved(dropped.map((item) => item.id));
+      }
+    }
+  } else {
+    const open = state.routines.filter((r) => r.agentId === agent.id && !r.finishedAt && (!name || r.name === name));
+    if (!open.length) return res.status(404).json({ error: 'Активная рутина не найдена' });
+    for (const item of open) {
+      item.finishedAt = nowIso;
+      store.noteRoutine(item);
+    }
+    routine = open[0];
+  }
+  store.noteRoutine(routine);
+  await store.flush();
+  const view = activityFor(agent, state.tasks, Date.now(), activeWindowMs(), activityExtras());
+  res.json({ ok: true, routine: publicRoutine(routine), ...view });
 });
 
 app.get('/needs/:id', (req, res, next) => {
   if (!req.params.id || req.params.id.includes('/')) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/favicon.ico', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'favicon.ico'));
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -2085,6 +2400,10 @@ module.exports = {
   ACADEMY_WHERE,
   FINANCE_WHERE,
   ACADEMY_ACTION_URL,
+  TEST_NEED_ID,
+  TEST_NEED_WHAT,
+  TEST_REOPEN_MS,
+  reopenTestNeeds,
   FINANCE_ACTION_URL,
   FINANCE_ACTION_HINT,
   SOCIAL_ACTION_URL,
