@@ -12,6 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/app.css">
 <link rel="stylesheet" href="/css/activity.css">
+<link rel="stylesheet" href="/css/agent-dashboard.css">
 <script>if (/^\/needs\/[^/]+\/?$/.test(location.pathname)) document.documentElement.classList.add('need-route');</script>
 </head>
 <body class="day">
@@ -98,6 +99,7 @@
   </div>
 
   <aside id="panel" class="glass" aria-live="polite" inert aria-hidden="true"></aside>
+  <div id="agentDash" hidden aria-hidden="true"></div>
   <div id="toasts"></div>
   <div id="tooltip"></div>
 
@@ -155,5 +157,6 @@
 <script src="/js/processes.js"></script>
 <script src="/js/markdown.js"></script>
 <script src="/js/app.js"></script>
+<script src="/js/agent-dashboard.js"></script>
 </body>
 </html>
