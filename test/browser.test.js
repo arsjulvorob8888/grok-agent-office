@@ -306,12 +306,28 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
       const br = btn.getBoundingClientRect();
       const popBox = pop.getBoundingClientRect();
       const roster = document.querySelector('#roster').getBoundingClientRect();
-      const items = [...document.querySelectorAll('#needsPop .need-item')].map((el) => ({
-        what: el.querySelector('.need-what').textContent,
-        from: el.querySelector('.need-from').textContent,
-        where: el.querySelector('.need-where').textContent,
-        urg: el.className,
-      }));
+      const items = [...document.querySelectorAll('#needsPop .need-item')].map((el) => {
+        const link = el.querySelector('a.need-action');
+        const hint = el.querySelector('.need-action-hint');
+        const box = el.getBoundingClientRect();
+        const lr = link ? link.getBoundingClientRect() : null;
+        const hr = hint ? hint.getBoundingClientRect() : null;
+        return {
+          id: el.dataset.id,
+          what: el.querySelector('.need-what').textContent,
+          from: el.querySelector('.need-from').textContent,
+          where: el.querySelector('.need-where').textContent,
+          urg: el.className,
+          label: link ? link.textContent : '',
+          href: link ? link.getAttribute('href') : '',
+          target: link ? link.getAttribute('target') : '',
+          rel: link ? link.getAttribute('rel') : '',
+          hint: hint ? hint.textContent : '',
+          fits: !!(link && lr.left >= -1 && lr.right <= window.innerWidth + 1 && lr.width >= 40 && lr.height >= 36
+            && lr.left >= box.left - 1 && lr.right <= box.right + 1
+            && (!hint || (hr.left >= -1 && hr.right <= window.innerWidth + 1 && hr.right <= box.right + 1))),
+        };
+      });
       return {
         count: badge.textContent.trim(),
         label: btn.getAttribute('aria-label'),
@@ -343,11 +359,30 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     const text = info.items.map((i) => `${i.what} ${i.from} ${i.where} ${i.urg}`).join('\n');
     assert.doesNotMatch(text, /Ключ Render API/);
     assert.match(text, /Академию агентов/);
+    assert.match(text, /Программирования и Тестировщика/);
+    assert.doesNotMatch(text, /Business Adviser/);
     assert.match(text, /Чаты агентов в Grok/);
+    assert.match(text, /Чат Путина или Финансов/);
     assert.match(text, /Instagram и YouTube/);
     assert.match(text, /Соцсети/);
     assert.match(text, /финансовых вопросов/);
     assert.match(text, /Финансы/);
+    const byId = Object.fromEntries(info.items.map((item) => [item.id, item]));
+    const academy = byId['need-academy'];
+    const finance = byId['need-finance'];
+    const social = byId['need-social'];
+    assert.equal(academy.label, 'Решить');
+    assert.equal(academy.href, 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2');
+    assert.equal(academy.target, '_blank');
+    assert.match(academy.rel, /noopener/);
+    assert.equal(academy.hint, '');
+    assert.equal(finance.label, 'Решить');
+    assert.equal(finance.href, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
+    assert.equal(finance.target, null);
+    assert.equal(finance.hint, 'Откройте в Grok чат «Путин · Кремль»');
+    assert.equal(social.href, 'grokbot://app/v1/agent?id=a1bd53f2-5655-446b-8207-393e61fc20e1');
+    assert.equal(social.hint, 'Откройте в Grok чат «Соцсети · Кремль»');
+    assert.ok(info.items.every((item) => item.fits), JSON.stringify(info.items));
     assert.ok(info.popLeft >= -1 && info.popRight <= info.vw + 1, `попап шире экрана: ${info.popLeft}..${info.popRight}`);
     assert.ok(info.popBottom <= info.rosterTop + 1, `попап перекрыл полосу: ${info.popBottom} / ${info.rosterTop}`);
 
@@ -374,10 +409,114 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.equal(await page.$eval('#needsPop', (el) => el.classList.contains('open')), false);
 
     await page.click('#btnNeeds');
-    await page.waitForSelector('#needsPop.open .need-item');
+    await page.waitForSelector('#needsPop.open .need-item a.need-action');
+    const opened = await page.evaluate(() => {
+      const pop = document.querySelector('#needsPop');
+      const items = [...pop.querySelectorAll('.need-item')];
+      return {
+        open: pop.classList.contains('open'),
+        hidden: pop.getAttribute('aria-hidden'),
+        badge: document.querySelector('#needsBadge').textContent.trim(),
+        buttons: items.map((el) => {
+          const link = el.querySelector('a.need-action');
+          const hint = el.querySelector('.need-action-hint');
+          return {
+            id: el.dataset.id,
+            label: link ? link.textContent.trim() : '',
+            href: link ? link.getAttribute('href') : '',
+            hint: hint ? hint.textContent : '',
+            https: link ? link.getAttribute('target') : '',
+          };
+        }),
+      };
+    });
+    assert.equal(opened.open, true);
+    assert.equal(opened.hidden, 'false');
+    assert.equal(String(opened.buttons.length), opened.badge);
+    assert.ok(opened.buttons.length >= 3, JSON.stringify(opened));
+    for (const button of opened.buttons) {
+      assert.equal(button.label, 'Решить', JSON.stringify(button));
+      assert.ok(/^https:\/\//.test(button.href) || /^grokbot:\/\//.test(button.href), JSON.stringify(button));
+    }
+    const popupFinance = opened.buttons.find((button) => button.id === 'need-finance');
+    const popupAcademy = opened.buttons.find((button) => button.id === 'need-academy');
+    const popupSocial = opened.buttons.find((button) => button.id === 'need-social');
+    assert.equal(popupAcademy.href, 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2');
+    assert.equal(popupAcademy.https, '_blank');
+    assert.equal(popupAcademy.hint, '');
+    assert.equal(popupFinance.href, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
+    assert.equal(popupFinance.hint, 'Откройте в Grok чат «Путин · Кремль»');
+    assert.equal(popupSocial.href, 'grokbot://app/v1/agent?id=a1bd53f2-5655-446b-8207-393e61fc20e1');
+    assert.equal(popupSocial.hint, 'Откройте в Grok чат «Соцсети · Кремль»');
     await page.screenshot({ path: '/tmp/needs-390.png' });
   } finally {
     await page.close();
+  }
+});
+
+test('«Решить» экранирует ссылку и подсказку в списке и в «Ждёт от вас»', { timeout: 30000 }, async () => {
+  const created = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({
+      what: 'Ссылка <script>alert(1)</script>',
+      where: 'Чат <img src=x>',
+      fromAgentId: 'poker',
+      urgency: 'low',
+      actionUrl: 'grokbot://app/v1/agent?id=1&x=<script>',
+      actionLabel: 'Решить <img>',
+      actionHint: 'подсказка <b>x</b> «чат»',
+    }),
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    await page.evaluateOnNewDocument(() => {
+      localStorage.setItem('needsSnoozeUntil', String(Date.now() + 60 * 60 * 1000));
+    });
+    await page.goto(`${base}/?agent=poker`, { waitUntil: 'domcontentloaded' });
+    const sel = `.need-item[data-id="${created.body.id}"]`;
+    await page.waitForSelector(`#needsList ${sel} a.need-action`, { timeout: 8000 });
+    await page.waitForSelector(`#panel.open[data-agent="poker"] [data-anchor="awaits"] ${sel} a.need-action`, { timeout: 8000 });
+    const cards = await page.$$eval(sel, (els) => els.map((el) => {
+      const link = el.querySelector('a.need-action');
+      const hint = el.querySelector('.need-action-hint');
+      const lr = link.getBoundingClientRect();
+      const hr = hint.getBoundingClientRect();
+      return {
+        html: el.innerHTML,
+        label: link.textContent,
+        href: link.getAttribute('href'),
+        target: link.getAttribute('target'),
+        hint: hint.textContent,
+        right: Math.max(lr.right, hr.right),
+        vw: window.innerWidth,
+      };
+    }));
+    assert.equal(cards.length, 2, JSON.stringify(cards));
+    for (const card of cards) {
+      assert.doesNotMatch(card.html, /<script/i);
+      assert.doesNotMatch(card.html, /<img/i);
+      assert.match(card.html, /Ссылка &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+      assert.match(card.html, /Чат &lt;img src=x&gt;/);
+      assert.match(card.html, /Решить &lt;img&gt;/);
+      assert.match(card.html, /подсказка &lt;b&gt;x&lt;\/b&gt; «чат»/);
+      assert.equal(card.label, 'Решить <img>');
+      assert.equal(card.href, 'grokbot://app/v1/agent?id=1&x=<script>');
+      assert.equal(card.target, null);
+      assert.equal(card.hint, 'подсказка <b>x</b> «чат»');
+      assert.ok(card.right <= card.vw + 1, JSON.stringify(card));
+    }
+  } finally {
+    await page.close();
+    if (created.body && created.body.id) {
+      await api(`/api/needs/${created.body.id}/close`, {
+        method: 'POST',
+        headers: { 'x-agent-token': 'tok-ui' },
+        body: '{}',
+      });
+    }
   }
 });
 
@@ -746,6 +885,12 @@ test('бейдж «ждёт вас»: счётчик, нуль скрыт, та�
         await page.click(badge);
       }
       await page.waitForSelector('#panel.open[data-agent="finance"] [data-anchor="awaits"]', { timeout: 8000 });
+      await page.waitForFunction(() => {
+        const panel = document.querySelector('#panel.open');
+        if (!panel) return false;
+        const r = panel.getBoundingClientRect();
+        return r.width > 200 && r.left >= -1 && r.right <= window.innerWidth + 1 && r.top < window.innerHeight && r.bottom > 0;
+      }, { timeout: 3000 });
       const placed = await page.evaluate(() => {
         const body = document.querySelector('#panel .p-body');
         const el = document.querySelector('#panel [data-anchor="awaits"]');
@@ -753,6 +898,10 @@ test('бейдж «ждёт вас»: счётчик, нуль скрыт, та�
         const br = body.getBoundingClientRect();
         const r = el.getBoundingClientRect();
         const cr = close.getBoundingClientRect();
+        const link = el.querySelector('a.need-action');
+        const hint = el.querySelector('.need-action-hint');
+        const lr = link ? link.getBoundingClientRect() : null;
+        const hr = hint ? hint.getBoundingClientRect() : null;
         return {
           title: el.querySelector('h4').textContent,
           delta: r.top - br.top,
@@ -760,12 +909,25 @@ test('бейдж «ждёт вас»: счётчик, нуль скрыт, та�
           closeW: cr.width,
           closeH: cr.height,
           text: el.textContent,
+          label: link ? link.textContent : '',
+          href: link ? link.getAttribute('href') : '',
+          target: link ? link.getAttribute('target') : '',
+          hint: hint ? hint.textContent : '',
+          linkRight: lr ? lr.right : 0,
+          hintRight: hr ? hr.right : 0,
+          vw: window.innerWidth,
         };
       });
       assert.match(placed.title, /Ждёт от вас/);
       assert.equal(placed.visible, true, JSON.stringify(placed));
       assert.ok(placed.delta < 28 && placed.delta > -2, JSON.stringify(placed));
       assert.match(placed.text, /финансовых вопросов/);
+      assert.match(placed.text, /Чат Путина или Финансов/);
+      assert.equal(placed.label, 'Решить');
+      assert.equal(placed.href, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
+      assert.equal(placed.target, null);
+      assert.equal(placed.hint, 'Откройте в Grok чат «Путин · Кремль»');
+      assert.ok(placed.linkRight <= placed.vw + 1 && placed.hintRight <= placed.vw + 1, JSON.stringify(placed));
       assert.ok(placed.closeW >= 40 && placed.closeH >= 40, JSON.stringify(placed));
 
       if (viewport.width > 700) {
