@@ -21,6 +21,7 @@ const hook = http.createServer((req, res) => {
 
 let base;
 let server;
+let office;
 
 before(async () => {
   await new Promise((r) => hook.listen(0, '127.0.0.1', r));
@@ -31,7 +32,8 @@ before(async () => {
   process.env.GROK_WEBHOOK_KEY = 'hook-key';
   process.env.PUBLIC_URL = 'https://example.test';
   delete process.env.PORYADOK_INGEST_TOKEN;
-  const { app } = require('../server.js');
+  office = require('../server.js');
+  const { app } = office;
   server = await new Promise((r) => {
     const s = app.listen(0, '127.0.0.1', () => r(s));
   });
@@ -66,29 +68,46 @@ test('state содержит новый ростер без секретов', a
   assert.equal(grok.kind, 'putin');
   assert.equal(grok.tier, 'main');
   assert.equal(grok.number, '1');
+  assert.equal(grok.archived, false);
+  assert.ok(!grok.links.includes('trading') && !grok.links.includes('biz'));
   const army = body.agents.find((a) => a.id === 'army');
   assert.ok(army.responsibilities.length >= 4);
   assert.equal(army.completed, 0);
   assert.equal(army.number, '2');
+  const numbers = {
+    poker: '3',
+    devops: '4',
+    dev: '5',
+    temshik: '6',
+    finance: '7',
+    invest: '7.1',
+    analyst: '7.2',
+    qa: '8',
+    blog: '9',
+    lang: '10',
+  };
+  for (const [id, number] of Object.entries(numbers)) {
+    const agent = body.agents.find((a) => a.id === id);
+    assert.equal(agent.number, number, id);
+    assert.equal(agent.archived, false, id);
+  }
   const finance = body.agents.find((a) => a.id === 'finance');
   assert.equal(finance.name, 'Финансы');
   assert.equal(finance.vacant, false);
-  assert.equal(finance.number, '8');
   assert.equal(finance.kind, 'finance');
   const invest = body.agents.find((a) => a.id === 'invest');
   const analyst = body.agents.find((a) => a.id === 'analyst');
   assert.equal(invest.parentId, 'finance');
   assert.equal(analyst.parentId, 'finance');
-  assert.equal(invest.number, '8.1');
-  assert.equal(analyst.number, '8.2');
   assert.equal(invest.tier, 'sub');
   const qa = body.agents.find((a) => a.id === 'qa');
   assert.equal(qa.name, 'Тестировщик ПО');
-  assert.equal(qa.number, '9');
   assert.equal(qa.kind, 'qa');
-  assert.equal(body.agents.find((a) => a.id === 'blog').number, '10');
-  assert.equal(body.agents.find((a) => a.id === 'lang').number, '11');
-  assert.equal(body.agents.find((a) => a.id === 'biz').number, '12');
+  for (const id of ['trading', 'biz']) {
+    const archived = body.agents.find((a) => a.id === id);
+    assert.equal(archived.archived, true, id);
+    assert.equal(archived.number, '');
+  }
   assert.ok(finance.links.includes('invest') && finance.links.includes('analyst'));
   const raw = JSON.stringify(body);
   assert.ok(!raw.includes('pw-test') && !raw.includes('tok-test') && !raw.includes('hook-key'));
@@ -197,6 +216,8 @@ test('неизвестный агент создаётся на лету и по
   const a = st.body.agents.find((x) => x.id === 'crypto');
   assert.equal(a.name, 'Крипта');
   assert.equal(a.status, 'working');
+  assert.equal(a.number, '11');
+  assert.equal(a.archived, false);
   assert.ok(Number.isFinite(a.x) && Number.isFinite(a.y));
   assert.ok(st.body.agents.find((x) => x.id === 'grok').links.includes('crypto'));
 });
@@ -229,7 +250,7 @@ test('помощник Финансов принимает задачу и со�
   });
   assert.equal(child.status, 200);
   assert.equal(child.body.agent.parentId, 'finance');
-  assert.equal(child.body.agent.number, '8.3');
+  assert.equal(child.body.agent.number, '7.3');
   const st = await json('/api/state');
   const created = st.body.agents.find((a) => a.id === 'credit');
   assert.equal(created.tier, 'sub');
@@ -304,7 +325,8 @@ test('слишком большой файл и лишние файлы откл
     body: big,
   });
   assert.equal(over.status, 413);
-  assert.match((await over.json()).error, /10 МБ/);
+  assert.match(over.headers.get('content-type') || '', /application\/json/);
+  assert.equal((await over.json()).error, 'Файл слишком большой (макс. 10 МБ)');
 
   const many = new FormData();
   for (let i = 0; i < 6; i++) many.append('files', new Blob(['x']), `f${i}.txt`);
@@ -315,6 +337,20 @@ test('слишком большой файл и лишние файлы откл
   });
   assert.equal(tooMany.status, 400);
   assert.match((await tooMany.json()).error, /5/);
+});
+
+test('JSON больше 1 МБ отвечает 413 JSON, а не HTML', async () => {
+  const payload = JSON.stringify({ agent: 'dev', text: 'я'.repeat(700000) });
+  assert.ok(Buffer.byteLength(payload) > 1024 * 1024);
+  const r = await fetch(base + '/api/task', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-app-password': 'pw-test' },
+    body: payload,
+  });
+  assert.equal(r.status, 413);
+  assert.match(r.headers.get('content-type') || '', /application\/json/);
+  const body = await r.json();
+  assert.equal(body.error, 'Файл слишком большой (макс. 10 МБ)');
 });
 
 test('общая переписка: push, дедуп и курсор новых реплик владельца', async () => {
@@ -404,21 +440,21 @@ test('результат статуса попадает в переписку �
   const t = await json('/api/task', {
     method: 'POST',
     headers: { 'x-app-password': 'pw-test' },
-    body: JSON.stringify({ agent: 'trading', text: 'Сводка по сделкам' }),
+    body: JSON.stringify({ agent: 'lang', text: 'Сводка по сделкам' }),
   });
   const h = { 'x-agent-token': 'tok-test' };
-  const body = { agent: 'trading', status: 'idle', now: 'Жду задач', taskId: t.body.id, result: 'Три сделки в плюсе' };
+  const body = { agent: 'lang', status: 'idle', now: 'Жду задач', taskId: t.body.id, result: 'Три сделки в плюсе' };
   await json('/api/status', { method: 'POST', headers: h, body: JSON.stringify(body) });
   await json('/api/status', { method: 'POST', headers: h, body: JSON.stringify(body) });
   const echoed = await json('/api/messages', {
     method: 'POST',
     headers: h,
-    body: JSON.stringify({ id: `result:${t.body.id}`, agentId: 'trading', role: 'agent', text: 'другой итог', taskId: t.body.id }),
+    body: JSON.stringify({ id: `result:${t.body.id}`, agentId: 'lang', role: 'agent', text: 'другой итог', taskId: t.body.id }),
   });
   assert.equal(echoed.body.duplicate, true);
   assert.equal(echoed.body.message.text, 'Три сделки в плюсе');
   const st = await json('/api/state');
-  const replies = st.body.messages.filter((m) => m.agentId === 'trading' && m.role === 'agent' && m.taskId === t.body.id);
+  const replies = st.body.messages.filter((m) => m.agentId === 'lang' && m.role === 'agent' && m.taskId === t.body.id);
   assert.equal(replies.length, 1);
   assert.equal(replies[0].text, 'Три сделки в плюсе');
   const sys = st.body.messages.filter((m) => m.role === 'system' && m.taskId === t.body.id);
@@ -823,4 +859,95 @@ test('открытый пункт закрывается по переменно
     headers: h,
     body: JSON.stringify({ what: 'x', where: 'y', fromAgentId: 'grok', urgency: 'low', resolvesWhenEnv: 'not valid' }),
   })).status, 400);
+});
+
+test('архивные агенты не принимают задачи, история читается', async () => {
+  const pw = { 'x-app-password': 'pw-test' };
+  const tok = { 'x-agent-token': 'tok-test' };
+  for (const agent of ['trading', 'biz']) {
+    const denied = await json('/api/task', {
+      method: 'POST', headers: pw,
+      body: JSON.stringify({ agent, text: `Новый приказ ${agent}` }),
+    });
+    assert.ok(denied.status >= 400 && denied.status < 500, `${agent} ${denied.status}`);
+    assert.equal(denied.status, 409);
+    assert.match(denied.body.error, /архив/i);
+  }
+  const clean = await json('/api/state');
+  assert.equal(clean.body.tasks.some((t) => t.text === 'Новый приказ trading' || t.text === 'Новый приказ biz'), false);
+
+  const fd = new FormData();
+  fd.append('agentId', 'trading');
+  fd.append('role', 'agent');
+  fd.append('id', 'archive-trading-note');
+  fd.append('text', 'Старая сводка по архиву');
+  fd.append('files', new Blob([PNG], { type: 'image/png' }), 'сделка.png');
+  const posted = await fetch(base + '/api/messages', { method: 'POST', headers: tok, body: fd });
+  assert.equal(posted.status, 201);
+  const postedBody = await posted.json();
+  assert.equal(postedBody.message.agentId, 'trading');
+  assert.equal(postedBody.message.attachments.length, 1);
+  const file = await fetch(base + postedBody.message.attachments[0].url);
+  assert.equal(file.status, 200);
+  assert.equal(file.headers.get('content-type'), 'image/png');
+
+  office.state.tasks.unshift({
+    id: 't-archive-trading',
+    agent: 'trading',
+    agentId: 'trading',
+    fromAgentId: 'owner',
+    parentOrderId: null,
+    text: 'Старая сводка по сделкам',
+    status: 'отправлена',
+    orderStatus: 'sent',
+    progress: null,
+    note: '',
+    createdAt: '2026-01-02T00:00:00.000Z',
+    forwardStatus: null,
+    result: null,
+    history: [{ status: 'sent', at: '2026-01-02T00:00:01.000Z', progress: null, note: '', result: null }],
+    attachments: [],
+    messageId: 'task:t-archive-trading',
+  });
+  office.state.messages.push({
+    id: 'task:t-archive-trading',
+    agentId: 'trading',
+    role: 'owner',
+    text: 'Старая сводка по сделкам',
+    attachments: [],
+    createdAt: '2026-01-02T00:00:00.000Z',
+    source: 'app',
+    taskId: 't-archive-trading',
+  });
+
+  const read = await json('/api/messages?agentId=trading', { headers: tok });
+  assert.equal(read.status, 200);
+  assert.ok(read.body.messages.some((m) => m.id === 'task:t-archive-trading' && m.text === 'Старая сводка по сделкам'));
+  const bizRead = await json('/api/messages?agentId=biz', { headers: tok });
+  assert.equal(bizRead.status, 200);
+  assert.ok(Array.isArray(bizRead.body.messages));
+
+  const moved = await json('/api/orders/t-archive-trading', {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ status: 'accepted' }),
+  });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.task.agentId, 'trading');
+  assert.equal(moved.body.task.orderStatus, 'accepted');
+
+  const st = await json('/api/state');
+  const task = st.body.tasks.find((t) => t.id === 't-archive-trading');
+  assert.equal(task.text, 'Старая сводка по сделкам');
+  assert.equal(task.orderStatus, 'accepted');
+  assert.ok(st.body.messages.some((m) => m.id === 'archive-trading-note' && m.attachments.length === 1));
+  assert.equal(st.body.agents.find((a) => a.id === 'trading').archived, true);
+  assert.equal(st.body.agents.find((a) => a.id === 'biz').archived, true);
+
+  const need = await json('/api/needs', {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({ what: 'Архивный вопрос советника', where: 'Сколково', fromAgentId: 'biz', urgency: 'low' }),
+  });
+  assert.equal(need.status, 201);
+  const needs = await json('/api/needs');
+  assert.ok(needs.body.needs.some((n) => n.id === need.body.id && n.fromAgentId === 'biz'));
 });
