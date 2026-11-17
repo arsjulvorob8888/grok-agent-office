@@ -100,6 +100,9 @@ test('страница /agent/:id и заглушка архива', async () =>
   const biz = await fetch(base + '/agent/biz');
   assert.equal(biz.status, 404);
   assert.match(await biz.text(), /Агент в архиве/);
+  const lang = await fetch(base + '/agent/lang');
+  assert.equal(lang.status, 404);
+  assert.match(await lang.text(), /Агент в архиве/);
   const missing = await fetch(base + '/agent/no-such');
   assert.equal(missing.status, 404);
   assert.match(await missing.text(), /Агент не найден/);

@@ -59,7 +59,7 @@
     </g>`;
   }
 
-  // ── Главный агент: дружеская шарж-фигурка (высокий лоб, светлые редкие
+  // ── Путин: дружеская шарж-фигурка (высокий лоб, светлые редкие
   //    волосы по бокам, спокойный взгляд, тёмный костюм, белая рубашка, галстук).
   function putin() {
     const skin = '#f0c7a6';
@@ -193,6 +193,11 @@
       top: '#a21caf', pants: '#3b0764',
       hair: HAIR.bob('#3a241c'),
       extra: `<g transform="translate(14,-36) rotate(8)"><rect x="0" y="0" width="12" height="18" rx="2" fill="#1c1224" stroke="#f0abfc" stroke-width="1"/><rect x="1.6" y="2.2" width="8.8" height="11.5" rx="1" fill="#4a044e"/><path d="M4.1,7.4c0,-1.5 1.2,-2.1 1.8,-1 .6,-1.1 1.8,-.5 1.8,1.1 0,1.5-1.8,2.8-1.8,2.8s-1.8,-1.3-1.8,-2.9z" fill="#fb7185"/></g>`,
+    }),
+    advisor: () => generic({
+      top: '#7c2d3a', shirt: '#fff8ea', tie: '#f5c451', pants: '#2a1218',
+      hair: HAIR.short('#3a2a22'),
+      extra: `<g transform="translate(16,-36)"><path d="M8,0 l2.1,4.4 4.8,.6 -3.6,3.3 .9,4.8 L8,10.8 3.8,13.1 l.9-4.8 -3.6-3.3 4.8-.6z" fill="#f5c451"/></g>`,
     }),
     routines: () => generic({
       top: '#9a3412', shirt: '#fff7ed', tie: '#f5c451', pants: '#3f1d0d',

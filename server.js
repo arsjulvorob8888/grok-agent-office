@@ -39,16 +39,18 @@ const STATUS_LABELS = {
 // РОСТЕР АГЕНТОВ. Это единственное место, где задаются агенты на карте Москвы.
 // x / y — координаты на карте (холст 1600×1100, север сверху, Кремль ≈ 800×540).
 // kind — тип фигурки на клиенте: putin, army, poker, trading, devops, dev, qa,
-//        temshik, blog, finance, invest, analyst, lang, biz, social, routines,
-//        vacant, generic.
-// tier — main (главный), dept (направление), sub (помощник, parentId), extra (союзник).
+//        temshik, blog, finance, invest, analyst, lang, biz, advisor, social,
+//        routines, vacant, generic.
+// tier — main (Путин), dept (направление), sub (помощник, parentId), extra (союзник).
 // Номер на карте — среди видимых агентов, без пропусков. Помощники Финансов: 7.1, 7.2.
-// trading и biz в архиве: записи остаются, на карту и в новые приказы не попадают.
+// trading, biz и lang в архиве: записи остаются, на карту и в новые приказы не попадают.
+// grokAgentId — id агента в Grok, если он известен (у советника; у соцсетей и рутин
+// отдельного поля в ростере нет, их чаты лежат на ссылках пунктов «Нужно от вас»).
 // ─────────────────────────────────────────────────────────────────────────────
 const SEED_AGENTS = [
   {
     id: 'grok',
-    name: 'Главный агент · GROK',
+    name: 'Путин',
     color: '#c8102e',
     accent: '#f5c451',
     role: 'Главнокомандующий агентами',
@@ -57,7 +59,7 @@ const SEED_AGENTS = [
     tier: 'main',
     x: 800,
     y: 540,
-    links: ['army', 'poker', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'lang', 'social', 'routines'],
+    links: ['army', 'poker', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'advisor', 'social', 'routines'],
     responsibilities: [
       'Принимает задачи и распределяет их по направлениям',
       'Следит за сроками и качеством результатов',
@@ -283,7 +285,7 @@ const SEED_AGENTS = [
     district: 'МГУ · Воробьёвы горы',
     kind: 'lang',
     tier: 'extra',
-    order: 10,
+    archived: true,
     x: 420,
     y: 905,
     links: [],
@@ -304,7 +306,29 @@ const SEED_AGENTS = [
     links: [],
     responsibilities: ['Бизнес-идеи и их проверка', 'Финансовые расчёты'],
   },
-  // Порядок среди видимых: после Language Coach (10) идут 11 и 12.
+  // Номер 10 — слот Language Coach. Без parentId советник получает целый номер
+  // и в иерархии висит прямо на Путине, как остальные направления, а не как 1.1.
+  {
+    id: 'advisor',
+    name: 'Советник Путина',
+    color: '#7c2d3a',
+    accent: '#f5c451',
+    role: 'Стратегический советник Путина',
+    district: 'Кремль',
+    kind: 'advisor',
+    tier: 'dept',
+    order: 10,
+    grokAgentId: '961b2d3d-5f80-4891-b87a-c6913bbf2971',
+    x: 910,
+    y: 400,
+    links: [],
+    responsibilities: [
+      'Готовит стратегические записки для Путина',
+      'Сводит позиции направлений в один совет',
+      'Следит за рисками крупных решений',
+    ],
+  },
+  // Порядок среди видимых: после Советника (10) идут 11 и 12.
   {
     id: 'social',
     name: 'Соцсети',
@@ -677,6 +701,7 @@ function publicState(opts = {}) {
       order: a.order || 0,
       number: agentNumber(a),
       archived: !!a.archived,
+      grokAgentId: a.grokAgentId || null,
       vacant: !!a.vacant,
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
@@ -841,6 +866,11 @@ function cleanList(value) {
 
 function findAgent(id) {
   return state.agents.find((a) => a.id === id);
+}
+
+function archivedAuthor(id) {
+  const agent = findAgent(typeof id === 'string' ? id.trim() : '');
+  return !!(agent && agent.archived);
 }
 
 function nextSlot() {
@@ -1552,7 +1582,8 @@ app.get('/api/needs', (req, res) => {
 app.get('/api/needs/:id', (req, res) => {
   if (rejectBadPassword(req, res)) return;
   const item = state.needs.find((n) => n.id === req.params.id);
-  if (!item) return res.status(404).json({ error: 'Пункт не найден' });
+  // Страница вопроса не показывает архивного автора: пункт остаётся в списках.
+  if (!item || archivedAuthor(item.fromAgentId)) return res.status(404).json({ error: 'Пункт не найден' });
   res.json(publicNeed(item, Date.now(), { includePrivate: hqPasswordOk(req) }));
 });
 

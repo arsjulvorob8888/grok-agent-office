@@ -150,6 +150,9 @@ test('архивный агент не открывает пульт', { timeout
     assert.equal(res.status(), 404);
     assert.match(await page.content(), /Агент в архиве/);
     assert.equal(await page.$('#desk'), null);
+    const lang = await page.goto(base + '/agent/lang', { waitUntil: 'domcontentloaded' });
+    assert.equal(lang.status(), 404);
+    assert.match(await page.content(), /Агент в архиве/);
   } finally {
     await page.close();
   }
