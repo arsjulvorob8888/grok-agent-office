@@ -97,6 +97,13 @@
   <div id="toasts"></div>
   <div id="tooltip"></div>
 
+  <div id="room" hidden aria-hidden="true">
+    <div class="room-sheet" role="dialog" aria-modal="true" aria-labelledby="roomTitle">
+      <button type="button" class="room-x" id="roomX" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      <div class="room-scroll" id="roomScroll"></div>
+    </div>
+  </div>
+
   <main id="needPage">
     <a class="need-back" href="/">← Кремль</a>
     <p class="need-answered" id="needAnswerBadge" hidden>ответ получен</p>

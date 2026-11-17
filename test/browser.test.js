@@ -1110,7 +1110,10 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.equal(ui.mapIds.includes('trading'), false);
     assert.equal(ui.mapIds.includes('biz'), false);
     assert.equal(ui.mapIds.includes('lang'), false);
-    assert.ok(ui.mapIds.includes('devops') && ui.mapIds.includes('finance') && ui.mapIds.includes('advisor'));
+    assert.ok(ui.mapIds.includes('devops') && ui.mapIds.includes('finance') && ui.mapIds.includes('grok'));
+    assert.equal(ui.mapIds.includes('advisor'), false);
+    assert.equal(ui.mapIds.includes('invest'), false);
+    assert.equal(ui.mapIds.includes('analyst'), false);
     assert.doesNotMatch(ui.tagText, /Трейдинг|Business Adviser|Language Coach|Главный агент/);
     const chip = (id) => ui.chips.find((c) => c.id === id).text;
     assert.equal(chip('grok'), '1. Путин');
@@ -1202,12 +1205,6 @@ test('на десктопе подписи «1. Путин» и «10. Совет
       };
       const advisor = document.querySelector('#agents .agent[data-id="advisor"]');
       const grok = document.querySelector('#agents .agent[data-id="grok"]');
-      const point = (el) => {
-        const m = (el.getAttribute('transform') || '').match(/translate\(([-\d.]+),([-\d.]+)\)/);
-        return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
-      };
-      const a = point(advisor);
-      const g = point(grok);
       return {
         vw: window.innerWidth,
         touch: navigator.maxTouchPoints > 0,
@@ -1218,23 +1215,23 @@ test('на десктопе подписи «1. Путин» и «10. Совет
         advisorTag: text('#overlay .tag[data-id="advisor"] .nm'),
         grokChip: text('#roster .chip[data-id="grok"] .cn'),
         grokTag: text('#overlay .tag[data-id="grok"] .nm'),
-        fig: !!(advisor && advisor.querySelector('.fig')),
+        onMap: !!advisor,
+        grokOnMap: !!grok,
         lang: !!document.querySelector('#agents .agent[data-id="lang"], #roster .chip[data-id="lang"], #overlay .tag[data-id="lang"]'),
-        dist: a && g ? Math.hypot(a.x - g.x, a.y - g.y) : null,
         page: document.body.innerText,
       };
     });
     assert.equal(ui.vw, 1280);
     assert.equal(ui.advisorTitle, '10. Советник Путина');
     assert.equal(ui.advisorChip, '10. Советник Путина');
-    assert.equal(ui.advisorTag, '10. Советник Путина');
+    assert.equal(ui.advisorTag, '');
     assert.match(ui.advisorKicker, /Кремль/);
     assert.match(ui.advisorRole, /стратегический советник Путина/i);
     assert.equal(ui.grokChip, '1. Путин');
     assert.equal(ui.grokTag, '1. Путин');
-    assert.equal(ui.fig, true);
+    assert.equal(ui.onMap, false);
+    assert.equal(ui.grokOnMap, true);
     assert.equal(ui.lang, false);
-    assert.ok(ui.dist != null && ui.dist < 220, String(ui.dist));
     assert.doesNotMatch(ui.page, /Главный агент|Language Coach/);
 
     await page.click('#btnHier');
