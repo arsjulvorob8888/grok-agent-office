@@ -67,7 +67,7 @@ if (!CHROME || !puppeteer) {
           lastClipped: last.right > box.right + 1,
         };
       });
-      assert.ok(before.count >= 16, `агентов в полосе ${before.count}`);
+      assert.ok(before.count >= 14, `агентов в полосе ${before.count}`);
       assert.ok(before.max > 40, 'полоса не переполнена, листать нечего');
       assert.notEqual(before.scrollbar, 'none');
       assert.equal(before.touch, 'pan-x');
@@ -154,7 +154,7 @@ if (!CHROME || !puppeteer) {
     assert.equal(title, 'Пропуск в штаб');
   }
 
-  test('на 390px тап «Дать задачу» у агента 9 открывает пропуск', async () => {
+  test('на 390px тап «Дать задачу» у тестировщика открывает пропуск', async () => {
     const page = await browser.newPage();
     try {
       await page.emulate(MOBILE);
@@ -165,7 +165,7 @@ if (!CHROME || !puppeteer) {
       await page.goto(base + '/?theme=day&agent=qa', { waitUntil: 'networkidle0', timeout: 30000 });
       await page.waitForSelector('#panel.open h2');
       const heading = await page.$eval('#panel .p-title h2', (el) => el.textContent);
-      assert.match(heading, /9\.\s*Тестировщик/);
+      assert.match(heading, /8\.\s*Тестировщик/);
       await tapTask(page);
     } finally {
       await page.close();
@@ -183,14 +183,14 @@ if (!CHROME || !puppeteer) {
       await page.goto(base + '/?theme=day&agent=routines', { waitUntil: 'networkidle0', timeout: 30000 });
       await page.waitForSelector('#panel.open h2');
       const heading = await page.$eval('#panel .p-title h2', (el) => el.textContent);
-      assert.match(heading, /14\.\s*Рутины/);
+      assert.match(heading, /12\.\s*Рутины/);
       const placed = await page.evaluate(() => ({
         map: !!document.querySelector('.agent[data-id="routines"]'),
         chip: (document.querySelector('#roster .chip[data-id="routines"] .cn') || {}).textContent || '',
         district: (document.querySelector('#panel .kicker') || {}).textContent || '',
       }));
       assert.equal(placed.map, true, 'домик Рутин не нарисован');
-      assert.match(placed.chip, /14\./);
+      assert.match(placed.chip, /12\./);
       assert.match(placed.chip, /Рутины/);
       assert.match(placed.district, /Хамовники/);
       await tapTask(page);
