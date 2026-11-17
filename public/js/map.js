@@ -351,7 +351,7 @@
 
   // ── Здания направлений ─────────────────────────────────────────────────
   // Высота «шапки» здания над точкой агента (для расстановки облачков).
-  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, temshik: 100, vacant: 120, biz: 110, generic: 110 };
+  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, generic: 110 };
 
   function building(kind, color) {
     const R = rng(color.length * 97 + kind.length * 13);
@@ -434,6 +434,32 @@
         let s = box(-40, -34, 80, 30, 66, '#0e7c74', { top: '#16a39a', front: '#0b5f59' });
         for (let x = -36; x < 40; x += 10) s += `<path d="M${x},-96v92" stroke="#7de3d9" stroke-opacity=".4"/>`;
         for (let y = -90; y < 0; y += 10) s += `<path d="M-40,${y}h80" stroke="#7de3d9" stroke-opacity=".4"/>`;
+        return s;
+      }
+      case 'finance': {
+        let s = box(-72, -26, 144, 24, 46, '#e6dcc4', { top: '#f4efe2', front: '#d4c8aa', windows: true, rand: R });
+        for (let i = 0; i < 6; i++) {
+          const x = -54 + i * 20;
+          s += `<rect x="${x}" y="-58" width="7" height="34" fill="#f7f3e8"/><rect x="${x - 1}" y="-62" width="9" height="5" fill="#e4d094"/>`;
+        }
+        s += `<path d="M-64,-62 L0,-96 L64,-62 Z" fill="#f8f3e6" stroke="#c6a15a" stroke-width="1.6"/>`;
+        s += `<text x="0" y="-70" text-anchor="middle" font-size="16" font-weight="800" fill="#8a6a1f" font-family="Unbounded, sans-serif">₽</text>`;
+        s += `<rect x="-16" y="-24" width="32" height="22" fill="#1a3a5c"/><rect x="-7" y="-18" width="14" height="16" fill="#0e2438"/>`;
+        s += `<rect x="-72" y="-2" width="144" height="4" fill="#1a3a5c"/>`;
+        return s;
+      }
+      case 'invest': {
+        let s = box(-38, -16, 76, 16, 34, '#1a3a5c', { top: '#24527a', front: '#12283f' });
+        s += `<path d="M-26,-30 l12,-16 8,9 16,-22 10,8" fill="none" stroke="#f5c451" stroke-width="2.6" stroke-linejoin="round"/>`;
+        s += `<circle cx="20" cy="-51" r="3.2" fill="#f5c451"/>`;
+        s += `<text x="0" y="-6" text-anchor="middle" font-size="12" font-weight="800" fill="#f5c451" font-family="Unbounded, sans-serif">₽</text>`;
+        return s;
+      }
+      case 'analyst': {
+        let s = box(-36, -14, 72, 16, 30, '#e7efe4', { top: '#f4faf3', front: '#d5e4d4', windows: true, rand: R });
+        [14, 24, 18, 30].forEach((h, i) => {
+          s += `<rect x="${-24 + i * 13}" y="${-18 - h}" width="9" height="${h}" rx="1" fill="${i % 2 ? '#1a3a5c' : '#c6a15a'}"/>`;
+        });
         return s;
       }
       case 'vacant': {
