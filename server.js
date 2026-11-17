@@ -470,7 +470,10 @@ const ACADEMY_WHAT = 'Одобрить Академию агентов: нажа
 const ACADEMY_WHERE = 'Чаты агентов в Grok';
 const TEST_NEED_ID = 'need-test-qa';
 const TEST_NEED_WHAT = 'ТЕСТ: пройдите кнопки «Да» и «Нет» на странице вопроса';
+const QUESTION_NEED_ID = 'need-test-question';
+const QUESTION_NEED_WHAT = 'ТЕСТ: вопрос с ответом текстом';
 const TEST_REOPEN_MS = 5 * 60 * 1000;
+const ANSWERS_MAX = 20;
 const NEED_KINDS = new Set(['money', 'outside_message', 'delete', 'publish', 'secret', 'approval', 'test']);
 const FINANCE_NEED_ID = 'need-finance';
 const FINANCE_WHERE = 'Чат Путина или Финансов';
@@ -524,6 +527,20 @@ function needSeeds() {
       urgency: 'low',
       kind: 'test',
       answerable: true,
+      answerMode: 'yesno',
+      docUrl: null,
+      actionLabel: null,
+      actionHint: null,
+    },
+    {
+      id: QUESTION_NEED_ID,
+      what: QUESTION_NEED_WHAT,
+      fromAgentId: needAuthor('qa'),
+      where: 'Страница вопроса',
+      urgency: 'low',
+      kind: 'test',
+      answerable: true,
+      answerMode: 'text',
       docUrl: null,
       actionLabel: null,
       actionHint: null,
@@ -598,7 +615,7 @@ function migrateOwnerNeeds(list = state.needs) {
     let item = list.find((n) => n && n.id === seed.id);
     if (!item) {
       if (seed.id === RENDER_NEED_ID || seed.id === ACADEMY_NEED_ID) continue;
-      if (!allowInsert && seed.id !== TEST_NEED_ID) continue;
+      if (!allowInsert && seed.id !== TEST_NEED_ID && seed.id !== QUESTION_NEED_ID) continue;
       item = {
         id: seed.id,
         what: seed.what,
@@ -612,6 +629,7 @@ function migrateOwnerNeeds(list = state.needs) {
         actionHint: seed.actionHint || null,
         details: '',
         answerable: seed.answerable === true,
+        answerMode: seed.answerMode || defaultAnswerMode(seed.kind),
         answers: [],
         answer: null,
         answeredAt: null,
@@ -631,11 +649,18 @@ function migrateOwnerNeeds(list = state.needs) {
       if (item.answerStatus !== 'answered') item.answerStatus = null;
       if (typeof item.details !== 'string') item.details = '';
       if (typeof item.answerable !== 'boolean') item.answerable = seed.answerable === true;
+      if (item.answerMode !== 'text' && item.answerMode !== 'yesno') {
+        item.answerMode = seed.answerMode || defaultAnswerMode(item.kind || seed.kind);
+      }
       if (!Array.isArray(item.participants)) item.participants = seedParticipantList(seed);
       if (!item.docUrl && seed.docUrl) item.docUrl = seed.docUrl;
       if (!item.kind && seed.kind) item.kind = seed.kind;
       if (isExternalDoc(item.actionUrl) && !item.docUrl) item.docUrl = item.actionUrl;
     }
+  }
+  for (const item of list) {
+    if (!item) continue;
+    if (item.answerMode !== 'text' && item.answerMode !== 'yesno') item.answerMode = defaultAnswerMode(item.kind);
   }
   applyNeedsDetails(list, readNeedsDetailsCatalog());
   for (const item of list) {
@@ -652,11 +677,26 @@ function migrateOwnerNeeds(list = state.needs) {
     if (!String(item.what || '').startsWith('ТЕСТ:')) item.what = TEST_NEED_WHAT;
     item.kind = 'test';
     item.answerable = true;
+    item.answerMode = 'yesno';
     item.closedAt = null;
     item.closedBy = null;
     item.answer = null;
     item.answeredAt = null;
     item.answerStatus = null;
+    item.answers = [];
+  }
+  for (const item of list) {
+    if (!item || item.id !== QUESTION_NEED_ID) continue;
+    item.what = QUESTION_NEED_WHAT;
+    item.kind = 'test';
+    item.answerable = true;
+    item.answerMode = 'text';
+    item.closedAt = null;
+    item.closedBy = null;
+    item.answer = null;
+    item.answeredAt = null;
+    item.answerStatus = null;
+    item.answers = [];
   }
   for (const item of list) {
     if (!item || item.id !== FINANCE_NEED_ID) continue;
@@ -692,9 +732,9 @@ function migrateExternalNeedStore() {
 }
 
 function reopenTestNeeds(now = Date.now(), force = false) {
-  let opened = 0;
+  const opened = [];
   for (const item of state.needs) {
-    if (!item || (item.kind !== 'test' && item.id !== TEST_NEED_ID)) continue;
+    if (!isTestNeedItem(item)) continue;
     if (!item.closedAt) continue;
     const closed = Date.parse(item.closedAt);
     if (!force && Number.isFinite(closed) && now - closed < TEST_REOPEN_MS) continue;
@@ -703,9 +743,12 @@ function reopenTestNeeds(now = Date.now(), force = false) {
     item.answer = null;
     item.answeredAt = null;
     item.answerStatus = null;
-    opened += 1;
+    item.answers = [];
+    opened.push(item);
   }
-  return opened;
+  for (const item of opened) store.noteNeed(item);
+  if (opened.length) store.flush().catch(() => {});
+  return opened.length;
 }
 
 migrateOwnerNeeds();
@@ -803,9 +846,30 @@ function needPagePath(id) {
   return `/needs/${encodeURIComponent(String(id))}`;
 }
 
-function isYesNoNeed(item) {
-  if (!item) return false;
-  return item.kind === 'approval' || item.kind === 'test' || item.answerable === true;
+function defaultAnswerMode(kind) {
+  return kind === 'approval' ? 'yesno' : 'text';
+}
+
+function answerModeOf(item) {
+  if (item && (item.answerMode === 'text' || item.answerMode === 'yesno')) return item.answerMode;
+  return defaultAnswerMode(item && item.kind);
+}
+
+function isTestNeedItem(item) {
+  return !!(item && (item.kind === 'test' || item.id === TEST_NEED_ID || item.id === QUESTION_NEED_ID));
+}
+
+function isFixtureTestNeed(item) {
+  return !!(item && (item.id === TEST_NEED_ID || item.id === QUESTION_NEED_ID));
+}
+
+function publicAnswers(item) {
+  const list = Array.isArray(item && item.answers) ? item.answers : [];
+  return list.slice(-ANSWERS_MAX).map((answer) => ({
+    text: typeof answer.text === 'string' ? answer.text : '',
+    at: answer.at || null,
+    by: typeof answer.by === 'string' && answer.by ? answer.by : null,
+  }));
 }
 
 function publicNeed(item, now = Date.now(), opts = {}) {
@@ -830,20 +894,15 @@ function publicNeed(item, now = Date.now(), opts = {}) {
     stale: isNeedStale(item, now),
     hasDetails: needHasDetails(item),
     answerable: item.answerable === true,
-    yesNo: isYesNoNeed(item),
+    answerMode: answerModeOf(item),
+    yesNo: answerModeOf(item) === 'yesno',
     answer: item.answer || null,
     answeredAt: item.answeredAt || null,
     answerStatus: item.answerStatus === 'answered' ? 'answered' : null,
   };
-  if (item.answer != null && item.answer !== '') view.answer = item.answer;
-  if (item.answeredAt) view.answeredAt = item.answeredAt;
-  if (item.updatedAt) view.updatedAt = item.updatedAt;
-  if (opts.includePrivate) {
+  if (opts.includePrivate || isFixtureTestNeed(item)) {
     view.details = typeof item.details === 'string' ? item.details : '';
-    view.answers = (Array.isArray(item.answers) ? item.answers : []).map((answer) => ({
-      text: typeof answer.text === 'string' ? answer.text : '',
-      at: answer.at || null,
-    }));
+    view.answers = publicAnswers(item);
   }
   return view;
 }
@@ -897,6 +956,7 @@ function applyNeedsDetails(list, catalog) {
       if (spec.details.length > DETAILS_MAX) trimmed = true;
     }
     if (typeof spec.answerable === 'boolean') item.answerable = spec.answerable;
+    if (spec.answerMode === 'text' || spec.answerMode === 'yesno') item.answerMode = spec.answerMode;
   }
   if (trimmed) console.warn('NEEDS_DETAILS_JSON: details обрезаны до лимита символов');
 }
@@ -940,8 +1000,17 @@ function parseNeed(body) {
   const answerable = parseAnswerable(body.answerable);
   const participants = parseParticipants(body.participants);
   const kind = parseKind(body.kind);
+  const answerMode = parseAnswerMode(body.answerMode, kind);
   const docUrl = parseDocUrl(body.docUrl != null ? body.docUrl : (isExternalDoc(actionUrl) ? actionUrl : null));
-  return { what, where, fromAgentId, urgency, participants, kind, resolvesWhenEnv, docUrl, actionLabel, actionHint, details, answerable };
+  return { what, where, fromAgentId, urgency, participants, kind, answerMode, resolvesWhenEnv, docUrl, actionLabel, actionHint, details, answerable };
+}
+
+function parseAnswerMode(value, kind) {
+  if (value == null || value === '') return defaultAnswerMode(kind);
+  if (typeof value !== 'string') throw httpError(400, 'answerMode должен быть text или yesno');
+  const mode = value.trim();
+  if (mode !== 'text' && mode !== 'yesno') throw httpError(400, 'answerMode должен быть text или yesno');
+  return mode;
 }
 
 function parseDetails(value) {
@@ -1690,7 +1759,8 @@ app.post('/api/needs', requireUserOrAgent, async (req, res) => {
       where: parsed.where,
       fromAgentId: parsed.fromAgentId,
       urgency: parsed.urgency,
-      kind: parsed.kind || (parsed.answerable ? 'approval' : null),
+      kind: parsed.kind,
+      answerMode: parsed.answerMode,
       participants: parsed.participants,
       docUrl: parsed.docUrl,
       actionLabel: parsed.actionLabel,
@@ -1740,7 +1810,7 @@ app.post('/api/needs/:id/close', requireUserOrAgent, async (req, res) => {
   item.updatedAt = item.closedAt;
   console.log(`need closed: ${item.id} by ${who.id}`);
   store.noteNeed(item);
-  if (item.kind !== 'test' && item.id !== TEST_NEED_ID) poryadokSync.schedule();
+  if (!isTestNeedItem(item)) poryadokSync.schedule();
   await store.flush();
   res.json(publicNeed(item));
 });
@@ -1758,6 +1828,8 @@ app.patch('/api/needs/:id', requireUserOrAgent, async (req, res) => {
       item.urgency = urgency;
     }
     if (Object.prototype.hasOwnProperty.call(body, 'kind')) item.kind = parseKind(body.kind);
+    if (Object.prototype.hasOwnProperty.call(body, 'answerMode')) item.answerMode = parseAnswerMode(body.answerMode, item.kind);
+    else if (Object.prototype.hasOwnProperty.call(body, 'kind')) item.answerMode = defaultAnswerMode(item.kind);
     if (Object.prototype.hasOwnProperty.call(body, 'docUrl')) item.docUrl = parseDocUrl(body.docUrl);
     if (Object.prototype.hasOwnProperty.call(body, 'details')) item.details = parseDetails(body.details);
     if (body.closed === true || body.close === true) {
@@ -1774,7 +1846,7 @@ app.patch('/api/needs/:id', requireUserOrAgent, async (req, res) => {
   }
   item.updatedAt = new Date().toISOString();
   store.noteNeed(item);
-  if (item.kind !== 'test' && item.id !== TEST_NEED_ID) poryadokSync.schedule();
+  if (!isTestNeedItem(item)) poryadokSync.schedule();
   await store.flush();
   res.json(publicNeed(item, Date.now(), { includePrivate: hqPasswordOk(req) }));
 });
@@ -1934,28 +2006,94 @@ function yesNoWord(answer) {
   return answer === 'no' ? 'Нет' : 'Да';
 }
 
+function parsePartial(body) {
+  if (!body || !Object.prototype.hasOwnProperty.call(body, 'partial') || body.partial == null || body.partial === false) return false;
+  if (body.partial === true) return true;
+  throw httpError(400, 'partial должен быть boolean');
+}
+
+function pushNeedAnswer(item, entry) {
+  if (!Array.isArray(item.answers)) item.answers = [];
+  item.answers.push(entry);
+  if (item.answers.length > ANSWERS_MAX) item.answers.splice(0, item.answers.length - ANSWERS_MAX);
+}
+
+function settleNeedAnswer(item, nowIso, partial) {
+  item.answerStatus = 'answered';
+  item.updatedAt = nowIso;
+  if (!partial) {
+    item.closedAt = nowIso;
+    item.closedBy = 'owner';
+  }
+  if (!isTestNeedItem(item)) poryadokSync.schedule();
+}
+
 app.post('/api/needs/:id/answer', async (req, res) => {
   const item = state.needs.find((n) => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Пункт не найден' });
-  const testNeed = item.kind === 'test' || item.id === TEST_NEED_ID;
+  const testNeed = isTestNeedItem(item);
   if (!testNeed && !hqPasswordOk(req)) {
     if (!APP_PASSWORD) return res.status(503).json({ error: 'Пароль доступа не настроен (APP_PASSWORD)' });
     return res.status(401).json({ error: 'Неверный пароль доступа' });
   }
-  let choice = null;
+  if (item.closedAt || item.answering) return res.status(409).json({ error: 'Пункт уже закрыт' });
+  let partial = false;
   try {
-    choice = parseYesNo(req.body);
+    partial = parsePartial(req.body);
   } catch (err) {
     return res.status(err.status || 400).json({ error: err.expose || 'Некорректный ответ' });
   }
+  const mode = answerModeOf(item);
   const nowIso = new Date().toISOString();
-  if (choice) {
-    const word = yesNoWord(choice);
+  item.answering = true;
+  try {
+    if (mode === 'yesno') {
+      let choice = null;
+      try {
+        choice = parseYesNo(req.body);
+      } catch (err) {
+        return res.status(err.status || 400).json({ error: err.expose || 'Некорректный ответ' });
+      }
+      if (!choice) return res.status(400).json({ error: 'answer должен быть yes или no' });
+      const word = yesNoWord(choice);
+      if (!testNeed) {
+        try {
+          await issueOwnerTask({
+            agentId: item.fromAgentId,
+            text: `Ответ Арсения на «${item.what || ''}»: ${word}`,
+            fromAgentId: 'owner',
+            parentOrderId: null,
+            attachments: [],
+          });
+        } catch (err) {
+          const status = err.status || 500;
+          if (!err.status) console.error(err);
+          return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
+        }
+      }
+      if (item.closedAt) return res.status(409).json({ error: 'Пункт уже закрыт' });
+      item.answer = choice;
+      item.answeredAt = nowIso;
+      pushNeedAnswer(item, { text: word, at: nowIso, by: 'owner' });
+      settleNeedAnswer(item, nowIso, partial);
+      store.noteNeed(item);
+      await store.flush();
+      return res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
+    }
+    const raw = req.body && typeof req.body.text === 'string' ? req.body.text : '';
+    if (req.body && req.body.text != null && typeof req.body.text !== 'string') {
+      return res.status(400).json({ error: 'Нужен текст ответа' });
+    }
+    const text = raw.trim();
+    if (!text) return res.status(400).json({ error: 'Нужен текст ответа' });
+    if (text.length > ANSWER_MAX) {
+      return res.status(400).json({ error: `Слишком длинный ответ (максимум ${ANSWER_MAX} символов)` });
+    }
     if (!testNeed) {
       try {
         await issueOwnerTask({
           agentId: item.fromAgentId,
-          text: `Ответ Арсения на «${item.what || ''}»: ${word}`,
+          text: `Ответ Арсения на «${item.what || ''}»: ${text}`,
           fromAgentId: 'owner',
           parentOrderId: null,
           attachments: [],
@@ -1966,49 +2104,15 @@ app.post('/api/needs/:id/answer', async (req, res) => {
         return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
       }
     }
-    item.answer = choice;
-    item.answeredAt = nowIso;
-    item.answerStatus = 'answered';
-    item.closedAt = nowIso;
-    item.closedBy = 'owner';
-    item.updatedAt = nowIso;
+    if (item.closedAt) return res.status(409).json({ error: 'Пункт уже закрыт' });
+    pushNeedAnswer(item, { text, at: nowIso, by: 'owner' });
+    settleNeedAnswer(item, nowIso, partial);
     store.noteNeed(item);
-    if (!testNeed) poryadokSync.schedule();
     await store.flush();
     return res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
+  } finally {
+    item.answering = false;
   }
-  const raw = req.body && typeof req.body.text === 'string' ? req.body.text : '';
-  if (req.body && req.body.text != null && typeof req.body.text !== 'string') {
-    return res.status(400).json({ error: 'Нужен текст ответа' });
-  }
-  const text = raw.trim();
-  if (!text) return res.status(400).json({ error: 'Нужен текст ответа' });
-  if (text.length > ANSWER_MAX) {
-    return res.status(400).json({ error: `Слишком длинный ответ (максимум ${ANSWER_MAX} символов)` });
-  }
-  if (!testNeed) {
-    try {
-      await issueOwnerTask({
-        agentId: item.fromAgentId,
-        text: `Ответ Арсения на «${item.what || ''}»: ${text}`,
-        fromAgentId: 'owner',
-        parentOrderId: null,
-        attachments: [],
-      });
-    } catch (err) {
-      const status = err.status || 500;
-      if (!err.status) console.error(err);
-      return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
-    }
-  }
-  if (!Array.isArray(item.answers)) item.answers = [];
-  item.answers.push({ text, at: nowIso });
-  item.answerStatus = 'answered';
-  item.updatedAt = nowIso;
-  store.noteNeed(item);
-  if (!testNeed) poryadokSync.schedule();
-  await store.flush();
-  res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
 });
 
 app.post('/api/upload', requireUserOrAgent, uploadArray, async (req, res) => {
@@ -2402,7 +2506,10 @@ module.exports = {
   ACADEMY_ACTION_URL,
   TEST_NEED_ID,
   TEST_NEED_WHAT,
+  QUESTION_NEED_ID,
+  QUESTION_NEED_WHAT,
   TEST_REOPEN_MS,
+  ANSWERS_MAX,
   reopenTestNeeds,
   FINANCE_ACTION_URL,
   FINANCE_ACTION_HINT,

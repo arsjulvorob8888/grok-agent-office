@@ -672,8 +672,18 @@ test('пункты «нужно от вас»: посев, токен, созд�
   assert.equal(social.docUrl, 'grokbot://app/v1/agent?id=a1bd53f2-5655-446b-8207-393e61fc20e1');
   assert.equal(social.actionHint, 'Откройте в Grok чат «Соцсети · Кремль»');
   assert.equal(qa.kind, 'test');
+  assert.equal(qa.answerMode, 'yesno');
+  assert.equal(qa.yesNo, true);
   assert.match(qa.what, /^ТЕСТ:/);
   assert.equal(qa.actionUrl, '/needs/need-test-qa');
+  const question = open.body.needs.find((n) => n.id === 'need-test-question');
+  assert.ok(question);
+  assert.equal(question.kind, 'test');
+  assert.equal(question.answerMode, 'text');
+  assert.equal(question.yesNo, false);
+  assert.equal(question.what, 'ТЕСТ: вопрос с ответом текстом');
+  assert.equal(question.actionUrl, '/needs/need-test-question');
+  assert.equal(finance.answerMode, 'text');
 
   const st = await json('/api/state');
   const socialAgent = st.body.agents.find((a) => a.id === 'social');
@@ -1235,8 +1245,12 @@ test('безопасный markdown не делает html и grokbot ссылк
   assert.doesNotMatch(html, /<script/i);
   assert.match(html, /&lt;script&gt;/);
   assert.doesNotMatch(html, /href="grokbot:/);
+  assert.doesNotMatch(html, /href="http:/);
   assert.match(html, /grokbot:\/\/app\/v1\/agent\?id=1/);
-  assert.match(html, /Откройте в Grok/);
+  assert.match(html, /откройте чат агента в Grok/);
+  const httpLink = renderSafeMarkdown('Черновик http://example.com/plain');
+  assert.doesNotMatch(httpLink, /<a /);
+  assert.match(httpLink, /http:\/\/example.com\/plain/);
 });
 
 test('details и ответы только с паролем штаба, ответ ставит задачу', async () => {
@@ -1340,10 +1354,23 @@ test('details и ответы только с паролем штаба, отв�
     });
     assert.equal(sent.status, 201);
     assert.equal(sent.body.answerStatus, 'answered');
-    assert.equal(sent.body.closedAt, null);
+    assert.equal(sent.body.answerMode, 'text');
+    assert.equal(sent.body.yesNo, false);
+    assert.ok(sent.body.closedAt);
+    assert.equal(sent.body.closedBy, 'owner');
     assert.equal(sent.body.answers.length, 1);
     assert.equal(sent.body.answers[0].text, answer);
+    assert.equal(sent.body.answers[0].by, 'owner');
     assert.ok(sent.body.answers[0].at);
+    const again = await json(`/api/needs/${created.body.id}/answer`, {
+      method: 'POST', headers: pw, body: JSON.stringify({ text: 'ещё раз' }),
+    });
+    assert.equal(again.status, 409);
+    assert.equal(again.body.error, 'Пункт уже закрыт');
+    const kept = await json(`/api/needs/${created.body.id}`, { headers: pw });
+    assert.equal(kept.body.closedAt, sent.body.closedAt);
+    assert.equal(kept.body.closedBy, 'owner');
+    assert.equal(kept.body.answers.length, 1);
 
     const after = await json('/api/state');
     const shown = after.body.needs.find((n) => n.id === created.body.id);
@@ -1413,4 +1440,188 @@ test('PATCH пункта меняет поля, ставит updatedAt и зак
   assert.ok(closed.body.closedAt);
   assert.equal(closed.body.closedBy, 'dev');
   assert.equal((await json('/api/needs')).body.needs.find((n) => n.id === created.body.id), undefined);
+});
+
+test('answerMode, частичный ответ и тестовый вопрос текстом', async () => {
+  const h = { 'x-agent-token': 'tok-test' };
+  const pw = { 'x-app-password': 'pw-test' };
+  const badMode = await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({
+      what: 'Режим', where: 'Чат', fromAgentId: 'finance', urgency: 'low', kind: 'money', answerMode: 'maybe',
+    }),
+  });
+  assert.equal(badMode.status, 400);
+
+  const money = await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({
+      what: 'Сколько отложить в тест',
+      where: 'Чат Финансов',
+      fromAgentId: 'finance',
+      urgency: 'normal',
+      kind: 'money',
+      answerable: true,
+      details: 'Вопрос один',
+    }),
+  });
+  assert.equal(money.status, 201);
+  assert.equal(money.body.kind, 'money');
+  assert.equal(money.body.answerMode, 'text');
+  assert.equal(money.body.yesNo, false);
+  const patched = await json(`/api/needs/${money.body.id}`, {
+    method: 'PATCH', headers: pw, body: JSON.stringify({ answerMode: 'yesno' }),
+  });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.body.answerMode, 'yesno');
+  assert.equal(patched.body.yesNo, true);
+  const back = await json(`/api/needs/${money.body.id}`, {
+    method: 'PATCH', headers: pw, body: JSON.stringify({ answerMode: 'text' }),
+  });
+  assert.equal(back.body.answerMode, 'text');
+  const textOnly = await json(`/api/needs/${money.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ answer: 'yes' }),
+  });
+  assert.equal(textOnly.status, 400);
+  const partial = await json(`/api/needs/${money.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ text: 'черновик <b>1</b>', partial: true }),
+  });
+  assert.equal(partial.status, 201);
+  assert.equal(partial.body.closedAt, null);
+  assert.equal(partial.body.answers.length, 1);
+  assert.equal(partial.body.answers[0].text, 'черновик <b>1</b>');
+  assert.equal(partial.body.answers[0].by, 'owner');
+  assert.ok(partial.body.updatedAt);
+  const task1 = (await json('/api/state')).body.tasks.find((t) => t.agent === 'finance' && t.text.includes('черновик <b>1</b>'));
+  assert.ok(task1);
+  const partial2 = await json(`/api/needs/${money.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ text: 'уточнение', partial: true }),
+  });
+  assert.equal(partial2.status, 201);
+  assert.equal(partial2.body.closedAt, null);
+  assert.equal(partial2.body.answers.length, 2);
+  const badPartial = await json(`/api/needs/${money.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ text: 'нет', partial: 'true' }),
+  });
+  assert.equal(badPartial.status, 400);
+  const full = await json(`/api/needs/${money.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ text: 'итог' }),
+  });
+  assert.equal(full.status, 201);
+  assert.ok(full.body.closedAt);
+  assert.equal(full.body.closedBy, 'owner');
+  assert.equal(full.body.answers.length, 3);
+  const repeat = await json(`/api/needs/${money.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ text: 'поздно', partial: true }),
+  });
+  assert.equal(repeat.status, 409);
+  assert.equal(repeat.body.error, 'Пункт уже закрыт');
+  const still = await json(`/api/needs/${money.body.id}`, { headers: pw });
+  assert.equal(still.body.closedAt, full.body.closedAt);
+  assert.equal(still.body.closedBy, 'owner');
+  assert.equal(still.body.answers.length, 3);
+  assert.equal(still.body.answers.some((a) => a.text === 'поздно'), false);
+
+  const approval = await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({ what: 'Одобрить черновик', where: 'Сайт', fromAgentId: 'blog', urgency: 'low', kind: 'approval' }),
+  });
+  assert.equal(approval.body.answerMode, 'yesno');
+  assert.equal(approval.body.yesNo, true);
+  const notText = await json(`/api/needs/${approval.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ text: 'словами' }),
+  });
+  assert.equal(notText.status, 400);
+  const no = await json(`/api/needs/${approval.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ answer: 'no' }),
+  });
+  assert.equal(no.status, 201);
+  assert.equal(no.body.answer, 'no');
+  assert.equal(no.body.closedBy, 'owner');
+  assert.equal(no.body.answers[0].text, 'Нет');
+  const noAgain = await json(`/api/needs/${approval.body.id}/answer`, {
+    method: 'POST', headers: pw, body: JSON.stringify({ answer: 'yes' }),
+  });
+  assert.equal(noAgain.status, 409);
+  const noKept = await json(`/api/needs/${approval.body.id}`, { headers: pw });
+  assert.equal(noKept.body.closedAt, no.body.closedAt);
+  assert.equal(noKept.body.closedBy, 'owner');
+  assert.equal(noKept.body.answer, 'no');
+
+  const tasksBefore = (await json('/api/state')).body.tasks.length;
+  const draft = await json('/api/needs/need-test-question/answer', {
+    method: 'POST', body: JSON.stringify({ text: 'пробный ответ', partial: true }),
+  });
+  assert.equal(draft.status, 201);
+  assert.equal(draft.body.closedAt, null);
+  assert.equal(draft.body.answers.at(-1).text, 'пробный ответ');
+  assert.equal(draft.body.answers.at(-1).by, 'owner');
+  assert.equal((await json('/api/state')).body.tasks.length, tasksBefore);
+  assert.equal((await json('/api/state')).body.tasks.some((t) => String(t.text || '').includes('пробный ответ')), false);
+  const more = await json('/api/needs/need-test-question/answer', {
+    method: 'POST', body: JSON.stringify({ text: 'вторая часть', partial: true }),
+  });
+  assert.equal(more.status, 201);
+  assert.equal(more.body.answers.length, 2);
+  assert.equal(more.body.closedAt, null);
+  const done = await json('/api/needs/need-test-question/answer', {
+    method: 'POST', body: JSON.stringify({ text: 'готово' }),
+  });
+  assert.equal(done.status, 201);
+  assert.equal(done.body.closedBy, 'owner');
+  assert.equal(done.body.answers.length, 3);
+  const late = await json('/api/needs/need-test-question/answer', {
+    method: 'POST', body: JSON.stringify({ text: 'ещё' }),
+  });
+  assert.equal(late.status, 409);
+  assert.equal(late.body.error, 'Пункт уже закрыт');
+  const question = office.state.needs.find((n) => n.id === 'need-test-question');
+  assert.equal(question.closedAt, done.body.closedAt);
+  assert.equal(question.closedBy, 'owner');
+  const soon = Date.now();
+  assert.equal(office.reopenTestNeeds(soon), 0);
+  assert.ok(question.closedAt);
+  question.closedAt = new Date(soon - office.TEST_REOPEN_MS - 1000).toISOString();
+  assert.ok(office.reopenTestNeeds(soon) >= 1);
+  assert.equal(question.closedAt, null);
+  assert.equal(question.answers.length, 0);
+
+  const limit = await json('/api/needs', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({
+      what: 'Длинная история', where: 'Чат', fromAgentId: 'temshik', urgency: 'low', kind: 'money', answerable: true,
+    }),
+  });
+  for (let i = 0; i < office.ANSWERS_MAX + 1; i += 1) {
+    const row = await json(`/api/needs/${limit.body.id}/answer`, {
+      method: 'POST', headers: pw, body: JSON.stringify({ text: `строка ${i}`, partial: true }),
+    });
+    assert.equal(row.status, 201, JSON.stringify(row.body));
+  }
+  const limited = await json(`/api/needs/${limit.body.id}`, { headers: pw });
+  assert.equal(limited.body.answers.length, office.ANSWERS_MAX);
+  assert.equal(limited.body.answers[0].text, 'строка 1');
+  assert.equal(limited.body.answers.at(-1).text, `строка ${office.ANSWERS_MAX}`);
+  assert.equal(limited.body.closedAt, null);
+
+  const previous = process.env.NEEDS_DETAILS_JSON;
+  try {
+    process.env.NEEDS_DETAILS_JSON = JSON.stringify({
+      'need-finance': { answerMode: 'yesno', answerable: true, details: 'режим из json' },
+    });
+    office.migrateOwnerNeeds();
+    const finance = office.state.needs.find((n) => n.id === 'need-finance');
+    assert.equal(finance.answerMode, 'yesno');
+    assert.equal(finance.details, 'режим из json');
+    assert.equal(finance.answerable, true);
+    const qa = office.state.needs.find((n) => n.id === 'need-test-qa');
+    assert.equal(qa.answerMode, 'yesno');
+    assert.equal(office.state.needs.find((n) => n.id === 'need-test-question').answerMode, 'text');
+  } finally {
+    if (previous === undefined) delete process.env.NEEDS_DETAILS_JSON;
+    else process.env.NEEDS_DETAILS_JSON = previous;
+    office.migrateOwnerNeeds();
+    const finance = office.state.needs.find((n) => n.id === 'need-finance');
+    if (finance) finance.answerMode = 'text';
+  }
 });

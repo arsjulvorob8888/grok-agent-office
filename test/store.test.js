@@ -227,11 +227,22 @@ async function seedOffice(base) {
   const answer = await json(base, '/api/needs/need-finance/answer', {
     method: 'POST',
     headers: { 'x-app-password': 'pw-test' },
-    body: JSON.stringify({ text: 'Ответ на финансы' }),
+    body: JSON.stringify({ text: 'Ответ на финансы', partial: true }),
   });
   assert.equal(answer.status, 201);
   assert.equal(answer.body.answerStatus, 'answered');
+  assert.equal(answer.body.closedAt, null);
+  assert.equal(answer.body.answerMode, 'text');
   assert.equal(answer.body.answers[0].text, 'Ответ на финансы');
+  assert.equal(answer.body.answers[0].by, 'owner');
+  assert.ok(answer.body.answers[0].at);
+  assert.ok(answer.body.updatedAt);
+  const closedTest = await json(base, '/api/needs/need-test-qa/answer', {
+    method: 'POST',
+    body: JSON.stringify({ answer: 'yes' }),
+  });
+  assert.equal(closedTest.status, 201);
+  assert.ok(closedTest.body.closedAt);
 
   return {
     png: png.body.attachments[0],
@@ -278,7 +289,9 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(state.body.agents.some((agent) => agent.id === 'scout'), false);
       assert.equal(state.body.agents.find((agent) => agent.id === 'trading').archived, true);
       const needs = await json(second.base, '/api/needs');
-      assert.equal(needs.body.needs.length, 3);
+      assert.equal(needs.body.needs.length, 4);
+      assert.ok(needs.body.needs.find((item) => item.id === 'need-test-qa'));
+      assert.ok(needs.body.needs.find((item) => item.id === 'need-test-question'));
       assert.equal(needs.body.needs.find((item) => item.id === 'need-render-api'), undefined);
       assert.ok(needs.body.needs.find((item) => item.id === 'need-finance'));
       const missing = await fetch(second.base + '/api/files/' + 'a'.repeat(32));
@@ -474,7 +487,18 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(finance.answeredAt, '2026-11-17T12:30:00.000Z');
       assert.equal(finance.updatedAt, '2026-11-17T12:31:00.000Z');
       assert.equal(finance.kind, 'money');
+      assert.equal(finance.answerMode, 'text');
+      assert.equal(finance.closedAt, null);
       assert.ok(finance.docUrl);
+      const reopened = needs.body.needs.find((item) => item.id === 'need-test-qa');
+      assert.ok(reopened);
+      assert.equal(reopened.closedAt, null);
+      assert.equal(reopened.answerMode, 'yesno');
+      assert.deepEqual(reopened.answers, []);
+      const question = needs.body.needs.find((item) => item.id === 'need-test-question');
+      assert.ok(question);
+      assert.equal(question.closedAt, null);
+      assert.equal(question.answerMode, 'text');
       assert.equal(finance.updatedAt, '2026-11-17T12:31:00.000Z');
       const savedNeed = await json(second.base, `/api/needs/${made.need.id}`, {
         headers: { 'x-app-password': 'pw-test' },
@@ -490,7 +514,12 @@ describe('хранилище', { concurrency: 1 }, () => {
         headers: { 'x-app-password': 'pw-test' },
       });
       assert.equal(savedFinance.body.answerStatus, 'answered');
+      assert.equal(savedFinance.body.closedAt, null);
+      assert.equal(savedFinance.body.answerMode, 'text');
       assert.equal(savedFinance.body.answers[0].text, 'Ответ на финансы');
+      assert.equal(savedFinance.body.answers[0].by, 'owner');
+      assert.ok(savedFinance.body.answers[0].at);
+      assert.equal(savedFinance.body.updatedAt, '2026-11-17T12:31:00.000Z');
       const render = await json(second.base, '/api/needs/need-render-api');
       assert.equal(render.status, 404);
 

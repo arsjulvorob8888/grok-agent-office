@@ -1585,6 +1585,20 @@
     }).format(d);
     return `обновлено ${clock} МСК`;
   }
+  function moscowClock(iso) {
+    const d = new Date(iso || '');
+    if (Number.isNaN(d.getTime())) return '';
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Moscow',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(d);
+    const hour = (parts.find((part) => part.type === 'hour') || {}).value || '';
+    const minute = (parts.find((part) => part.type === 'minute') || {}).value || '';
+    if (!hour || !minute) return '';
+    return `${hour}:${minute} МСК`;
+  }
   function needFromLabel(id) {
     const a = S.byId.get(id);
     return a ? titled(a) : (id || 'агент');
@@ -1614,7 +1628,7 @@
       return `<a class="need-doc" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Прочитать</a>`;
     }
     if (/^grokbot:\/\/\S+$/i.test(url)) {
-      return `<p class="need-doc-hint">Прочитать: ${esc(url)} <span class="md-grok-hint">Откройте в Grok — браузер эту ссылку не откроет</span></p>`;
+      return `<p class="need-doc-hint">Прочитать: ${esc(url)} <span class="md-grok-hint">откройте чат агента в Grok</span></p>`;
     }
     return '';
   }
@@ -1871,6 +1885,8 @@
       if (who) who.textContent = '';
       if (where) where.textContent = '';
       if (details) details.innerHTML = '';
+      const saved = $('#needAnswers');
+      if (saved) saved.innerHTML = '';
       if (external) external.innerHTML = '';
       if (form) form.hidden = true;
       if (badge) badge.hidden = true;
@@ -1894,15 +1910,52 @@
       if (!external) return;
       external.innerHTML = needDocHTML(need);
     }
+    function answerEntries(data) {
+      const list = Array.isArray(data && data.answers) ? data.answers.slice() : [];
+      if (!list.length && data && (data.answer === 'yes' || data.answer === 'no')) {
+        list.push({ text: data.answer === 'no' ? 'Нет' : 'Да', at: data.answeredAt || null });
+      }
+      return list;
+    }
+    function paintAnswers(data) {
+      const box = $('#needAnswers');
+      if (!box) return;
+      box.innerHTML = answerEntries(data).map((entry) => {
+        const text = esc(entry && entry.text ? entry.text : '');
+        const time = esc(moscowClock(entry && entry.at));
+        return `<article class="need-answer"><p>${text}</p>${time ? `<time>${time}</time>` : ''}</article>`;
+      }).join('');
+    }
+    function needAnswerMode(data) {
+      if (data && (data.answerMode === 'yesno' || data.answerMode === 'text')) return data.answerMode;
+      return data && data.kind === 'approval' ? 'yesno' : 'text';
+    }
+    function needCanAnswer(data) {
+      if (!data || data.closedAt) return false;
+      if (data.kind === 'approval' || data.kind === 'test' || data.answerable === true || data.hasDetails === true) return true;
+      return typeof data.details === 'string' && !!String(data.details).trim();
+    }
     function showAnswerForm(data) {
       if (!form) return;
-      const yesNo = !!(data && (data.yesNo || data.kind === 'approval' || data.kind === 'test' || data.answerable));
+      const open = needCanAnswer(data);
+      const mode = needAnswerMode(data);
       const textBox = $('#needTextAnswer');
       const choice = $('#needYesNo');
-      form.hidden = !yesNo;
-      if (choice) choice.hidden = !yesNo;
-      if (textBox) textBox.hidden = true;
+      form.hidden = !open;
+      if (choice) choice.hidden = !(open && mode === 'yesno');
+      if (textBox) textBox.hidden = !(open && mode === 'text');
       form.classList.toggle('is-test', !!(data && data.kind === 'test'));
+    }
+    function paintDetails(data) {
+      const markdown = data && typeof data.details === 'string' ? data.details : '';
+      if (details) details.innerHTML = markdown && window.renderSafeMarkdown ? window.renderSafeMarkdown(markdown) : '';
+    }
+    function rememberNeed(data) {
+      if (!data || !data.id) return;
+      const idx = S.needs.findIndex((item) => item && item.id === data.id);
+      if (idx >= 0) S.needs[idx] = Object.assign({}, S.needs[idx], data);
+      else S.needs.unshift(data);
+      renderNeeds();
     }
     function paintPublic() {
       if (title) title.textContent = need.what || 'Вопрос';
@@ -1914,8 +1967,8 @@
     function paintPrivate(data) {
       need = data;
       paintPublic();
-      const markdown = typeof data.details === 'string' ? data.details : '';
-      if (details) details.innerHTML = markdown && window.renderSafeMarkdown ? window.renderSafeMarkdown(markdown) : '';
+      paintDetails(data);
+      paintAnswers(data);
       showAnswerForm(data);
     }
     async function loadPrivate() {
@@ -1947,9 +2000,10 @@
       }
       need = data;
       paintPublic();
-      if (data.kind === 'test') {
+      paintAnswers(data);
+      if (data.kind === 'test' || data.id === 'need-test-qa' || data.id === 'need-test-question') {
+        paintDetails(data);
         showAnswerForm(data);
-        if (details) details.innerHTML = '';
         return;
       }
       if (details) details.innerHTML = '';
@@ -1960,14 +2014,21 @@
       }
       await loadPrivate();
     }
+    let sendingAnswer = false;
+    let answerLocked = false;
+    function isTestPage(data) {
+      return !!(data && (data.kind === 'test' || data.id === 'need-test-qa' || data.id === 'need-test-question'));
+    }
     async function sendAnswer(body) {
+      if (sendingAnswer || answerLocked) return;
       const token = authToken;
-      const test = need && need.kind === 'test';
+      const test = isTestPage(need);
       if (!test && !getPassword()) {
         queueAuth(() => sendAnswer(body));
         return;
       }
       if (token !== authToken) return;
+      sendingAnswer = true;
       if (msg) msg.textContent = 'Отправляю…';
       let res;
       let data = {};
@@ -1981,23 +2042,36 @@
         });
         data = await res.json().catch(() => ({}));
       } catch (err) {
+        sendingAnswer = false;
         if (msg) msg.textContent = messageForClientException(err);
         return;
       }
       if (token !== authToken) return;
       if (res.status === 401) {
+        sendingAnswer = false;
         localStorage.removeItem('appPassword');
         if (token !== authToken) return;
         queueAuth(() => sendAnswer(body), 'Пароль не подошёл. Попробуй ещё раз.');
         return;
       }
       if (!res.ok) {
+        sendingAnswer = false;
         if (msg) msg.textContent = data.error || 'Не удалось отправить';
         return;
       }
       if (area) area.value = '';
-      if (msg) msg.textContent = data.closedAt ? 'Ответ записан, пункт закрыт' : 'Ответ отправлен';
+      const partialBox = $('#needPartial');
+      if (partialBox) partialBox.checked = false;
+      rememberNeed(data);
       paintPrivate(data);
+      if (data.closedAt) {
+        answerLocked = true;
+        if (msg) msg.textContent = 'Ответ записан';
+        setTimeout(() => { location.assign('/'); }, 2000);
+        return;
+      }
+      sendingAnswer = false;
+      if (msg) msg.textContent = 'Частичный ответ записан';
     }
     if (form) {
       const yes = $('#needYes');
@@ -2011,7 +2085,8 @@
           if (msg) msg.textContent = 'Напишите ответ';
           return;
         }
-        await sendAnswer({ text });
+        const partialBox = $('#needPartial');
+        await sendAnswer({ text, partial: !!(partialBox && partialBox.checked) });
       };
     }
     loadPublic().catch(() => {

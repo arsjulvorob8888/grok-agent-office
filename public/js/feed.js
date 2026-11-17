@@ -168,7 +168,7 @@
   }
 
   function isTestNeed(need) {
-    return !!(need && (need.kind === 'test' || need.id === 'need-test-qa'));
+    return !!(need && (need.kind === 'test' || need.id === 'need-test-qa' || need.id === 'need-test-question'));
   }
 
   function needsForGeneral(needs) {
