@@ -448,6 +448,8 @@ const FINANCE_WHERE = 'Чат Путина или Финансов';
 const ACTION_URL_MAX = 500;
 const ACTION_LABEL_MAX = 80;
 const ACTION_HINT_MAX = 300;
+const DETAILS_MAX = 20000;
+const ANSWER_MAX = 5000;
 const ACADEMY_ACTION_URL = 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2';
 const FINANCE_ACTION_URL = 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01';
 const FINANCE_ACTION_HINT = 'Откройте в Grok чат «Путин · Кремль»';
@@ -547,6 +549,7 @@ function fillSeedActions(item, seed) {
 // Если копия уже лежит в хранилище и ещё открыта, старт её закрывает.
 // У посевных пунктов пустые actionUrl и actionHint заполняются один раз.
 // Текст академии и «где» у финансов обновляются на месте: пункт не закрывается и не удаляется.
+// Текст вопросов из NEEDS_DETAILS_JSON дописывается здесь же: и на старте, и при повторной миграции.
 function migrateOwnerNeeds(list = state.needs) {
   const now = new Date().toISOString();
   for (const seed of needSeeds()) {
@@ -561,6 +564,10 @@ function migrateOwnerNeeds(list = state.needs) {
         actionUrl: seed.actionUrl || null,
         actionLabel: seed.actionLabel || null,
         actionHint: seed.actionHint || null,
+        details: '',
+        answerable: false,
+        answers: [],
+        answerStatus: null,
         createdAt: now,
         checkedAt: now,
         closedAt: null,
@@ -571,8 +578,13 @@ function migrateOwnerNeeds(list = state.needs) {
     } else {
       if (!item.checkedAt) item.checkedAt = item.createdAt || now;
       fillSeedActions(item, seed);
+      if (!Array.isArray(item.answers)) item.answers = [];
+      if (item.answerStatus !== 'answered') item.answerStatus = null;
+      if (typeof item.details !== 'string') item.details = '';
+      if (typeof item.answerable !== 'boolean') item.answerable = false;
     }
   }
+  applyNeedsDetails(list, readNeedsDetailsCatalog());
   for (const item of list) {
     if (!item || item.id !== ACADEMY_NEED_ID) continue;
     item.what = ACADEMY_WHAT;
@@ -644,7 +656,7 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
-function publicState() {
+function publicState(opts = {}) {
   return {
     agents: state.agents.map((a) => ({
       id: a.id,
@@ -674,13 +686,17 @@ function publicState() {
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
     messages: messagesForState(),
-    needs: state.needs.map((item) => publicNeed(item)),
+    needs: state.needs.map((item) => publicNeed(item, Date.now(), opts)),
     poryadokSync: poryadokSync.publicStatus(),
   };
 }
 
-function publicNeed(item, now = Date.now()) {
-  return {
+function needHasDetails(item) {
+  return !!(item && typeof item.details === 'string' && item.details.trim());
+}
+
+function publicNeed(item, now = Date.now(), opts = {}) {
+  const view = {
     id: item.id,
     what: item.what,
     fromAgentId: item.fromAgentId,
@@ -695,7 +711,18 @@ function publicNeed(item, now = Date.now()) {
     closedBy: item.closedBy || null,
     resolvesWhenEnv: item.resolvesWhenEnv || null,
     stale: isNeedStale(item, now),
+    hasDetails: needHasDetails(item),
+    answerable: item.answerable === true,
+    answerStatus: item.answerStatus === 'answered' ? 'answered' : null,
   };
+  if (opts.includePrivate) {
+    view.details = typeof item.details === 'string' ? item.details : '';
+    view.answers = (Array.isArray(item.answers) ? item.answers : []).map((answer) => ({
+      text: typeof answer.text === 'string' ? answer.text : '',
+      at: answer.at || null,
+    }));
+  }
+  return view;
 }
 
 function openNeeds() {
@@ -717,6 +744,38 @@ function parseEnvName(value) {
   if (!name) return null;
   if (!/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(name)) throw httpError(400, 'Некорректное имя resolvesWhenEnv');
   return name;
+}
+
+function readNeedsDetailsCatalog(raw = process.env.NEEDS_DETAILS_JSON) {
+  if (raw == null || String(raw).trim() === '') return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(String(raw));
+  } catch (_) {
+    console.warn('NEEDS_DETAILS_JSON: невалидный JSON, значение проигнорировано');
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.warn('NEEDS_DETAILS_JSON: невалидный JSON, значение проигнорировано');
+    return null;
+  }
+  return parsed;
+}
+
+function applyNeedsDetails(list, catalog) {
+  if (!catalog || !Array.isArray(list)) return;
+  let trimmed = false;
+  for (const item of list) {
+    if (!item || item.id == null) continue;
+    const spec = catalog[String(item.id)];
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) continue;
+    if (typeof spec.details === 'string') {
+      item.details = spec.details.length > DETAILS_MAX ? spec.details.slice(0, DETAILS_MAX) : spec.details;
+      if (spec.details.length > DETAILS_MAX) trimmed = true;
+    }
+    if (typeof spec.answerable === 'boolean') item.answerable = spec.answerable;
+  }
+  if (trimmed) console.warn('NEEDS_DETAILS_JSON: details обрезаны до лимита символов');
 }
 
 function optionalNeedText(value, field, max) {
@@ -754,7 +813,22 @@ function parseNeed(body) {
   const actionUrl = parseActionUrl(body.actionUrl);
   const actionLabel = optionalNeedText(body.actionLabel, 'actionLabel', ACTION_LABEL_MAX);
   const actionHint = optionalNeedText(body.actionHint, 'actionHint', ACTION_HINT_MAX);
-  return { what, where, fromAgentId, urgency, resolvesWhenEnv, actionUrl, actionLabel, actionHint };
+  const details = parseDetails(body.details);
+  const answerable = parseAnswerable(body.answerable);
+  return { what, where, fromAgentId, urgency, resolvesWhenEnv, actionUrl, actionLabel, actionHint, details, answerable };
+}
+
+function parseDetails(value) {
+  if (value == null || value === '') return '';
+  if (typeof value !== 'string') throw httpError(400, 'details должен быть строкой');
+  if (value.length > DETAILS_MAX) throw httpError(400, `details слишком длинное (максимум ${DETAILS_MAX} символов)`);
+  return value.trim() ? value : '';
+}
+
+function parseAnswerable(value) {
+  if (value == null || value === '') return false;
+  if (typeof value !== 'boolean') throw httpError(400, 'answerable должен быть boolean');
+  return value;
 }
 
 function cleanList(value) {
@@ -1305,6 +1379,27 @@ function maybeUpload(req, res, next) {
   return next();
 }
 
+function hqPasswordOk(req) {
+  if (!APP_PASSWORD) return false;
+  const provided = req.get('x-app-password') || '';
+  if (!provided) return false;
+  return safeEqual(provided, APP_PASSWORD);
+}
+
+function rejectBadPassword(req, res) {
+  const provided = req.get('x-app-password') || '';
+  if (!provided) return false;
+  if (!APP_PASSWORD) {
+    res.status(503).json({ error: 'Пароль доступа не настроен (APP_PASSWORD)' });
+    return true;
+  }
+  if (!safeEqual(provided, APP_PASSWORD)) {
+    res.status(401).json({ error: 'Неверный пароль доступа' });
+    return true;
+  }
+  return false;
+}
+
 function requireAppPassword(req, res, next) {
   if (!APP_PASSWORD) {
     return res.status(503).json({ error: 'Пароль доступа не настроен (APP_PASSWORD)' });
@@ -1415,10 +1510,10 @@ app.get('/healthz', (_req, res) => {
   res.status(200).type('text/plain').send('ok');
 });
 
-app.get('/api/state', async (_req, res) => {
+app.get('/api/state', async (req, res) => {
   try {
     await dashboards.ready();
-    res.json(publicState());
+    res.json(publicState({ includePrivate: hqPasswordOk(req) }));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Не удалось собрать состояние' });
@@ -1449,8 +1544,16 @@ app.get('/api/agents/:id/dashboard', async (req, res) => {
   }
 });
 
-app.get('/api/needs', (_req, res) => {
-  res.json({ needs: openNeeds().map((item) => publicNeed(item)) });
+app.get('/api/needs', (req, res) => {
+  const opts = { includePrivate: hqPasswordOk(req) };
+  res.json({ needs: openNeeds().map((item) => publicNeed(item, Date.now(), opts)) });
+});
+
+app.get('/api/needs/:id', (req, res) => {
+  if (rejectBadPassword(req, res)) return;
+  const item = state.needs.find((n) => n.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'Пункт не найден' });
+  res.json(publicNeed(item, Date.now(), { includePrivate: hqPasswordOk(req) }));
 });
 
 app.post('/api/needs', requireAgentToken, (req, res) => {
@@ -1466,6 +1569,10 @@ app.post('/api/needs', requireAgentToken, (req, res) => {
       actionUrl: parsed.actionUrl,
       actionLabel: parsed.actionLabel,
       actionHint: parsed.actionHint,
+      details: parsed.details,
+      answerable: parsed.answerable,
+      answers: [],
+      answerStatus: null,
       resolvesWhenEnv: parsed.resolvesWhenEnv,
       createdAt,
       checkedAt: createdAt,
@@ -1549,13 +1656,33 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
     return res.status(400).json({ error: 'Нужны поля agent и text' });
   }
 
+  try {
+    const task = await issueOwnerTask({ agentId, text, fromAgentId, parentOrderId, attachments });
+    res.status(201).json(publicTask(task));
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    res.status(status).json({ error: err.expose || 'Не удалось поставить задачу' });
+  }
+});
+
+async function issueOwnerTask({ agentId, text, fromAgentId, parentOrderId, attachments }) {
+  const agent = findAgent(agentId);
+  if (!agent) throw httpError(400, 'Неизвестный агент');
+  if (agent.vacant) throw httpError(400, 'Это свободное направление: сначала дай ему название');
+  if (agent.archived) throw httpError(409, 'Агент в архиве: новые задачи и приказы ему не ставятся');
+  const bodyText = typeof text === 'string' ? text : '';
+  const files = Array.isArray(attachments) ? attachments : [];
+  if (bodyText.length > 20000) throw httpError(400, 'Слишком длинная задача (максимум 20000 символов)');
+  if (!bodyText && files.length === 0) throw httpError(400, 'Нужны поля agent и text');
+
   const task = {
     id: `t-${state.nextTaskId++}`,
     agent: agentId,
     agentId,
-    fromAgentId,
-    parentOrderId,
-    text,
+    fromAgentId: fromAgentId || 'owner',
+    parentOrderId: parentOrderId || null,
+    text: bodyText,
     status: GROK_WEBHOOK_URL ? 'отправлена' : 'не отправлена: вебхук не настроен',
     orderStatus: 'sent',
     progress: null,
@@ -1564,7 +1691,7 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
     forwardStatus: null,
     result: null,
     history: [],
-    attachments,
+    attachments: files,
     messageId: '',
   };
   task.messageId = `task:${task.id}`;
@@ -1573,8 +1700,8 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
     id: task.messageId,
     agentId,
     role: 'owner',
-    text,
-    attachments,
+    text: bodyText,
+    attachments: files,
     createdAt: task.createdAt,
     source: 'app',
     taskId: task.id,
@@ -1588,11 +1715,11 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
   });
 
   agent.status = 'working';
-  agent.now = text || `Файлы: ${attachments.map((a) => a.name).join(', ')}`.slice(0, 300);
+  agent.now = bodyText || `Файлы: ${files.map((a) => a.name).join(', ')}`.slice(0, 300);
   pushTask(task);
   releaseUnusedFiles();
 
-  const forwardedAttachments = attachments.map((a) => ({
+  const forwardedAttachments = files.map((a) => ({
     name: a.name,
     mime: a.mime,
     size: a.size,
@@ -1600,7 +1727,7 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
   }));
   const payload = {
     agent: agentId,
-    text: textForAgent(text, forwardedAttachments),
+    text: textForAgent(bodyText, forwardedAttachments),
     taskId: task.id,
     messageId: task.messageId,
     appUrl: PUBLIC_URL,
@@ -1621,8 +1748,40 @@ app.post('/api/task', requireAppPassword, maybeUpload, async (req, res) => {
       task.forwardError = err && err.name === 'TimeoutError' ? 'timeout' : 'network_error';
     }
   }
+  return task;
+}
 
-  res.status(201).json(publicTask(task));
+app.post('/api/needs/:id/answer', requireAppPassword, async (req, res) => {
+  const item = state.needs.find((n) => n.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'Пункт не найден' });
+  const raw = req.body && typeof req.body.text === 'string' ? req.body.text : '';
+  if (req.body && req.body.text != null && typeof req.body.text !== 'string') {
+    return res.status(400).json({ error: 'Нужен текст ответа' });
+  }
+  const text = raw.trim();
+  if (!text) return res.status(400).json({ error: 'Нужен текст ответа' });
+  if (text.length > ANSWER_MAX) {
+    return res.status(400).json({ error: `Слишком длинный ответ (максимум ${ANSWER_MAX} символов)` });
+  }
+  const orderText = `Ответ Арсения на «${item.what || ''}»: ${text}`;
+  try {
+    await issueOwnerTask({
+      agentId: item.fromAgentId,
+      text: orderText,
+      fromAgentId: 'owner',
+      parentOrderId: null,
+      attachments: [],
+    });
+  } catch (err) {
+    const status = err.status || 500;
+    if (!err.status) console.error(err);
+    return res.status(status).json({ error: err.expose || 'Не удалось доставить ответ' });
+  }
+  if (!Array.isArray(item.answers)) item.answers = [];
+  item.answers.push({ text, at: new Date().toISOString() });
+  item.answerStatus = 'answered';
+  poryadokSync.schedule();
+  res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
 });
 
 app.post('/api/upload', requireUserOrAgent, uploadArray, (req, res) => {
@@ -1868,6 +2027,11 @@ app.get('/agent/:id', (req, res) => {
   const agent = findAgent(id);
   if (!agent) return agentStub(res, 'Агент не найден');
   if (agent.archived) return agentStub(res, 'Агент в архиве');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/needs/:id', (req, res, next) => {
+  if (!req.params.id || req.params.id.includes('/')) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
