@@ -1187,4 +1187,174 @@ test('архивные агенты не принимают задачи, ист
   assert.equal(need.status, 201);
   const needs = await json('/api/needs');
   assert.ok(needs.body.needs.some((n) => n.id === need.body.id && n.fromAgentId === 'biz'));
+  const bizPage = await json(`/api/needs/${need.body.id}`);
+  assert.equal(bizPage.status, 404);
+
+  const langNeed = await json('/api/needs', {
+    method: 'POST', headers: tok,
+    body: JSON.stringify({
+      what: 'Архивный вопрос репетитора',
+      where: 'МГУ',
+      fromAgentId: 'lang',
+      urgency: 'low',
+      answerable: true,
+      details: 'Текст урока не должен открыться',
+    }),
+  });
+  assert.equal(langNeed.status, 201);
+  const listed = await json('/api/needs');
+  assert.ok(listed.body.needs.some((n) => n.id === langNeed.body.id && n.fromAgentId === 'lang'));
+  const langPage = await json(`/api/needs/${langNeed.body.id}`, { headers: pw });
+  assert.equal(langPage.status, 404);
+  assert.equal(JSON.stringify(langPage.body).includes('Текст урока'), false);
+  assert.equal(JSON.stringify(langPage.body).includes('Language Coach'), false);
+  const langAnswer = await json(`/api/needs/${langNeed.body.id}/answer`, {
+    method: 'POST', headers: pw,
+    body: JSON.stringify({ text: 'Ответ архивному репетитору' }),
+  });
+  assert.ok(langAnswer.status >= 400 && langAnswer.status < 500, String(langAnswer.status));
+  assert.equal(langAnswer.status, 409);
+  const after = await json('/api/state');
+  assert.equal(after.body.tasks.some((t) => t.agent === 'lang' && /Ответ архивному репетитору/.test(t.text || '')), false);
+  assert.ok(after.body.needs.some((n) => n.id === langNeed.body.id && n.fromAgentId === 'lang'));
+});
+
+test('безопасный markdown не делает html и grokbot ссылкой', () => {
+  const { renderSafeMarkdown } = require('../public/js/markdown.js');
+  const html = renderSafeMarkdown('Смотри https://example.com/q и grokbot://app/v1/agent?id=1\n\n<script>alert(1)</script>');
+  assert.match(html, /<a href="https:\/\/example.com\/q"/);
+  assert.doesNotMatch(html, /<script/i);
+  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /href="grokbot:/);
+  assert.match(html, /grokbot:\/\/app\/v1\/agent\?id=1/);
+  assert.match(html, /Откройте в Grok/);
+});
+
+test('details и ответы только с паролем штаба, ответ ставит задачу', async () => {
+  const secret = 'Выдуманный вопрос QZX-42 про лимит';
+  const answer = 'Ответ QZX-42 берём паузу';
+  const h = { 'x-agent-token': 'tok-test' };
+  const pw = { 'x-app-password': 'pw-test' };
+  const warns = [];
+  const orig = console.warn;
+  console.warn = (...args) => warns.push(args.map(String).join(' '));
+  const previous = process.env.NEEDS_DETAILS_JSON;
+  try {
+    process.env.NEEDS_DETAILS_JSON = '{"need-finance": {"details": "LEAK-THIS-SECRET"';
+    office.migrateOwnerNeeds();
+    assert.ok(warns.some((line) => line.includes('NEEDS_DETAILS_JSON')));
+    assert.equal(warns.join('\n').includes('LEAK-THIS-SECRET'), false);
+    const finance = office.state.needs.find((n) => n.id === 'need-finance');
+    assert.equal(String(finance.details || '').includes('LEAK-THIS-SECRET'), false);
+
+    process.env.NEEDS_DETAILS_JSON = JSON.stringify({
+      'need-finance': { details: secret, answerable: true },
+    });
+    office.migrateOwnerNeeds();
+    assert.equal(finance.details, secret);
+    assert.equal(finance.answerable, true);
+
+    const bad = await json('/api/needs', {
+      method: 'POST', headers: h,
+      body: JSON.stringify({
+        what: 'Плохие поля', where: 'Чат', fromAgentId: 'temshik', urgency: 'low', answerable: 'true',
+      }),
+    });
+    assert.equal(bad.status, 400);
+
+    const created = await json('/api/needs', {
+      method: 'POST', headers: h,
+      body: JSON.stringify({
+        what: 'Подтвердить черновик вопроса',
+        where: 'Чат Темщика',
+        fromAgentId: 'temshik',
+        urgency: 'low',
+        details: `${secret} <script>`,
+        answerable: true,
+      }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.details, undefined);
+    assert.equal(created.body.answers, undefined);
+    assert.equal(created.body.hasDetails, true);
+    assert.equal(created.body.answerable, true);
+    assert.equal(created.body.answerStatus, null);
+    assert.equal(JSON.stringify(created.body).includes(secret), false);
+
+    const open = await json('/api/needs');
+    const pub = open.body.needs.find((n) => n.id === created.body.id);
+    assert.equal(pub.details, undefined);
+    assert.equal(pub.answers, undefined);
+    assert.equal(pub.hasDetails, true);
+    assert.equal(JSON.stringify(open.body).includes(secret), false);
+
+    const state = await json('/api/state');
+    assert.equal(JSON.stringify(state.body.needs).includes(secret), false);
+    assert.equal(state.body.needs.find((n) => n.id === 'need-finance').details, undefined);
+    assert.equal(state.body.needs.find((n) => n.id === 'need-finance').hasDetails, true);
+
+    const agentView = await json('/api/needs', { headers: h });
+    assert.equal(JSON.stringify(agentView.body).includes(secret), false);
+    const stateAgent = await json('/api/state', { headers: h });
+    assert.equal(JSON.stringify(stateAgent.body.needs).includes(secret), false);
+
+    const wrong = await json(`/api/needs/${created.body.id}`, { headers: { 'x-app-password': 'nope' } });
+    assert.equal(wrong.status, 401);
+    assert.equal(JSON.stringify(wrong.body).includes(secret), false);
+
+    const authedList = await json('/api/needs', { headers: pw });
+    assert.equal(authedList.body.needs.find((n) => n.id === created.body.id).details, `${secret} <script>`);
+    const authedState = await json('/api/state', { headers: pw });
+    assert.equal(authedState.body.needs.find((n) => n.id === 'need-finance').details, secret);
+    assert.equal(authedState.body.needs.find((n) => n.id === 'need-finance').answerable, true);
+    assert.ok(Array.isArray(authedState.body.needs.find((n) => n.id === 'need-finance').answers));
+
+    const page = await fetch(`${base}/needs/${created.body.id}`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /id="needPage"/);
+
+    const denied = await json(`/api/needs/${created.body.id}/answer`, {
+      method: 'POST', body: JSON.stringify({ text: answer }),
+    });
+    assert.equal(denied.status, 401);
+    const empty = await json(`/api/needs/${created.body.id}/answer`, {
+      method: 'POST', headers: pw, body: JSON.stringify({ text: '   ' }),
+    });
+    assert.equal(empty.status, 400);
+    const tooLong = await json(`/api/needs/${created.body.id}/answer`, {
+      method: 'POST', headers: pw, body: JSON.stringify({ text: 'я'.repeat(5001) }),
+    });
+    assert.equal(tooLong.status, 400);
+
+    const sent = await json(`/api/needs/${created.body.id}/answer`, {
+      method: 'POST', headers: pw, body: JSON.stringify({ text: answer }),
+    });
+    assert.equal(sent.status, 201);
+    assert.equal(sent.body.answerStatus, 'answered');
+    assert.equal(sent.body.closedAt, null);
+    assert.equal(sent.body.answers.length, 1);
+    assert.equal(sent.body.answers[0].text, answer);
+    assert.ok(sent.body.answers[0].at);
+
+    const after = await json('/api/state');
+    const shown = after.body.needs.find((n) => n.id === created.body.id);
+    assert.equal(shown.answerStatus, 'answered');
+    assert.equal(shown.answers, undefined);
+    assert.equal(shown.details, undefined);
+    assert.equal(JSON.stringify(shown).includes(answer), false);
+    assert.equal(JSON.stringify(shown).includes(secret), false);
+    const task = after.body.tasks.find((t) => t.agent === 'temshik' && t.text.includes(answer));
+    assert.ok(task);
+    assert.equal(task.text, `Ответ Арсения на «Подтвердить черновик вопроса»: ${answer}`);
+    assert.equal(task.fromAgentId, 'owner');
+    const message = after.body.messages.find((m) => m.taskId === task.id);
+    assert.equal(message.agentId, 'temshik');
+    assert.equal(message.role, 'owner');
+    assert.equal(message.source, 'app');
+    assert.equal(message.text, task.text);
+  } finally {
+    console.warn = orig;
+    if (previous === undefined) delete process.env.NEEDS_DETAILS_JSON;
+    else process.env.NEEDS_DETAILS_JSON = previous;
+  }
 });

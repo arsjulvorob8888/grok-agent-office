@@ -169,7 +169,7 @@ test('файл целей и FINANCE_GOALS_JSON читаются', () => {
     assert.equal(fromFile.goals[0].deadline, null);
     assert.deepEqual(fromFile.goals[0].kpis[0], {
       name: 'Доход в месяц',
-      current: 235000,
+      current: null,
       target: null,
       unit: '₽/мес',
     });
@@ -178,8 +178,8 @@ test('файл целей и FINANCE_GOALS_JSON читаются', () => {
     assert.equal(fromFile.goals[1].deadline, '2031-11-17');
     assert.deepEqual(fromFile.goals[1].kpis[0], {
       name: 'Чистый капитал',
-      current: 6750000,
-      target: 1000000000,
+      current: null,
+      target: null,
       unit: '₽',
     });
 
@@ -198,6 +198,18 @@ test('файл целей и FINANCE_GOALS_JSON читаются', () => {
     assert.equal(fromEnv.goals[0].kpis[0].current, 3);
     assert.equal(fromEnv.goals[0].kpis[0].target, 9);
 
+    process.env.FINANCE_GOALS_JSON = JSON.stringify([{
+      externalId: 'kremlin-goal-empty',
+      title: 'Пусто',
+      kpis: [{ name: 'Метрика', current: null, target: null, unit: 'шт' }],
+    }]);
+    const emptyKpi = loadFinanceGoals({ filePath: GOALS_FILE });
+    assert.equal(emptyKpi.goals[0].kpis.length, 1);
+    assert.equal(emptyKpi.goals[0].kpis[0].current, null);
+    assert.equal(emptyKpi.goals[0].kpis[0].target, null);
+    const emptyPayload = buildPayload({ needs: [], tasks: [], agents: [] }, emptyKpi.goals, '2026-11-17T00:00:00.000Z');
+    assert.deepEqual(emptyPayload.goals[0].kpis[0], { name: 'Метрика', current: null, target: null, unit: 'шт' });
+
     process.env.FINANCE_GOALS_JSON = '{';
     const fallback = loadFinanceGoals({ filePath: GOALS_FILE });
     assert.equal(fallback.source, 'file');
@@ -215,7 +227,12 @@ test('файл целей и FINANCE_GOALS_JSON читаются', () => {
 });
 
 test('пункты и приказы владельца складываются в тело для Порядка', () => {
+  const previousUrl = process.env.PUBLIC_URL;
+  delete process.env.PUBLIC_URL;
   const goals = loadFinanceGoals({ json: '', filePath: GOALS_FILE }).goals;
+  const page = (id) => `https://grok-agent-office.onrender.com/needs/${id}`;
+  const hint = 'Откроется страница вопроса на сайте Кремля';
+  try {
   const open = mapNeed({
     id: 'n-1',
     what: 'Подписать акт',
@@ -231,9 +248,10 @@ test('пункты и приказы владельца складываются
   assert.equal(open.deadline, null);
   assert.match(open.description, /От: 7\. Финансы/);
   assert.match(open.description, /Где: Ильинка/);
-  assert.equal(open.actionUrl, null);
-  assert.equal(open.actionHint, null);
-  assert.doesNotMatch(open.description, /Решить:/);
+  assert.equal(open.actionUrl, page('n-1'));
+  assert.equal(open.actionHint, hint);
+  assert.match(open.description, /Решить: https:\/\/grok-agent-office\.onrender\.com\/needs\/n-1/);
+  assert.match(open.description, /Откроется страница вопроса на сайте Кремля/);
 
   const linked = mapNeed({
     id: 'n-link',
@@ -243,17 +261,19 @@ test('пункты и приказы владельца складываются
     urgency: 'normal',
     actionUrl: ' grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01 ',
     actionHint: ' Откройте в Grok чат «Путин · Кремль» ',
+    details: 'SECRET-DETAILS-TEXT',
+    answers: [{ text: 'SECRET-ANSWER', at: '2026-01-01T00:00:00.000Z' }],
   }, AGENTS);
-  assert.equal(linked.actionUrl, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
-  assert.equal(linked.actionHint, 'Откройте в Grok чат «Путин · Кремль»');
-  assert.match(linked.description, /Решить: grokbot:\/\/app\/v1\/agent\?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01/);
-  assert.match(linked.description, /Откройте в Grok чат «Путин · Кремль»/);
+  assert.equal(linked.actionUrl, page('n-link'));
+  assert.equal(linked.actionHint, hint);
+  assert.match(linked.description, /Решить: https:\/\/grok-agent-office\.onrender\.com\/needs\/n-link/);
+  assert.doesNotMatch(JSON.stringify(linked), /SECRET-DETAILS-TEXT|SECRET-ANSWER|grokbot:\/\/|Путин · Кремль/);
   assert.equal(mapNeed({
     id: 'n-bad',
     what: 'Плохая ссылка',
     actionUrl: 'javascript:alert(1)',
     actionHint: 'подсказка',
-  }, AGENTS).actionUrl, null);
+  }, AGENTS).actionUrl, page('n-bad'));
 
   const low = mapNeed({
     id: 'n-2',
@@ -349,7 +369,9 @@ test('пункты и приказы владельца складываются
   ]);
   const retired = payload.tasks.find((t) => t.externalId === 'kremlin-need-need-render-api');
   assert.equal(retired.status, 'Выполнено');
-  assert.equal(retired.actionUrl, null);
+  assert.equal(retired.actionUrl, page('need-render-api'));
+  assert.equal(retired.actionHint, hint);
+  assert.doesNotMatch(retired.description, /SECRET/);
   assert.equal(retired.title, 'Ключ Render API — ввести через защищённую форму в чате DevOps');
   assert.match(retired.description, /4\. DevOps/);
   assert.equal(payload.goals[1].deadline, '2031-11-17');
@@ -370,6 +392,10 @@ test('пункты и приказы владельца складываются
   assert.deepEqual(noNeeds.tasks.map((t) => t.externalId), ['kremlin-need-need-render-api']);
   assert.equal(noNeeds.tasks[0].status, 'Выполнено');
   assert.equal(noNeeds.goals.length, 2);
+  } finally {
+    if (previousUrl === undefined) delete process.env.PUBLIC_URL;
+    else process.env.PUBLIC_URL = previousUrl;
+  }
 });
 
 test('без токена запросы не уходят', async () => {
@@ -558,20 +584,21 @@ test('после listen Кремль сам шлёт открытые пункт
     assert.equal(academy.priority, 'Средний');
     assert.equal(academy.status, 'В ожидании');
     assert.equal(academy.deadline, null);
-    assert.equal(academy.actionUrl, 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2');
-    assert.equal(academy.actionHint, null);
+    assert.equal(academy.actionUrl, 'http://127.0.0.1/needs/need-academy');
+    assert.equal(academy.actionHint, 'Откроется страница вопроса на сайте Кремля');
     assert.match(academy.description, /От: 1\. Путин/);
     assert.match(academy.description, /Где: Чаты агентов в Grok/);
-    assert.match(academy.description, /Решить: https:\/\/cursor\.com\/canvas\/store-497a06f4-8b81-4283-89e8-143a1091624a\/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2/);
+    assert.match(academy.description, /Решить: http:\/\/127\.0\.0\.1\/needs\/need-academy/);
+    assert.doesNotMatch(academy.description, /cursor\.com/);
     const finance = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-finance');
     const social = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-social');
-    assert.equal(finance.actionUrl, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
-    assert.equal(finance.actionHint, 'Откройте в Grok чат «Путин · Кремль»');
+    assert.equal(finance.actionUrl, 'http://127.0.0.1/needs/need-finance');
+    assert.equal(finance.actionHint, 'Откроется страница вопроса на сайте Кремля');
     assert.match(finance.description, /Где: Чат Путина или Финансов/);
-    assert.match(finance.description, /Решить: grokbot:\/\/app\/v1\/agent\?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01/);
-    assert.match(finance.description, /Откройте в Grok чат «Путин · Кремль»/);
-    assert.equal(social.actionUrl, 'grokbot://app/v1/agent?id=a1bd53f2-5655-446b-8207-393e61fc20e1');
-    assert.equal(social.actionHint, 'Откройте в Grok чат «Соцсети · Кремль»');
+    assert.match(finance.description, /Решить: http:\/\/127\.0\.0\.1\/needs\/need-finance/);
+    assert.doesNotMatch(finance.description, /grokbot:\/\//);
+    assert.equal(social.actionUrl, 'http://127.0.0.1/needs/need-social');
+    assert.equal(social.actionHint, 'Откроется страница вопроса на сайте Кремля');
     const retired = hit.body.tasks.find((task) => task.externalId === 'kremlin-need-need-render-api');
     assert.equal(retired.status, 'Выполнено');
     for (const task of hit.body.tasks) {
@@ -583,10 +610,10 @@ test('после listen Кремль сам шлёт открытые пункт
     const worth = hit.body.goals.find((goal) => goal.externalId === 'kremlin-goal-networth');
     assert.equal(income.title, 'Доход');
     assert.equal(income.deadline, null);
-    assert.deepEqual(income.kpis[0], { name: 'Доход в месяц', current: 235000, target: null, unit: '₽/мес' });
+    assert.deepEqual(income.kpis[0], { name: 'Доход в месяц', current: null, target: null, unit: '₽/мес' });
     assert.equal(worth.title, 'Чистый капитал');
     assert.equal(worth.deadline, '2031-11-17');
-    assert.deepEqual(worth.kpis[0], { name: 'Чистый капитал', current: 6750000, target: 1000000000, unit: '₽' });
+    assert.deepEqual(worth.kpis[0], { name: 'Чистый капитал', current: null, target: null, unit: '₽' });
 
     const after = await waitUntil(async () => {
       const body = await (await fetch(`${base}/api/state`)).json();
@@ -650,10 +677,10 @@ test('пункт и смена статуса приказа запускают 
     assert.equal(need.status, 'В ожидании');
     assert.match(need.description, /От: 7\. Финансы/);
     assert.match(need.description, /Где: Кабинет/);
-    assert.equal(need.actionUrl, 'https://example.com/pay');
-    assert.equal(need.actionHint, 'если ссылка не открылась');
-    assert.match(need.description, /Решить: https:\/\/example\.com\/pay/);
-    assert.match(need.description, /если ссылка не открылась/);
+    assert.equal(need.actionUrl, `http://127.0.0.1/needs/${created.id}`);
+    assert.equal(need.actionHint, 'Откроется страница вопроса на сайте Кремля');
+    assert.match(need.description, new RegExp(`Решить: http://127\\.0\\.0\\.1/needs/${created.id}`));
+    assert.doesNotMatch(JSON.stringify(need), /example\.com\/pay|если ссылка не открылась/);
     const retiredLive = opened.body.tasks.filter((task) => task.externalId === 'kremlin-need-need-render-api');
     assert.equal(retiredLive.length, 1);
     assert.equal(retiredLive[0].status, 'Выполнено');

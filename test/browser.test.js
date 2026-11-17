@@ -14,6 +14,12 @@ process.env.AGENT_TOKEN = 'tok-ui';
 process.env.GROK_WEBHOOK_URL = '';
 process.env.GROK_WEBHOOK_KEY = '';
 process.env.PUBLIC_URL = 'http://127.0.0.1';
+process.env.NEEDS_DETAILS_JSON = JSON.stringify({
+  'need-finance': {
+    details: '## Вопросы\n\nСколько отложить?\n\nСмотрите https://example.com/budget\n\nЧат grokbot://app/v1/agent?id=demo\n\n<script>alert(1)</script>',
+    answerable: true,
+  },
+});
 delete process.env.PORYADOK_INGEST_TOKEN;
 
 const { app } = require('../server.js');
@@ -382,16 +388,18 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     const finance = byId['need-finance'];
     const social = byId['need-social'];
     assert.equal(academy.label, 'Решить');
-    assert.equal(academy.href, 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2');
-    assert.equal(academy.target, '_blank');
-    assert.match(academy.rel, /noopener/);
+    assert.equal(academy.href, '/needs/need-academy');
+    assert.equal(academy.target, null);
+    assert.equal(academy.rel, null);
     assert.equal(academy.hint, '');
     assert.equal(finance.label, 'Решить');
-    assert.equal(finance.href, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
+    assert.equal(finance.href, '/needs/need-finance');
     assert.equal(finance.target, null);
-    assert.equal(finance.hint, 'Откройте в Grok чат «Путин · Кремль»');
-    assert.equal(social.href, 'grokbot://app/v1/agent?id=a1bd53f2-5655-446b-8207-393e61fc20e1');
-    assert.equal(social.hint, 'Откройте в Grok чат «Соцсети · Кремль»');
+    assert.equal(finance.hint, '');
+    assert.equal(social.href, '/needs/need-social');
+    assert.equal(social.hint, '');
+    assert.doesNotMatch(text, /Сколько отложить/);
+    assert.doesNotMatch(text, /example\.com\/budget/);
     assert.ok(info.items.every((item) => item.fits), JSON.stringify(info.items));
     assert.ok(info.popLeft >= -1 && info.popRight <= info.vw + 1, `попап шире экрана: ${info.popLeft}..${info.popRight}`);
     assert.ok(info.popBottom <= info.rosterTop + 1, `попап перекрыл полосу: ${info.popBottom} / ${info.rosterTop}`);
@@ -446,18 +454,19 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.ok(opened.buttons.length >= 3, JSON.stringify(opened));
     for (const button of opened.buttons) {
       assert.equal(button.label, 'Решить', JSON.stringify(button));
-      assert.ok(/^https:\/\//.test(button.href) || /^grokbot:\/\//.test(button.href), JSON.stringify(button));
+      assert.equal(button.href, `/needs/${button.id}`, JSON.stringify(button));
+      assert.equal(button.https, null);
     }
     const popupFinance = opened.buttons.find((button) => button.id === 'need-finance');
     const popupAcademy = opened.buttons.find((button) => button.id === 'need-academy');
     const popupSocial = opened.buttons.find((button) => button.id === 'need-social');
-    assert.equal(popupAcademy.href, 'https://cursor.com/canvas/store-497a06f4-8b81-4283-89e8-143a1091624a/21c8dde0-0aef-4ddb-8526-a5ca03e7f3e2');
-    assert.equal(popupAcademy.https, '_blank');
+    assert.equal(popupAcademy.href, '/needs/need-academy');
+    assert.equal(popupAcademy.https, null);
     assert.equal(popupAcademy.hint, '');
-    assert.equal(popupFinance.href, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
-    assert.equal(popupFinance.hint, 'Откройте в Grok чат «Путин · Кремль»');
-    assert.equal(popupSocial.href, 'grokbot://app/v1/agent?id=a1bd53f2-5655-446b-8207-393e61fc20e1');
-    assert.equal(popupSocial.hint, 'Откройте в Grok чат «Соцсети · Кремль»');
+    assert.equal(popupFinance.href, '/needs/need-finance');
+    assert.equal(popupFinance.hint, '');
+    assert.equal(popupSocial.href, '/needs/need-social');
+    assert.equal(popupSocial.hint, '');
     await page.screenshot({ path: '/tmp/needs-390.png' });
   } finally {
     await page.close();
@@ -491,16 +500,13 @@ test('«Решить» экранирует ссылку и подсказку �
     await page.waitForSelector(`#panel.open[data-agent="poker"] [data-anchor="awaits"] ${sel} a.need-action`, { timeout: 8000 });
     const cards = await page.$$eval(sel, (els) => els.map((el) => {
       const link = el.querySelector('a.need-action');
-      const hint = el.querySelector('.need-action-hint');
       const lr = link.getBoundingClientRect();
-      const hr = hint.getBoundingClientRect();
       return {
         html: el.innerHTML,
         label: link.textContent,
         href: link.getAttribute('href'),
         target: link.getAttribute('target'),
-        hint: hint.textContent,
-        right: Math.max(lr.right, hr.right),
+        right: lr.right,
         vw: window.innerWidth,
       };
     }));
@@ -511,11 +517,11 @@ test('«Решить» экранирует ссылку и подсказку �
       assert.match(card.html, /Ссылка &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
       assert.match(card.html, /Чат &lt;img src=x&gt;/);
       assert.match(card.html, /Решить &lt;img&gt;/);
-      assert.match(card.html, /подсказка &lt;b&gt;x&lt;\/b&gt; «чат»/);
+      assert.doesNotMatch(card.html, /grokbot:/);
+      assert.doesNotMatch(card.html, /подсказка <b>/);
       assert.equal(card.label, 'Решить <img>');
-      assert.equal(card.href, 'grokbot://app/v1/agent?id=1&x=<script>');
+      assert.equal(card.href, `/needs/${created.body.id}`);
       assert.equal(card.target, null);
-      assert.equal(card.hint, 'подсказка <b>x</b> «чат»');
       assert.ok(card.right <= card.vw + 1, JSON.stringify(card));
     }
   } finally {
@@ -934,9 +940,9 @@ test('бейдж «ждёт вас»: счётчик, нуль скрыт, та�
       assert.match(placed.text, /финансовых вопросов/);
       assert.match(placed.text, /Чат Путина или Финансов/);
       assert.equal(placed.label, 'Решить');
-      assert.equal(placed.href, 'grokbot://app/v1/agent?id=8b9d4ad0-4222-49a8-84b4-b125d3b7ec01');
+      assert.equal(placed.href, '/needs/need-finance');
       assert.equal(placed.target, null);
-      assert.equal(placed.hint, 'Откройте в Grok чат «Путин · Кремль»');
+      assert.equal(placed.hint, '');
       assert.ok(placed.linkRight <= placed.vw + 1 && placed.hintRight <= placed.vw + 1, JSON.stringify(placed));
       assert.ok(placed.closeW >= 40 && placed.closeH >= 40, JSON.stringify(placed));
 
@@ -1260,6 +1266,126 @@ test('на десктопе подписи «1. Путин» и «10. Совет
     assert.equal(langOption, null);
     const panelTitle = await page.$eval('#panel.open[data-agent="grok"] h2', (el) => el.textContent.replace(/\s+/g, ' ').trim());
     assert.equal(panelTitle, '1. Путин');
+  } finally {
+    await page.close();
+  }
+});
+
+test('страница вопроса архивного репетитора не показывает участника', { timeout: 45000 }, async () => {
+  const created = await api('/api/needs', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-ui' },
+    body: JSON.stringify({
+      what: 'Скрытый вопрос Language Coach',
+      where: 'МГУ',
+      fromAgentId: 'lang',
+      urgency: 'low',
+      answerable: true,
+      details: 'Секрет урока LANG-PAGE',
+    }),
+  });
+  assert.equal(created.status, 201);
+  for (const viewport of [{ width: 390, height: 844, desktop: false }, { width: 1280, height: 800, desktop: true }]) {
+    const page = await openPage(viewport, { path: `/needs/${created.body.id}`, desktop: viewport.desktop });
+    try {
+      await page.waitForFunction(() => (document.querySelector('#needTitle')?.textContent || '') === 'Пункт не найден', { timeout: 8000 });
+      const view = await page.evaluate(() => ({
+        vw: window.innerWidth,
+        title: document.querySelector('#needTitle').textContent,
+        who: document.querySelector('#needWho').textContent,
+        formHidden: document.querySelector('#needAnswerForm').hidden,
+        text: document.body.innerText,
+      }));
+      assert.equal(view.vw, viewport.width);
+      assert.equal(view.title, 'Пункт не найден');
+      assert.equal(view.who, '');
+      assert.equal(view.formHidden, true);
+      assert.doesNotMatch(view.text, /Language Coach|Секрет урока|LANG-PAGE|Ждёт:/);
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+test('страница вопроса на 390px показывает текст после пароля и отправляет ответ', { timeout: 30000 }, async () => {
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    await page.evaluateOnNewDocument(() => {
+      localStorage.removeItem('appPassword');
+    });
+    await page.goto(`${base}/needs/need-finance`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => {
+      const title = document.querySelector('#needTitle')?.textContent || '';
+      const modal = document.querySelector('#modal')?.classList.contains('show');
+      return modal && /финансовых вопросов/.test(title);
+    }, { timeout: 8000 });
+    assert.equal(await page.$eval('#mTitle', (el) => el.textContent), 'Пропуск в штаб');
+    assert.equal(await page.$eval('#needDetails', (el) => el.innerHTML), '');
+    assert.equal(await page.$eval('#needAnswerForm', (el) => el.hidden), true);
+    const leaked = await page.evaluate(() => document.body.innerHTML.includes('Сколько отложить'));
+    assert.equal(leaked, false);
+
+    await page.type('#pwInput', 'pw-ui');
+    await page.click('#pwForm button[type=submit]');
+    await page.waitForFunction(() => (document.querySelector('#needDetails')?.textContent || '').includes('Сколько отложить'), { timeout: 8000 });
+    await page.waitForFunction(() => (document.querySelector('#needWho')?.textContent || '').includes('Финансы'), { timeout: 8000 });
+
+    const view = await page.evaluate(() => {
+      const pageEl = document.querySelector('#needPage');
+      const link = document.querySelector('#needDetails a');
+      const grok = document.querySelector('#needDetails .md-grok');
+      const send = document.querySelector('#needAnswerForm button');
+      const sendBox = send.getBoundingClientRect();
+      return {
+        vw: window.innerWidth,
+        who: document.querySelector('#needWho').textContent,
+        where: document.querySelector('#needWhere').textContent,
+        html: document.querySelector('#needDetails').innerHTML,
+        href: link ? link.getAttribute('href') : '',
+        grokText: grok ? grok.textContent : '',
+        grokLink: !!document.querySelector('#needDetails a[href^="grokbot:"]'),
+        script: !!document.querySelector('#needDetails script'),
+        form: document.querySelector('#needAnswerForm').hidden,
+        label: document.querySelector('label[for="needAnswer"]').textContent,
+        sendH: sendBox.height,
+        overflow: pageEl.scrollWidth <= pageEl.clientWidth + 1,
+      };
+    });
+    assert.equal(view.vw, 390);
+    assert.match(view.who, /7\.\s*Финансы/);
+    assert.match(view.where, /Чат Путина или Финансов/);
+    assert.equal(view.href, 'https://example.com/budget');
+    assert.equal(view.grokLink, false);
+    assert.match(view.grokText, /grokbot:\/\/app\/v1\/agent\?id=demo/);
+    assert.match(view.grokText, /Откройте в Grok/);
+    assert.equal(view.script, false);
+    assert.match(view.html, /&lt;script&gt;/);
+    assert.equal(view.form, false);
+    assert.equal(view.label, 'Ваш ответ');
+    assert.ok(view.sendH >= 40, String(view.sendH));
+    assert.equal(view.overflow, true);
+    const external = await page.$eval('#needExternal', (el) => el.textContent);
+    assert.match(external, /grokbot:\/\/app\/v1\/agent\?id=8b9d4ad0/);
+    assert.equal(await page.$('#needExternal a'), null);
+
+    await page.type('#needAnswer', 'Откладываю десять');
+    await page.click('#needAnswerForm button[type=submit]');
+    await page.waitForFunction(() => (document.querySelector('#needAnswerMsg')?.textContent || '').includes('Ответ отправлен'), { timeout: 8000 });
+    assert.equal(await page.$eval('#needAnswerBadge', (el) => el.hidden), false);
+
+    const saved = await api('/api/state', { headers: { 'x-app-password': 'pw-ui' } });
+    const finance = saved.body.needs.find((n) => n.id === 'need-finance');
+    assert.equal(finance.answerStatus, 'answered');
+    assert.equal(finance.closedAt, null);
+    assert.equal(finance.answers.at(-1).text, 'Откладываю десять');
+    const task = saved.body.tasks.find((t) => t.agent === 'finance' && t.text.includes('Откладываю десять'));
+    assert.equal(task.text, 'Ответ Арсения на «Ответить на шесть финансовых вопросов»: Откладываю десять');
+    const pub = await api('/api/state');
+    const hidden = pub.body.needs.find((n) => n.id === 'need-finance');
+    assert.equal(hidden.answers, undefined);
+    assert.equal(hidden.details, undefined);
+    assert.equal(JSON.stringify(hidden).includes('Сколько отложить'), false);
   } finally {
     await page.close();
   }
