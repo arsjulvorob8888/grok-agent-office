@@ -404,6 +404,53 @@ test('без KREMLIN_WEBHOOK_URL задача остаётся в очереди
   process.env.KREMLIN_WEBHOOK_KEY = 'plain-secret';
 });
 
+test('financeTextReopen открывает need-finance без текстового ответа один раз', () => {
+  const closedAt = '2026-11-01T09:00:00.000Z';
+  const list = [
+    {
+      id: 'need-finance',
+      what: 'Нейтральный пункт',
+      closedAt,
+      closedBy: 'owner',
+      answerMode: 'yesno',
+      answer: 'yes',
+      answeredAt: closedAt,
+      answerStatus: 'answered',
+      answers: [{ text: 'Да', at: closedAt, by: 'owner' }],
+    },
+    {
+      id: 'need-social',
+      what: 'Нейтральный соседний пункт',
+      closedAt,
+      closedBy: 'owner',
+      answer: 'yes',
+      answers: [{ text: 'Да', at: closedAt, by: 'owner' }],
+    },
+  ];
+  list.migrationFlags = { financeTextReopen: false };
+
+  office.migrateOwnerNeeds(list);
+  const finance = list.find((item) => item.id === 'need-finance');
+  const social = list.find((item) => item.id === 'need-social');
+  assert.equal(finance.closedAt, null);
+  assert.equal(finance.closedBy, null);
+  assert.equal(finance.answerMode, 'text');
+  assert.equal(finance.answer, null);
+  assert.equal(finance.answers[0].text, 'Да');
+  assert.equal(finance.answers[0].note, 'до текстового поля');
+  assert.equal(list.migrationFlags.financeTextReopen, true);
+  assert.equal(social.closedAt, closedAt);
+  assert.equal(social.answers[0].note, undefined);
+
+  finance.closedAt = '2026-11-02T09:00:00.000Z';
+  finance.closedBy = 'owner';
+  finance.answers = [{ text: 'Да', at: finance.closedAt, by: 'owner' }];
+  office.migrateOwnerNeeds(list);
+  assert.equal(finance.closedAt, '2026-11-02T09:00:00.000Z');
+  assert.equal(list.migrationFlags.financeTextReopen, true);
+  assert.equal(social.closedAt, closedAt);
+});
+
 test('need-finance без текстового ответа открывается один раз, need-social нет', () => {
   const { buildPayload } = require('../lib/poryadok-sync');
   const finance = office.state.needs.find((item) => item.id === 'need-finance');
