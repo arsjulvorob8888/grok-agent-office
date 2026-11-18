@@ -233,8 +233,8 @@ const SEED_AGENTS = [
     tier: 'dept',
     order: 7,
     grokAgentId: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
-    x: 1080,
-    y: 340,
+    x: 1300,
+    y: 490,
     links: ['invest', 'analyst'],
     responsibilities: [
       'Бюджет, касса и платежи',
@@ -294,8 +294,8 @@ const SEED_AGENTS = [
     tier: 'dept',
     order: 8,
     grokAgentId: '892a92c9-8133-48d2-b22d-c77e653309af',
-    x: 1304,
-    y: 512,
+    x: 1500,
+    y: 740,
     links: [],
     responsibilities: [
       'Проверяет, что новые правки не ломают старое',
