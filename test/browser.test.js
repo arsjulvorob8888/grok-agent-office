@@ -381,6 +381,8 @@ test('блок «Нужно от вас»: бейдж, попап и «Напо�
     assert.doesNotMatch(text, /Академию агентов/);
     assert.doesNotMatch(text, /Business Adviser/);
     assert.doesNotMatch(text, /ТЕСТ:/);
+    assert.equal(await page.$('#needsList .needs-test'), null);
+    assert.doesNotMatch(await page.$eval('#needsList', (el) => el.textContent), /ТЕСТ:/);
     assert.match(text, /Чат Путина или Финансов/);
     assert.match(text, /Instagram и YouTube/);
     assert.match(text, /Соцсети/);
@@ -1492,7 +1494,7 @@ test('после «Да» страница возвращает на карту,
 
   const before = await api('/api/needs/need-test-qa');
   assert.equal(before.body.answer, 'yes');
-  assert.equal(before.body.closedBy, 'owner');
+  assert.equal(before.body.closedBy, 'owner-answer');
   assert.ok(before.body.closedAt);
   const again = await api('/api/needs/need-test-qa/answer', {
     method: 'POST',
@@ -1502,7 +1504,7 @@ test('после «Да» страница возвращает на карту,
   assert.equal(again.body.error, 'Пункт уже закрыт');
   const after = await api('/api/needs/need-test-qa');
   assert.equal(after.body.closedAt, before.body.closedAt);
-  assert.equal(after.body.closedBy, 'owner');
+  assert.equal(after.body.closedBy, 'owner-answer');
   assert.equal(after.body.answer, 'yes');
 
   const closed = await browser.newPage();
@@ -1567,10 +1569,13 @@ test('частичный текстовый тест копится и не ух
     assert.equal(saved.body.answers.length, 2);
     assert.equal((await api('/api/state')).body.tasks.some((item) => String(item.text || '').includes('первая часть')), false);
     await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#needsList .needs-test', { timeout: 8000 });
-    const tests = await page.$eval('#needsList .needs-test', (el) => el.textContent);
-    assert.match(tests, /ТЕСТ: вопрос с ответом текстом/);
-    assert.match(tests, /Тестовые/);
+    await page.waitForSelector('#needsList [data-id="need-social"]', { timeout: 8000 });
+    assert.equal(await page.$('#needsList .needs-test'), null);
+    assert.equal(await page.$('#needsList [data-id="need-test-question"]'), null);
+    assert.doesNotMatch(await page.$eval('#needsList', (el) => el.textContent), /ТЕСТ:/);
+    const badge = await page.$eval('#needsBadge', (el) => el.textContent.trim());
+    const shown = await page.$$eval('#needsList > .need-item', (els) => els.length);
+    assert.equal(badge, String(shown));
   } finally {
     await page.close();
   }
