@@ -1959,6 +1959,31 @@
     }
     placeOverlay();
   }
+  function renderUsage() {
+    const fallback = {
+      empty: true, level: 'empty', plan: 'нет данных', pctText: '', splitText: '', resetText: '', updatedText: '', timesText: '',
+      banner: '', meter: 0, label: 'Лимит Grok: нет данных',
+    };
+    const view = window.GrokUsage ? window.GrokUsage.present(S.grokUsage) : fallback;
+    const box = $('#grokUsage');
+    if (!box) return;
+    box.dataset.level = view.level;
+    box.setAttribute('aria-label', view.label);
+    $('#usagePlan').textContent = view.plan;
+    $('#usagePct').textContent = view.pctText;
+    $('#usageSplit').textContent = view.splitText;
+    $('#usageReset').textContent = view.resetText || '';
+    $('#usageUpdated').textContent = view.updatedText || '';
+    $('#usageMeter').style.width = `${view.meter}%`;
+    const track = $('#usageMeterTrack');
+    if (track) track.setAttribute('aria-valuenow', String(Math.round(view.meter)));
+    const banner = $('#usageBanner');
+    if (!banner) return;
+    banner.hidden = !view.banner;
+    banner.textContent = view.banner;
+    document.body.classList.toggle('usage-known', !view.empty);
+    document.body.classList.toggle('usage-hot', view.level === 'critical');
+  }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
     const active = staff.filter((a) => activityMode(a) === 'working').length;
@@ -1968,6 +1993,7 @@
     $('#stActive').textContent = `${active}/${staff.length}`;
     $('#stEnergy').textContent = `${energy}%`;
     $('#stEnergyBar').style.width = `${energy}%`;
+    renderUsage();
   }
   function initJournal() {
     const j = $('#journal');
@@ -2246,6 +2272,7 @@
     }
     const prevStatus = S.taskStatus;
     S.agents = agents; S.tasks = data.tasks || []; S.messages = data.messages || [];
+    S.grokUsage = data.grokUsage || null;
     S.byId = new Map(agents.map((a) => [a.id, a]));
     syncNeeds(data.needs);
     const sig = agentSig(agents);

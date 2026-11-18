@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test --test-concurrency=1 test/feed.test.js test/sender-label.test.js test/server.test.js test/kremlin-route.test.js test/outbox.test.js test/delivery.test.js test/ui-bugs.test.js test/activity.test.js test/live-status.test.js test/poryadok-sync.test.js test/browser.test.js test/activity-browser.test.js test/store.test.js test/agent-dashboard.test.js test/agent-dashboard-browser.test.js test/map-gaps.test.js test/delivery-browser.test.js"
+    "test": "node --test --test-concurrency=1 test/feed.test.js test/sender-label.test.js test/server.test.js test/kremlin-route.test.js test/outbox.test.js test/delivery.test.js test/ui-bugs.test.js test/activity.test.js test/live-status.test.js test/poryadok-sync.test.js test/browser.test.js test/activity-browser.test.js test/store.test.js test/agent-dashboard.test.js test/agent-dashboard-browser.test.js test/map-gaps.test.js test/delivery-browser.test.js test/usage.test.js test/usage-browser.test.js"
   },
   "engines": {
     "node": ">=18"
