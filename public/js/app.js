@@ -2170,18 +2170,13 @@
     if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
     const box = $('#needsList');
     if (!box) return;
-    const tests = Feed.testNeeds(S.needs || []);
-    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.kind, n.stale, n.updatedAt, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\n')
-      + '\n#test\n' + tests.map((n) => [n.id, n.what, n.closedAt].join('\u0001')).join('\n');
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.kind, n.stale, n.updatedAt, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\n');
     if (box.dataset.sig === sig) return;
     const top = box.scrollTop;
     const main = list.length
       ? list.map((n) => needCardHTML(n, false)).join('')
       : '<div class="empty"><b>Пусто</b>Сейчас от вас ничего не ждут.</div>';
-    const testBlock = tests.length
-      ? `<details class="needs-test"><summary>Тестовые</summary>${tests.map((n) => needCardHTML(n, false)).join('')}</details>`
-      : '';
-    box.innerHTML = main + testBlock;
+    box.innerHTML = main;
     box.dataset.sig = sig;
     box.scrollTop = top;
   }
@@ -2195,7 +2190,7 @@
     return !(S.archivedIds && id && S.archivedIds.has(id));
   }
   function syncNeeds(raw) {
-    const list = (Array.isArray(raw) ? raw : []).filter((n) => n && n.id && authorVisible(n.fromAgentId));
+    const list = (Array.isArray(raw) ? raw : []).filter((n) => n && n.id && authorVisible(n.fromAgentId) && !Feed.isTestNeed(n));
     S.needs = list;
     const open = Feed.needsForGeneral(list);
     const first = !S.needsReady;
@@ -2328,7 +2323,7 @@
       if (item && item.id) merged.set(item.id, item);
     }
     for (const item of S.needs) {
-      if (!item || !item.id || seen.has(item.id) || item.closedAt) continue;
+      if (!item || !item.id || seen.has(item.id) || item.closedAt || Feed.isTestNeed(item)) continue;
       merged.set(item.id, { ...item, closedAt: new Date().toISOString() });
     }
     syncNeeds([...merged.values()]);
@@ -2437,7 +2432,7 @@
       if (details) details.innerHTML = markdown && window.renderSafeMarkdown ? window.renderSafeMarkdown(markdown) : '';
     }
     function rememberNeed(data) {
-      if (!data || !data.id) return;
+      if (!data || !data.id || Feed.isTestNeed(data)) return;
       const idx = S.needs.findIndex((item) => item && item.id === data.id);
       if (idx >= 0) S.needs[idx] = Object.assign({}, S.needs[idx], data);
       else S.needs.unshift(data);
