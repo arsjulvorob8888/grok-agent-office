@@ -885,8 +885,10 @@ function migrateExternalNeedStore() {
 }
 
 function testNeedsAutoreopen() {
-  if (process.env.NODE_ENV !== 'production') return true;
-  return process.env.TEST_NEEDS_AUTOREOPEN === '1';
+  if (process.env.TEST_NEEDS_AUTOREOPEN === '1') return true;
+  if (process.env.NODE_ENV === 'production') return false;
+  if (process.env.RENDER === 'true') return false;
+  return true;
 }
 
 function reopenSeededTestNeed(item) {

@@ -1884,6 +1884,13 @@ test('в production закрытый тестовый пункт остаётс�
     assert.equal(row.closedAt, '2020-01-01T00:00:00.000Z', row.id);
     assert.equal(row.answers, 1, row.id);
   }
+  const onRender = await run({ NODE_ENV: 'development', RENDER: 'true' });
+  assert.equal(onRender.forced, 0);
+  assert.equal(onRender.timer, true);
+  for (const row of onRender.rows) {
+    assert.equal(row.closedAt, '2020-01-01T00:00:00.000Z', row.id);
+    assert.equal(row.answers, 1, row.id);
+  }
   const opened = await run({ TEST_NEEDS_AUTOREOPEN: '1' });
   assert.ok(opened.forced >= 1);
   assert.equal(opened.rows.every((row) => row.closedAt == null && row.answers === 0), true);

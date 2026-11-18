@@ -2119,10 +2119,16 @@ test('нижняя панель агентов сворачивается и п�
       const waitBarStill = () => page.waitForFunction(() => {
         const bar = document.querySelector('#agentBar');
         const h = Math.round(bar.getBoundingClientRect().height);
+        const now = performance.now();
         const prev = Number(bar.dataset.barH);
-        bar.dataset.barH = String(h);
-        return prev === h;
-      }, { timeout: 3000 });
+        const since = Number(bar.dataset.barT || 0);
+        if (prev !== h) {
+          bar.dataset.barH = String(h);
+          bar.dataset.barT = String(now);
+          return false;
+        }
+        return since > 0 && now - since >= 350;
+      }, { timeout: 5000 });
 
       await waitBarStill();
       await page.click(toggle);
