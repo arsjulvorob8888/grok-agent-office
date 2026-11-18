@@ -10,12 +10,85 @@
 
   const RECENT_CLOSED_MS = 7 * 24 * 60 * 60 * 1000;
 
-  // Честная подпись доставки по forwardStatus. Старые записи из базы тоже:
-  // пустой код — вебхук не вызывался, 2xx — дошло, иначе ошибка с кодом.
-  function deliveryCaption(forwardStatus) {
-    if (forwardStatus == null || forwardStatus === '') return 'В очереди, доставка не подключена';
+  function moscowParts(iso) {
+    const date = new Date(iso || '');
+    if (Number.isNaN(date.getTime())) return null;
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Moscow',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+    const pick = (type) => {
+      const part = parts.find((item) => item.type === type);
+      return part ? part.value : '';
+    };
+    let hour = pick('hour');
+    const minute = pick('minute');
+    if (hour === '24') hour = '00';
+    if (!hour || !minute) return null;
+    return { hour, minute, date };
+  }
+
+  function moscowClock(iso) {
+    const parts = moscowParts(iso);
+    return parts ? `${parts.hour}:${parts.minute}` : '';
+  }
+
+  // Лента: часы Europe/Moscow и пометка пояса. Старше суток — ещё день.
+  function formatClockMsk(iso, now = Date.now()) {
+    const parts = moscowParts(iso);
+    if (!parts) return '';
+    const clock = `${parts.hour}:${parts.minute} МСК`;
+    if (now - parts.date.getTime() <= 864e5) return clock;
+    const day = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: 'Europe/Moscow',
+      day: 'numeric',
+      month: 'short',
+    }).format(parts.date);
+    return `${clock} · ${day}`;
+  }
+
+  function formatDateTimeMsk(iso) {
+    const parts = moscowParts(iso);
+    if (!parts) return '';
+    const day = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: 'Europe/Moscow',
+      day: 'numeric',
+      month: 'short',
+    }).format(parts.date);
+    return `${day}, ${parts.hour}:${parts.minute} МСК`;
+  }
+
+  // «Процессы»: старт в МСК и подписанная длительность, не ч:мм:сс без подписи.
+  function formatProcessStamp(iso, now = Date.now()) {
+    const clock = moscowClock(iso);
+    if (!clock) return '';
+    const start = Date.parse(iso);
+    const sec = Number.isFinite(start) ? Math.max(0, Math.floor((now - start) / 1000)) : 0;
+    const hours = Math.floor(sec / 3600);
+    const minutes = Math.floor((sec % 3600) / 60);
+    let dur = 'меньше минуты';
+    if (hours > 0) dur = `${hours} ч ${minutes} мин`;
+    else if (minutes > 0) dur = `${minutes} мин`;
+    return `с ${clock} МСК · ${dur}`;
+  }
+
+  // Пустой код без маршрута — доставка не подключена. Маршрут есть, а кода ещё нет — ждёт отправки.
+  // extra.route: agent | putin | env | none. Без extra поведение прежнее: пустой код = не подключена.
+  function deliveryCaption(forwardStatus, extra) {
     const code = Number(forwardStatus);
     if (Number.isInteger(code) && code >= 200 && code < 300) return 'Отправлена';
+    const routeKnown = !!(extra && Object.prototype.hasOwnProperty.call(extra, 'route'));
+    const offline = !routeKnown || extra.route == null || extra.route === '' || extra.route === 'none';
+    const empty = forwardStatus == null || forwardStatus === '';
+    if (empty && offline) return 'В очереди, доставка не подключена';
+    const next = extra && extra.nextRetryAt;
+    if (next) {
+      const clock = moscowClock(next);
+      if (clock) return `Ошибка доставки, повтор в ${clock} МСК`;
+    }
+    if (empty) return 'В очереди, ждёт отправки';
     if (Number.isInteger(code)) return `Ошибка доставки ${code}`;
     return 'Ошибка доставки';
   }
@@ -238,6 +311,10 @@
     RECENT_CLOSED_MS,
     taskExecutor,
     deliveryCaption,
+    moscowClock,
+    formatClockMsk,
+    formatDateTimeMsk,
+    formatProcessStamp,
     orderParticipantIds,
     seesOrder,
     ordersForGeneral,

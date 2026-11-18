@@ -99,7 +99,17 @@
     const t = Date.parse(iso);
     if (!Number.isFinite(t)) return '';
     try {
-      return new Date(t).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      if (window.OfficeFeed && typeof window.OfficeFeed.formatDateTimeMsk === 'function') {
+        return window.OfficeFeed.formatDateTimeMsk(iso);
+      }
+      return new Date(t).toLocaleString('ru-RU', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Europe/Moscow',
+        hourCycle: 'h23',
+      }) + ' МСК';
     } catch (_) { return ''; }
   }
 
@@ -333,6 +343,11 @@
       }
       return;
     }
+    const again = event.target.closest('[data-retry]');
+    if (again) {
+      retryTask(again.dataset.retry, again);
+      return;
+    }
     const action = event.target.closest('[data-status]');
     if (!action) return;
     const orderId = action.dataset.orderId;
@@ -351,6 +366,35 @@
       return;
     }
     postStatus(orderId, action.dataset.status, action.dataset.status === 'failed' ? { note: 'Не выполнено' } : {});
+  }
+
+  async function retryTask(orderId, btn) {
+    note = '';
+    if (!password()) {
+      note = 'Нужен пароль штаба';
+      render();
+      return;
+    }
+    if (btn) btn.disabled = true;
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/retry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-password': password() },
+      body: '{}',
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      try { localStorage.removeItem('appPassword'); } catch (_) { /* пароль уже стёрт */ }
+      note = 'Нужен пароль штаба';
+      render();
+      return;
+    }
+    if (!res.ok) {
+      note = body.error || 'Не удалось отправить повторно';
+      render();
+      return;
+    }
+    note = '';
+    await load();
   }
 
   async function postStatus(orderId, status, extra) {
@@ -492,16 +536,26 @@
       </div>`;
   }
 
+  function taskUndelivered(task) {
+    if (!task) return false;
+    if (task.orderStatus === 'done' || task.orderStatus === 'failed' || task.orderStatus === 'cancelled') return false;
+    const code = Number(task.forwardStatus);
+    return !(Number.isInteger(code) && code >= 200 && code < 300);
+  }
+
   function taskCard(task) {
     const actions = (NEXT[task.orderStatus] || []).map((step) =>
       `<button type="button" data-order-id="${esc(task.id)}" data-status="${esc(step.status)}">${esc(step.label)}</button>`).join('');
+    const retry = password() && taskUndelivered(task)
+      ? `<button type="button" data-retry="${esc(task.id)}">Отправить повторно</button>`
+      : '';
     const bits = [];
     if (task.deliveryLabel) bits.push(esc(task.deliveryLabel));
     if (task.orderStatus === 'failed') bits.push('Не выполнен');
     return `<article class="dash-card">
       <p>${esc(task.text || 'Задача')}</p>
       ${bits.length ? `<p class="dash-card-meta">${bits.join(' · ')}</p>` : ''}
-      ${actions ? `<div class="dash-card-actions">${actions}</div>` : ''}
+      ${(actions || retry) ? `<div class="dash-card-actions">${retry}${actions}</div>` : ''}
     </article>`;
   }
 
