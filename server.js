@@ -13,6 +13,7 @@ const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
 const { senderName } = require('./public/js/sender-label');
 const live = require('./lib/live-status');
+const usage = require('./lib/usage');
 const streamHub = require('./lib/stream');
 const delivery = require('./lib/delivery');
 
@@ -496,6 +497,7 @@ const state = {
   nextRoutineId: 1,
   nextOutboxId: 1,
   migrations: { financeTextReopen: false },
+  grokUsage: { latest: null, history: [] },
 };
 
 const NEED_URGENCY = new Set(['low', 'normal', 'high']);
@@ -896,6 +898,11 @@ store.init(state, {
   maxTasks: 100,
   seedAgentIds: SEED_AGENTS.map((agent) => agent.id),
 });
+store.ready.then(() => {
+  if (!usage.prune(state, usage.now())) return null;
+  store.noteGrokUsage(state.grokUsage);
+  return store.flush();
+}).catch(() => {});
 
 // Снимок в «Порядок» отдельно от списка «Нужно от вас» и приказов.
 const poryadokSync = createPoryadokSync({ getState: () => state });
@@ -946,6 +953,7 @@ function publicState(opts = {}) {
     needs: state.needs.map((item) => publicNeed(item, Date.now(), opts)),
     routines: state.routines.slice(0, 100).map(publicRoutine),
     poryadokSync: poryadokSync.publicStatus(),
+    grokUsage: usage.publicView(state, usage.now()),
   };
 }
 
@@ -1849,6 +1857,17 @@ function requireAppPassword(req, res, next) {
     return res.status(401).json({ error: 'Неверный пароль доступа' });
   }
   next();
+}
+
+function usageAuthorized(req) {
+  const statusToken = typeof process.env.AGENT_STATUS_TOKEN === 'string' ? process.env.AGENT_STATUS_TOKEN : '';
+  const header = String(req.get('authorization') || '');
+  const match = /^Bearer\s+(\S+)\s*$/i.exec(header.trim());
+  const bearer = match ? match[1] : '';
+  if (statusToken && bearer && safeEqual(bearer, statusToken)) return true;
+  const agent = req.get('x-agent-token') || '';
+  if (AGENT_TOKEN && agent && safeEqual(agent, AGENT_TOKEN)) return true;
+  return false;
 }
 
 function requireAgentToken(req, res, next) {
@@ -2827,6 +2846,20 @@ registerHeartbeat(app, {
     await store.flush();
   },
   activityExtras,
+});
+
+app.get('/api/usage', (_req, res) => {
+  res.json(usage.publicView(state, usage.now()));
+});
+
+app.post('/api/usage', async (req, res) => {
+  if (!usageAuthorized(req)) return res.status(401).json({ error: 'Нужен токен агента' });
+  const parsed = usage.parse(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const view = usage.record(state, parsed.value, usage.now());
+  store.noteGrokUsage(state.grokUsage);
+  await store.flush();
+  res.json(view);
 });
 
 // Живой статус не вызывает noteAgent: agent.live не попадает в agent_state.
