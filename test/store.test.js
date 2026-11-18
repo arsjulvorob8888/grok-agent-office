@@ -381,6 +381,48 @@ describe('хранилище', { concurrency: 1 }, () => {
     }
   });
 
+  test('запись одного процесса видна свежему процессу', { skip: process.env.DATABASE_URL ? false : 'DATABASE_URL не задан' }, async () => {
+    const schema = `v_${crypto.randomBytes(4).toString('hex')}`;
+    const env = { DATABASE_URL: process.env.DATABASE_URL, STORE_SCHEMA: schema };
+    let taskId;
+    const first = await startOffice(env);
+    try {
+      const created = await json(first.base, '/api/task', {
+        method: 'POST',
+        headers: { 'x-app-password': 'pw-test' },
+        body: JSON.stringify({ agent: 'qa', text: 'Нейтральная запись между процессами', fromAgentId: 'owner' }),
+      });
+      assert.equal(created.status, 201);
+      taskId = created.body.id;
+      const accepted = await json(first.base, `/api/orders/${taskId}`, {
+        method: 'POST',
+        headers: { 'x-agent-token': 'tok-test' },
+        body: JSON.stringify({ status: 'accepted', note: 'Владелец ждёт' }),
+      });
+      assert.equal(accepted.status, 200);
+    } finally {
+      await stopOffice(first);
+    }
+
+    const second = await startOffice(env);
+    try {
+      const state = await json(second.base, '/api/state');
+      const saved = state.body.tasks.find((task) => task.id === taskId);
+      assert.ok(saved);
+      assert.equal(saved.text, 'Нейтральная запись между процессами');
+      assert.equal(saved.agentId, 'qa');
+      assert.equal(saved.fromAgentId, 'owner');
+      assert.equal(saved.orderStatus, 'accepted');
+      assert.equal(saved.note, 'Владелец ждёт');
+      const line = state.body.messages.find((item) => item.taskId === taskId && String(item.text).startsWith('Принял заказ'));
+      assert.ok(line);
+      assert.equal(line.text, 'Принял заказ · Владелец ждёт');
+    } finally {
+      await stopOffice(second);
+      await dropSchema(schema);
+    }
+  });
+
   test('Postgres сохраняет приказ, пункт, сообщение и файл после перезапуска', { skip: process.env.DATABASE_URL ? false : 'DATABASE_URL не задан' }, async () => {
     const schema = `p_${crypto.randomBytes(6).toString('hex')}`;
     const env = { DATABASE_URL: process.env.DATABASE_URL, STORE_SCHEMA: schema };
