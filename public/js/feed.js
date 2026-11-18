@@ -201,8 +201,8 @@
     return ids;
   }
 
-  function needsForAgent(needs, agentId, now) {
-    return (needs || []).filter((need) => need && !isTestNeed(need) && needAudience(need).has(agentId) && (isOpenNeed(need) || isRecentClosed(need, now)));
+  function needsForAgent(needs, agentId) {
+    return (needs || []).filter((need) => need && !isTestNeed(need) && needAudience(need).has(agentId) && isOpenNeed(need));
   }
 
   function openNeedsForAgent(needs, agentId) {
