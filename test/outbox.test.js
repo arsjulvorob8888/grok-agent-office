@@ -221,7 +221,7 @@ test('ошибка вебхука оставляет queued, а лог не со
   }
   assert.equal(created.status, 201);
   assert.equal(created.body.status, 'в очереди агента');
-  assert.equal(created.body.deliveryLabel, FAILED);
+  assert.match(created.body.deliveryLabel, /^Ошибка доставки, повтор в \d{2}:\d{2} МСК$/);
   const state = await json('/api/state');
   const item = state.body.outbox.find((entry) => entry.taskId === created.body.id);
   assert.equal(item.status, 'queued');
@@ -251,7 +251,7 @@ test('ошибка вебхука оставляет queued, а лог не со
       body: JSON.stringify({ agent: 'temshik', text: 'сеть молчит' }),
     });
     assert.equal(broken.status, 201);
-    assert.equal(broken.body.deliveryLabel, 'Ошибка доставки 0');
+    assert.match(broken.body.deliveryLabel, /^Ошибка доставки, повтор в \d{2}:\d{2} МСК$/);
   } finally {
     console.log = origLog;
     console.error = origErr;
@@ -472,10 +472,10 @@ test('старая запись без forwardStatus не называется �
       return { held: pick('NEON-NULL'), sent: pick('NEON-OK'), failed: pick('NEON-ERR') };
     });
     assert.equal(labels.held.who.includes('Путин'), true);
-    assert.equal(labels.held.process, 'В очереди, доставка не подключена');
-    assert.equal(labels.held.feed, 'В очереди, доставка не подключена');
-    assert.equal(labels.held.history, 'В очереди, доставка не подключена');
-    assert.equal(labels.sent.process, 'Отправлена');
+    assert.equal(labels.held.process, 'В очереди, ждёт отправки');
+    assert.equal(labels.held.feed, 'В очереди, ждёт отправки');
+    assert.equal(labels.held.history, 'В очереди, ждёт отправки');
+    assert.equal(labels.sent.process, 'Доставлено');
     assert.equal(labels.sent.feed, 'Отправлена');
     assert.equal(labels.sent.history, 'Отправлена');
     assert.equal(labels.failed.process, 'Ошибка доставки 502');

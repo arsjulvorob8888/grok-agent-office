@@ -1330,7 +1330,7 @@
     if (t.orderStatus === 'in_progress') return ['work', 'В работе'];
     if (t.orderStatus === 'accepted') return ['work', 'Принял'];
     if (!t.orderStatus || t.orderStatus === 'sent') {
-      const caption = Feed.deliveryCaption(t.forwardStatus);
+      const caption = t.deliveryLabel || Feed.deliveryCaption(t.forwardStatus);
       const code = Number(t.forwardStatus);
       const failed = t.forwardStatus != null && t.forwardStatus !== '' && !(Number.isInteger(code) && code >= 200 && code < 300);
       return [failed ? 'fail' : 'sent', caption];
@@ -1339,8 +1339,8 @@
     const a = S.byId.get(t.agent);
     const latest = S.tasks.find((x) => x.agent === t.agent);
     if (a && a.status === 'working' && latest && latest.id === t.id) return ['work', 'В работе'];
-    if (t.status === 'в очереди агента') return ['sent', Feed.deliveryCaption(t.forwardStatus)];
-    if (t.status === 'отправлена Путину') return ['sent', Feed.deliveryCaption(t.forwardStatus)];
+    if (t.status === 'в очереди агента') return ['sent', t.deliveryLabel || Feed.deliveryCaption(t.forwardStatus)];
+    if (t.status === 'отправлена Путину') return ['sent', t.deliveryLabel || Feed.deliveryCaption(t.forwardStatus)];
     if (String(t.status).startsWith('не отправлена')) return ['fail', 'Не отправлена'];
     if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) return ['fail', Feed.deliveryCaption(t.forwardStatus)];
     return ['sent', Feed.deliveryCaption(t.forwardStatus)];
@@ -1354,7 +1354,15 @@
     clip: '<path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7L13 5.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 8"/>',
   };
   const ico = (n) => `<svg viewBox="0 0 24 24">${ICONS[n]}</svg>`;
-  const fmtTime = (iso) => { try { const d = new Date(iso); return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + (Date.now() - d > 864e5 ? ' · ' + d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : ''); } catch (_) { return ''; } };
+  const fmtTime = (iso) => {
+    try {
+      if (Feed && typeof Feed.formatClockMsk === 'function') return Feed.formatClockMsk(iso);
+    } catch (_) { /* запасной формат ниже */ }
+    try {
+      const d = new Date(iso);
+      return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow', hourCycle: 'h23' }) + ' МСК';
+    } catch (_) { return ''; }
+  };
 
   function questHTML(t, showAgent, viewerId) {
     const a = S.byId.get(t.agent) || { name: t.agent, color: '#64748b' };
@@ -1419,7 +1427,7 @@
       if (h.status === 'in_progress' && h.progress != null) bits.push(`${h.progress}%`);
       if (h.note) bits.push(h.note);
       if (h.status === 'done' && h.result) bits.push(h.result.length > 140 ? `${h.result.slice(0, 140)}…` : h.result);
-      const word = h.status === 'sent' ? Feed.deliveryCaption(t.forwardStatus) : (ORDER_WORD[h.status] || h.status || '');
+      const word = h.status === 'sent' ? (t.deliveryLabel || Feed.deliveryCaption(t.forwardStatus)) : (ORDER_WORD[h.status] || h.status || '');
       return `<li><time datetime="${esc(h.at || '')}">${fmtTime(h.at)}</time><b>${esc(word)}</b>${bits.length ? `<span>${esc(bits.join(' · '))}</span>` : ''}</li>`;
     }).join('')}</ol>`;
   }
@@ -1451,7 +1459,7 @@
     const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
     const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
-    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
+    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, n.answerDeliveryLabel, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}`).join(',');
     return [a.id, a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
@@ -2121,7 +2129,7 @@
     return `<article class="need-item urg-${view}${n.closedAt ? ' is-closed' : ''}${view === 'stale' ? ' is-stale' : ''}${test ? ' is-test' : ''}" data-id="${esc(n.id)}">
       ${close}
       <div class="need-what">${test ? '<span class="test-mark">тест</span>' : ''}${esc(n.what)}</div>
-      <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span><span class="need-updated">${esc(moscowStamp(n.updatedAt || n.createdAt))}</span>${n.answerStatus === 'answered' ? '<span class="need-answered">ответ получен</span>' : ''}</div>
+      <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span><span class="need-updated">${esc(moscowStamp(n.updatedAt || n.createdAt))}</span>${n.answerDeliveryLabel ? `<span class="need-answered">${esc(n.answerDeliveryLabel)}</span>` : ''}</div>
       ${needActionHTML(n)}
     </article>`;
   }
@@ -2170,7 +2178,7 @@
     if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
     const box = $('#needsList');
     if (!box) return;
-    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.kind, n.stale, n.updatedAt, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus].join('\u0001')).join('\n');
+    const sig = list.map((n) => [n.id, n.what, n.where, n.fromAgentId, n.urgency, n.kind, n.stale, n.updatedAt, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, n.answerDeliveryLabel].join('\u0001')).join('\n');
     if (box.dataset.sig === sig) return;
     const top = box.scrollTop;
     const main = list.length
@@ -2441,7 +2449,11 @@
     function paintPublic() {
       if (title) title.textContent = need.what || 'Вопрос';
       if (where) where.textContent = need.where ? `Где: ${need.where}` : '';
-      if (badge) badge.hidden = need.answerStatus !== 'answered';
+      if (badge) {
+        const cap = need && need.answerDeliveryLabel ? need.answerDeliveryLabel : '';
+        badge.hidden = !cap;
+        if (cap) badge.textContent = cap;
+      }
       paintWho();
       paintExternal();
     }

@@ -333,7 +333,7 @@ test('сообщение, приказ и пульс по старому ток�
   const note = await json('/api/messages', {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-live' },
-    body: JSON.stringify({ agentId: 'analyst', role: 'agent', text: 'Смотрю отчёт' }),
+    body: JSON.stringify({ id: 'analyst-note-1', agentId: 'analyst', role: 'agent', text: 'Смотрю отчёт' }),
   });
   assert.equal(note.status, 201);
   assert.equal(agentOf((await json('/api/state')).body, 'analyst').activity, 'working');

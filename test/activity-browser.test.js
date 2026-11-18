@@ -196,7 +196,8 @@ test('на широком экране пульс, сон, стрелка и «�
     assert.doesNotMatch(listed, /Главный агент/);
     assert.match(listed, /Программирование/);
     assert.match(listed, /ACTIVITY-DESKTOP/);
-    assert.match(listed, /Принял/);
+    assert.match(listed, /Принято/);
+    assert.match(listed, /с \d{2}:\d{2} МСК · /);
     assert.doesNotMatch(listed, /ARCHIVE-HIDDEN/);
     assert.doesNotMatch(listed, /Трейдинг/);
     assert.equal(await page.$('#agents .agent[data-id="trading"]'), null);
@@ -222,12 +223,15 @@ test('на широком экране пульс, сон, стрелка и «�
     assert.match(newcomers.routines, /\bsleep\b/, newcomers.routines);
     assert.match(newcomers.socialMarker, /\bsleep\b/, newcomers.socialMarker);
     assert.match(newcomers.routinesChip, /\bsleep\b/, newcomers.routinesChip);
-    const readElapsed = () => page.$eval('#procList .proc-elapsed', (el) => el.textContent);
-    const before = await readElapsed();
-    assert.match(before, /^\d+:\d{2}(?::\d{2})?$/);
-    await new Promise((r) => setTimeout(r, 1600));
-    const after = await readElapsed();
-    assert.notEqual(after, before, `${before} → ${after}`);
+    await page.emulateTimezone('UTC');
+    const stamp = await page.$eval('#procList .proc-elapsed', (el) => ({
+      text: el.textContent,
+      datetime: el.getAttribute('datetime'),
+    }));
+    assert.match(stamp.text, /^с \d{2}:\d{2} МСК · /);
+    assert.doesNotMatch(stamp.text, /^\d+:\d{2}/);
+    const expected = await page.evaluate((iso) => window.OfficeFeed.formatProcessStamp(iso, Date.now()), stamp.datetime);
+    assert.equal(stamp.text, expected);
 
     await finish(id);
     await page.waitForFunction((orderId) => !document.querySelector(`#delegations [data-order-id="${orderId}"]`), { timeout: 10000 }, id);
