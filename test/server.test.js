@@ -1823,3 +1823,68 @@ test('ответ владельца дописывается в журнал, т
   assert.equal(md.includes('тестовый ответ не в журнал'), false);
   assert.equal(md.includes('Пришли ключ'), false);
 });
+
+test('в production закрытый тестовый пункт остаётся закрытым', async () => {
+  const { spawn } = require('node:child_process');
+  const root = path.join(__dirname, '..');
+  const script = `
+    const office = require('./server.js');
+    const closedAt = '2020-01-01T00:00:00.000Z';
+    for (const id of ['need-test-qa', 'need-test-question']) {
+      const item = office.state.needs.find((n) => n.id === id);
+      item.closedAt = closedAt;
+      item.closedBy = 'owner-answer';
+      item.answer = id === 'need-test-qa' ? 'yes' : null;
+      item.answers = [{ text: id === 'need-test-qa' ? 'Да' : 'прошлый ответ', at: closedAt, by: 'owner' }];
+    }
+    const forced = office.reopenTestNeeds(Date.now(), true);
+    office.migrateOwnerNeeds();
+    const after = office.state.needs.filter((n) => n.id === 'need-test-qa' || n.id === 'need-test-question');
+    process.stdout.write(JSON.stringify({
+      forced,
+      timer: office.testReopenTimer == null,
+      rows: after.map((n) => ({ id: n.id, closedAt: n.closedAt, answers: n.answers.length })),
+    }));
+    process.exit(0);
+  `;
+  function run(extra) {
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['-e', script], {
+        cwd: root,
+        env: {
+          NODE_ENV: 'production',
+          TEST_NEEDS_AUTOREOPEN: '',
+          DATABASE_URL: '',
+          APP_PASSWORD: 'pw-test',
+          AGENT_TOKEN: 'tok-test',
+          PORYADOK_INGEST_TOKEN: '',
+          ...extra,
+        },
+      });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (chunk) => { out += chunk; });
+      child.stderr.on('data', (chunk) => { err += chunk; });
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code !== 0) {
+          reject(new Error(`код ${code}\n${out}\n${err}`));
+          return;
+        }
+        const line = out.trim().split('\n').filter((row) => row.startsWith('{')).pop();
+        resolve(JSON.parse(line));
+      });
+    });
+  }
+  const closed = await run();
+  assert.equal(closed.forced, 0);
+  assert.equal(closed.timer, true);
+  assert.equal(closed.rows.length, 2);
+  for (const row of closed.rows) {
+    assert.equal(row.closedAt, '2020-01-01T00:00:00.000Z', row.id);
+    assert.equal(row.answers, 1, row.id);
+  }
+  const opened = await run({ TEST_NEEDS_AUTOREOPEN: '1' });
+  assert.ok(opened.forced >= 1);
+  assert.equal(opened.rows.every((row) => row.closedAt == null && row.answers === 0), true);
+});

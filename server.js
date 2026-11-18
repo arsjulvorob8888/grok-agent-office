@@ -725,12 +725,7 @@ function migrateOwnerNeeds(list = state.needs) {
     item.kind = 'test';
     item.answerable = true;
     item.answerMode = 'yesno';
-    item.closedAt = null;
-    item.closedBy = null;
-    item.answer = null;
-    item.answeredAt = null;
-    item.answerStatus = null;
-    item.answers = [];
+    reopenSeededTestNeed(item);
   }
   for (const item of list) {
     if (!item || item.id !== QUESTION_NEED_ID) continue;
@@ -738,12 +733,7 @@ function migrateOwnerNeeds(list = state.needs) {
     item.kind = 'test';
     item.answerable = true;
     item.answerMode = 'text';
-    item.closedAt = null;
-    item.closedBy = null;
-    item.answer = null;
-    item.answeredAt = null;
-    item.answerStatus = null;
-    item.answers = [];
+    reopenSeededTestNeed(item);
   }
   for (const item of list) {
     if (!item || item.id !== FINANCE_NEED_ID) continue;
@@ -894,7 +884,23 @@ function migrateExternalNeedStore() {
   if (store.state && Array.isArray(store.state.needs)) migrateOwnerNeeds(store.state.needs);
 }
 
+function testNeedsAutoreopen() {
+  if (process.env.NODE_ENV !== 'production') return true;
+  return process.env.TEST_NEEDS_AUTOREOPEN === '1';
+}
+
+function reopenSeededTestNeed(item) {
+  if (!item || !testNeedsAutoreopen()) return;
+  item.closedAt = null;
+  item.closedBy = null;
+  item.answer = null;
+  item.answeredAt = null;
+  item.answerStatus = null;
+  item.answers = [];
+}
+
 function reopenTestNeeds(now = Date.now(), force = false) {
+  if (!testNeedsAutoreopen()) return 0;
   const opened = [];
   for (const item of state.needs) {
     if (!isTestNeedItem(item)) continue;
@@ -916,11 +922,14 @@ function reopenTestNeeds(now = Date.now(), force = false) {
 
 migrateOwnerNeeds();
 migrateExternalNeedStore();
-reopenTestNeeds(Date.now(), true);
-const testReopenTimer = setInterval(() => {
-  try { reopenTestNeeds(); } catch (err) { console.error(err); }
-}, 30 * 1000);
-if (typeof testReopenTimer.unref === 'function') testReopenTimer.unref();
+let testReopenTimer = null;
+if (testNeedsAutoreopen()) {
+  reopenTestNeeds(Date.now(), true);
+  testReopenTimer = setInterval(() => {
+    try { reopenTestNeeds(); } catch (err) { console.error(err); }
+  }, 30 * 1000);
+  if (typeof testReopenTimer.unref === 'function') testReopenTimer.unref();
+}
 const needsResolveTimer = setInterval(() => {
   try {
     if (resolveNeedsByEnv()) poryadokSync.schedule();
@@ -3242,6 +3251,8 @@ module.exports = {
   TEST_REOPEN_MS,
   ANSWERS_MAX,
   reopenTestNeeds,
+  testNeedsAutoreopen,
+  get testReopenTimer() { return testReopenTimer; },
   FINANCE_ACTION_URL,
   FINANCE_ACTION_HINT,
   SOCIAL_ACTION_URL,
