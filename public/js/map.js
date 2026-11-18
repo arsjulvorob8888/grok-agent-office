@@ -255,7 +255,7 @@
           const n = 1 + Math.floor(r() * 3);
           for (let i = 0; i < n; i++) wins += `<rect class="bw${r() < 0.4 ? ' off' : ''}" x="${(x + 2 + r() * (w - 6)).toFixed(1)}" y="${(y + d - h + 1.5 + r() * Math.max(0.5, h - 5)).toFixed(1)}" width="2.4" height="2.6"/>`;
         }
-        parts.push(`<g class="blk ${cls}"><rect class="bf" x="${x.toFixed(1)}" y="${(y + d - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"/><rect class="bt" x="${x.toFixed(1)}" y="${(y - h).toFixed(1)}" width="${w.toFixed(1)}" height="${d.toFixed(1)}"/>${wins}</g>`);
+        parts.push(`<g class="blk ${cls}" pointer-events="none"><rect class="bf" x="${x.toFixed(1)}" y="${(y + d - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"/><rect class="bt" x="${x.toFixed(1)}" y="${(y - h).toFixed(1)}" width="${w.toFixed(1)}" height="${d.toFixed(1)}"/>${wins}</g>`);
         foot.push({ x, y, w, d, h });
       }
     }
@@ -277,14 +277,16 @@
     // Дома короче обычных: в клине кольца, Яузы и радиальных полный прямоугольник не влезает.
     const fillRng = rng(77);
     const overlaps = (a, b) => a.x < b.x + b.w + 2 && a.x + a.w + 2 > b.x && a.y - a.h < b.y + b.d + 2 && a.y + a.d + 2 > b.y - b.h;
-    const paintBlock = (x, y, w, d, h) => {
-      const cls = 'b' + (1 + Math.floor(fillRng() * 3));
+    const paintBlock = (x, y, w, d, h, opt = {}) => {
+      const rand = opt.rand || fillRng;
+      const cls = 'b' + (1 + Math.floor(rand() * 3));
       let wins = '';
-      const n = 1 + Math.floor(fillRng() * 3);
+      const n = 1 + Math.floor(rand() * 3);
       for (let i = 0; i < n; i++) {
-        wins += `<rect class="bw${fillRng() < 0.35 ? ' off' : ''}" x="${(x + 2 + fillRng() * Math.max(0, w - 6)).toFixed(1)}" y="${(y + d - h + 1.5 + fillRng() * Math.max(0.5, h - 4)).toFixed(1)}" width="2.4" height="2.6"/>`;
+        wins += `<rect class="bw${rand() < 0.35 ? ' off' : ''}" x="${(x + 2 + rand() * Math.max(0, w - 6)).toFixed(1)}" y="${(y + d - h + 1.5 + rand() * Math.max(0.5, h - 4)).toFixed(1)}" width="2.4" height="2.6"/>`;
       }
-      parts.push(`<g class="blk ${cls}"><rect class="bf" x="${x.toFixed(1)}" y="${(y + d - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"/><rect class="bt" x="${x.toFixed(1)}" y="${(y - h).toFixed(1)}" width="${w.toFixed(1)}" height="${d.toFixed(1)}"/>${wins}</g>`);
+      const mark = opt.fill ? ' fill' : '';
+      parts.push(`<g class="blk ${cls}${mark}" pointer-events="none"><rect class="bf" x="${x.toFixed(1)}" y="${(y + d - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"/><rect class="bt" x="${x.toFixed(1)}" y="${(y - h).toFixed(1)}" width="${w.toFixed(1)}" height="${d.toFixed(1)}"/>${wins}</g>`);
       foot.push({ x, y, w, d, h });
     };
     const canSit = (x, y, w, d, h, zone) => {
@@ -308,7 +310,73 @@
         for (let x = zone.x0 + 4; x <= zone.x1 - 4 && trees < 5; x += 11) {
           if (excl(x, y, true)) continue;
           if (foot.some((p) => x > p.x - 4 && x < p.x + p.w + 4 && y > p.y - p.h - 4 && y < p.y + p.d + 4)) continue;
-          parts.push(tree(x.toFixed(1), y.toFixed(1), (4.5 + fillRng() * 2).toFixed(1)));
+          parts.push(`<g pointer-events="none">${tree(x.toFixed(1), y.toFixed(1), (4.5 + fillRng() * 2).toFixed(1))}</g>`);
+          trees += 1;
+        }
+      }
+    }
+    // Три бежевых квартала вдоль Яузы и отложенный клин. Свой жребий, старый
+    // город и добор четырёх рамок не сдвигаются. Дома тех же классов b1–b3.
+    const quarterRng = rng(91);
+    const yauzaLine = sampleSmooth(YAUZA, 8);
+    const arrowPts = [];
+    const quad = (x0, y0, x1, y1, bend, drop) => {
+      const dx = x1 - x0, dy = y1 - y0, len = Math.max(1, Math.hypot(dx, dy));
+      const cx = (x0 + x1) / 2 - (dy / len) * bend;
+      const cy = (y0 + y1) / 2 + (dx / len) * bend - drop;
+      for (let i = 0; i <= 28; i++) {
+        const t = i / 28, u = 1 - t;
+        arrowPts.push([u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1]);
+      }
+    };
+    const kremlinAgent = agents.find((a) => a.id === 'grok') || { x: 800, y: 540 };
+    for (const a of agents) {
+      if (a.id === 'grok') continue;
+      const len = Math.max(1, Math.hypot(a.x - kremlinAgent.x, a.y - kremlinAgent.y));
+      quad(kremlinAgent.x, kremlinAgent.y + 22, a.x, a.y + 14, len * 0.16, 0);
+      const roofLen = Math.max(1, Math.hypot(a.x - kremlinAgent.x, (a.y - 86) - (kremlinAgent.y - 78)));
+      const mag = Math.min(120, roofLen * 0.22);
+      quad(kremlinAgent.x, kremlinAgent.y - 78, a.x, a.y - 86, mag, 28);
+      quad(kremlinAgent.x, kremlinAgent.y - 78, a.x, a.y - 86, -mag, 28);
+    }
+    const visualBlocked = (x, y) => {
+      if (distPoly(x, y, RIVER_LINE) < 22) return true;
+      if (ringDist(x, y, RINGS.garden) < 10 || ringDist(x, y, RINGS.ttk) < 10) return true;
+      for (const [a, b] of RADIALS) if (distSeg(x, y, a[0], a[1], b[0], b[1]) < 8) return true;
+      if (distPoly(x, y, BULVAR) < 6) return true;
+      if (distPoly(x, y, yauzaLine) < 8) return true;
+      for (const p of arrowPts) if (Math.hypot(x - p[0], y - p[1]) < 8) return true;
+      return false;
+    };
+    const canQuarter = (x, y, w, d, h, zone) => {
+      const cx = x + w / 2, cy = y + d / 2;
+      if (cx < zone.x0 || cx > zone.x1 || cy < zone.y0 || cy > zone.y1) return false;
+      const pts = [[x, y], [x + w, y], [x, y + d], [x + w, y + d], [cx, cy]];
+      if (pts.some((p) => excl(p[0], p[1], true) || visualBlocked(p[0], p[1]))) return false;
+      return !foot.some((p) => overlaps({ x, y, w, d, h }, p));
+    };
+    for (const zone of FINANCE_QUARTERS) {
+      let placed = 0;
+      for (let y = zone.y0; y <= zone.y1 - 12 && placed < zone.need; y += 28) {
+        for (let x = zone.x0; x <= zone.x1 - 16 && placed < zone.need; x += 28) {
+          const jx = (quarterRng() - 0.5) * 8, jy = (quarterRng() - 0.5) * 8;
+          const w = 16 + quarterRng() * 8, d = 10 + quarterRng() * 4, h = 8 + quarterRng() * 5;
+          if (canQuarter(x + jx, y + jy, w, d, h, zone)) { paintBlock(x + jx, y + jy, w, d, h, { rand: quarterRng, fill: true }); placed += 1; }
+          else if (canQuarter(x + jx, y + jy, 12, 8, 8, zone)) { paintBlock(x + jx, y + jy, 12, 8, 8, { rand: quarterRng, fill: true }); placed += 1; }
+        }
+      }
+      for (let y = zone.y0 + 14; y <= zone.y1 - 8 && placed < zone.need; y += 16) {
+        for (let x = zone.x0 + 8; x <= zone.x1 - 10 && placed < zone.need; x += 16) {
+          if (canQuarter(x, y, 12, 8, 8, zone)) { paintBlock(x, y, 12, 8, 8, { rand: quarterRng, fill: true }); placed += 1; }
+          else if (canQuarter(x, y, 10, 7, 7, zone)) { paintBlock(x, y, 10, 7, 7, { rand: quarterRng, fill: true }); placed += 1; }
+        }
+      }
+      let trees = 0;
+      for (let y = zone.y0 + 8; y <= zone.y1 - 6 && trees < 4; y += 18) {
+        for (let x = zone.x0 + 8; x <= zone.x1 - 6 && trees < 4; x += 18) {
+          if (excl(x, y, true) || visualBlocked(x, y)) continue;
+          if (foot.some((p) => x > p.x - 4 && x < p.x + p.w + 4 && y > p.y - p.h - 4 && y < p.y + p.d + 4)) continue;
+          parts.push(`<g pointer-events="none">${tree(x.toFixed(1), y.toFixed(1), (4.2 + quarterRng() * 1.6).toFixed(1))}</g>`);
           trees += 1;
         }
       }
@@ -318,10 +386,18 @@
 
   // Голые участки внутри четырёх рамок восточнее Кремля. См. docs/specs/map-gaps.md.
   const GAP_ZONES = [
-    { id: 'sadovoe-ne', x0: 1056, y0: 308, x1: 1094, y1: 348, need: 2 },
-    { id: 'yauza-bank', x0: 1094, y0: 438, x1: 1150, y1: 484, need: 2 },
+    { id: 'sadovoe-ne', x0: 1056, y0: 308, x1: 1094, y1: 348, need: 3 },
+    { id: 'yauza-bank', x0: 1094, y0: 438, x1: 1150, y1: 484, need: 3 },
     { id: 'east-ring', x0: 1136, y0: 606, x1: 1198, y1: 632, need: 2 },
-    { id: 'south-east-lot', x0: 1172, y0: 698, x1: 1268, y1: 746, need: 3 },
+    { id: 'south-east-lot', x0: 1172, y0: 698, x1: 1268, y1: 746, need: 5 },
+  ];
+
+  // Бежевые кварталы восточнее Кремля, вдоль Яузы. need — сколько домов добрать.
+  const FINANCE_QUARTERS = [
+    { id: 'north-stalin', x0: 1036, y0: 286, x1: 1196, y1: 452, need: 8 },
+    { id: 'finance-left', x0: 1152, y0: 360, x1: 1296, y1: 570, need: 10 },
+    { id: 'south-river', x0: 1124, y0: 648, x1: 1440, y1: 820, need: 14 },
+    { id: 'yauza-wedge', x0: 956, y0: 490, x1: 1136, y1: 534, need: 5 },
   ];
 
   // [x, y, полуширина, высота] — зоны достопримечательностей без кварталов.
@@ -567,5 +643,5 @@
     }
   }
 
-  window.MoscowMap = { W, H, buildBase, buildBlocks, buildLandmarks, buildLabels, building, TALL, RINGS, RADIALS, ellipsePath, smooth };
+  window.MoscowMap = { W, H, buildBase, buildBlocks, buildLandmarks, buildLabels, building, TALL, RINGS, RADIALS, ellipsePath, smooth, RIVER_LINE, YAUZA, BULVAR, sampleSmooth, distSeg, distPoly, ringDist };
 })();
