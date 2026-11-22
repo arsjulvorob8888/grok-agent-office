@@ -1616,10 +1616,6 @@
       focused: document.activeElement && panel.contains(document.activeElement) ? document.activeElement.id : '',
       msg: ($('#formMsg') || {}).textContent || '',
       msgClass: ($('#formMsg') || {}).className || 'msg',
-      cardUrl: (() => {
-        const field = $('#directCard [data-card-url]');
-        return field && field.dataset.touched ? field.value : '';
-      })(),
     } : null;
     panel.dataset.agent = a.id;
     panel.style.setProperty('--c', a.color);
@@ -1665,7 +1661,7 @@
         ${a.vacant ? '' : `<div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}" data-status="${esc(activityLabel(a))}">${esc(activityLabel(a))}</span>${statusNowHTML(a)}</div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
-        ${a.vacant ? '' : `<div class="sec" data-anchor="link">${directCardHTML(a, keep && keep.cardUrl)}</div>`}
+        ${a.vacant ? '' : `<div class="sec" data-anchor="link">${directStatusHTML(a)}</div>`}
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
         ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
         ${a.vacant ? '' : taskBlock}
@@ -1688,7 +1684,7 @@
       }
       renderDrafts();
       paintTaskRoute();
-      bindDirectCard(a);
+      bindDirectStatus(a);
       const targetSel = $('#taskTarget');
       if (targetSel) targetSel.addEventListener('change', paintTaskRoute);
       f.onsubmit = (e) => { e.preventDefault(); submitTask(); };
@@ -1800,179 +1796,25 @@
     const kind = agent && agent.deliveryRoute;
     return kind === 'agent' || kind === 'putin' || kind === 'env' || kind === 'none' ? kind : 'none';
   }
-  function directCardStored(id) {
-    try {
-      const value = localStorage.getItem(`directCard:${id}`);
-      if (value === 'open') return true;
-      if (value === 'shut') return false;
-    } catch (_) { /* нет хранилища */ }
-    return null;
-  }
-  function directCardHTML(agent, typedUrl) {
-    const stored = directCardStored(agent.id);
-    const open = stored == null ? Feed.directCardDefaultOpen(agent) : stored;
+  function directStatusHTML(agent) {
     const phase = Feed.directLinkPhase(agent);
-    const summary = Feed.directCardSummary(agent);
-    const plain = Feed.directCardPlain(agent);
-    const authed = !!getPassword();
-    const fields = authed
-      ? `<label>Адрес<input type="url" data-card-url autocomplete="off" spellcheck="false" value="${esc(typedUrl || '')}"></label>
-        <label>Ключ<input type="password" data-card-key autocomplete="new-password" spellcheck="false" value=""></label>
-        <p class="direct-note" data-card-saved></p>
-        <div class="direct-actions">
-          <button type="button" class="btn gold" data-card-save>Сохранить</button>
-          <button type="button" class="btn ghost" data-card-check>Проверить ещё раз</button>
-        </div>
-        <p class="direct-msg" data-card-msg aria-live="polite"></p>`
-      : `<form class="direct-lock" id="directLock">
-          <p class="direct-note">Войдите, чтобы задать адрес и ключ.</p>
-          <label for="directPw">Пароль владельца<input id="directPw" type="password" autocomplete="current-password"></label>
-          <button class="btn gold" type="submit">Войти</button>
-          <p class="direct-msg" data-card-msg aria-live="polite"></p>
-        </form>`;
-    return `<details class="direct-card" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="${esc(phase)}"${open ? ' open' : ''}>
-      <summary data-direct-summary><i class="direct-lamp" data-phase="${esc(phase)}" aria-hidden="true"></i>${esc(summary)}</summary>
-      <div class="direct-card-body">
-        <p class="direct-plain" data-direct-plain>${esc(plain)}</p>
-        ${fields}
-      </div>
-    </details>`;
-  }
-  function paintDirectCard(agent) {
-    const card = $('#directCard');
-    if (!card || !agent) return;
-    const phase = Feed.directLinkPhase(agent);
-    card.dataset.phase = phase;
-    const summary = card.querySelector('[data-direct-summary]');
-    if (summary) {
-      const lamp = summary.querySelector('.direct-lamp');
-      summary.textContent = '';
-      const mark = lamp || document.createElement('i');
-      mark.className = 'direct-lamp';
-      mark.dataset.phase = phase;
-      mark.setAttribute('aria-hidden', 'true');
-      summary.append(mark, document.createTextNode(Feed.directCardSummary(agent)));
+    const text = Feed.directCardSummary(agent);
+    if (phase === 'ok') {
+      return `<p class="direct-status" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="ok"><i class="direct-lamp" aria-hidden="true"></i><span data-direct-summary>${esc(text)}</span></p>`;
     }
-    const plain = card.querySelector('[data-direct-plain]');
-    if (plain) plain.textContent = Feed.directCardPlain(agent);
+    return `<div class="direct-warn" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="${esc(phase)}" role="status">
+      <p data-direct-summary>${esc(text)}</p>
+      <button type="button" class="btn gold" data-open-key>Ключ</button>
+    </div>`;
   }
-  function applyDirectResult(agent, data) {
-    if (!agent || !data) return;
-    if (data.route) agent.deliveryRoute = data.route;
-    if (data.linkCheck) agent.linkCheck = data.linkCheck;
-    paintDirectCard(agent);
-    paintTaskRoute();
-  }
-  function directNote(text, tone) {
-    const msg = $('#directCard [data-card-msg]');
-    if (!msg) return;
-    msg.textContent = text || '';
-    msg.className = `direct-msg${tone ? ` ${tone}` : ''}`;
-  }
-  async function fillDirectCard(agent) {
-    const card = $('#directCard');
-    if (!card || card.dataset.agent !== agent.id || !getPassword()) return;
-    const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/delivery`, {
-      headers: { 'x-app-password': getPassword() },
-      cache: 'no-store',
+  function bindDirectStatus(agent) {
+    const btn = $('#directCard [data-open-key]');
+    if (!btn) return;
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (window.DirectLink && typeof DirectLink.openFor === 'function') DirectLink.openFor(agent.id);
     });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401 || res.status === 403) {
-      noteBadPassword();
-      renderPanel();
-      return;
-    }
-    if (!res.ok) return;
-    const url = card.querySelector('[data-card-url]');
-    if (url && document.activeElement !== url && !url.dataset.touched) url.value = data.url || '';
-    const key = card.querySelector('[data-card-key]');
-    if (key) key.value = '';
-    const saved = card.querySelector('[data-card-saved]');
-    if (saved) saved.textContent = data.keySet ? 'ключ сохранён' : '';
-    applyDirectResult(agent, data);
-  }
-  async function saveDirectCard(agent) {
-    const card = $('#directCard');
-    if (!card) return;
-    const url = card.querySelector('[data-card-url]');
-    const key = card.querySelector('[data-card-key]');
-    const payload = { url: url ? url.value.trim() : '' };
-    if (key && key.value) payload.key = key.value;
-    directNote('Сохраняю…', '');
-    const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/delivery`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401 || res.status === 403) {
-      noteBadPassword();
-      renderPanel();
-      return;
-    }
-    if (!res.ok) {
-      directNote((data && data.error) || 'Не удалось сохранить', 'err');
-      return;
-    }
-    if (key) key.value = '';
-    if (url) {
-      url.dataset.touched = '';
-      url.value = data.url || '';
-    }
-    const saved = card.querySelector('[data-card-saved]');
-    if (saved) saved.textContent = data.keySet ? 'ключ сохранён' : '';
-    applyDirectResult(agent, data);
-    directNote('Сохранено', 'ok');
-  }
-  async function checkDirectCard(agent) {
-    const card = $('#directCard');
-    if (!card) return;
-    directNote('Проверяю…', '');
-    const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/delivery/test`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
-      body: JSON.stringify({}),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401 || res.status === 403) {
-      noteBadPassword();
-      renderPanel();
-      return;
-    }
-    if (!res.ok) {
-      directNote((data && data.error) || 'Адрес не отвечает', 'err');
-      return;
-    }
-    applyDirectResult(agent, data);
-    directNote('', '');
-  }
-  function bindDirectCard(agent) {
-    const card = $('#directCard');
-    if (!card) return;
-    const summary = card.querySelector('summary');
-    if (summary) {
-      summary.addEventListener('click', () => {
-        try { localStorage.setItem(`directCard:${agent.id}`, card.open ? 'shut' : 'open'); } catch (_) { /* нет хранилища */ }
-      });
-    }
-    const lock = $('#directLock');
-    if (lock) {
-      lock.addEventListener('submit', (event) => {
-        event.preventDefault();
-        const value = ($('#directPw').value || '').trim();
-        if (!value) return;
-        try { localStorage.setItem('appPassword', value); } catch (_) { return; }
-        renderPanel();
-      });
-      return;
-    }
-    const url = card.querySelector('[data-card-url]');
-    if (url) url.addEventListener('input', () => { url.dataset.touched = '1'; });
-    const saveBtn = card.querySelector('[data-card-save]');
-    const checkBtn = card.querySelector('[data-card-check]');
-    if (saveBtn) saveBtn.addEventListener('click', () => saveDirectCard(agent));
-    if (checkBtn) checkBtn.addEventListener('click', () => checkDirectCard(agent));
-    fillDirectCard(agent);
   }
   function paintTaskRoute() {
     const agent = S.byId.get(S.selected);

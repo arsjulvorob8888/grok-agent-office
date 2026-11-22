@@ -734,7 +734,7 @@
     return 'via';
   }
 
-  const DIRECT_HINT = 'Вставьте адрес и ключ из рутины агента «Кремль: входящие с сайта» в Grok';
+  const DIRECT_WARN = 'Прямая связь не работает — проверьте адрес и ключ';
 
   function directLinkClock(agent) {
     const iso = agent && agent.linkCheck && agent.linkCheck.answeredAt;
@@ -745,30 +745,9 @@
   }
 
   function directCardSummary(agent) {
-    const phase = directLinkPhase(agent);
-    if (phase === 'ok') {
-      const clock = directLinkClock(agent);
-      return clock ? `Прямая связь: работает ✓ (${clock})` : 'Прямая связь: работает ✓';
-    }
-    if (phase === 'checking') return 'Прямая связь: проверяется';
-    if (phase === 'key') return 'Прямая связь: ключ не подошёл';
-    if (phase === 'down') return 'Прямая связь: адрес не отвечает';
-    if (phase === 'timeout') return 'Прямая связь: нет ответа';
-    return 'Прямая связь';
-  }
-
-  function directCardPlain(agent) {
-    const phase = directLinkPhase(agent);
-    if (phase === 'ok') return 'Адрес и ключ заданы. Последняя проверка связи прошла.';
-    if (phase === 'checking') return 'Связь проверяется: вебхук принял запрос, ответ агента ещё не пришёл.';
-    if (phase === 'key') return `Ключ не подошёл. ${DIRECT_HINT}.`;
-    if (phase === 'down') return `Адрес не отвечает. ${DIRECT_HINT}.`;
-    if (phase === 'timeout') return `Агент не ответил за 5 минут. ${DIRECT_HINT}.`;
-    return `${DIRECT_HINT}.`;
-  }
-
-  function directCardDefaultOpen(agent) {
-    return directLinkPhase(agent) !== 'ok';
+    if (directLinkPhase(agent) !== 'ok') return DIRECT_WARN;
+    const clock = directLinkClock(agent);
+    return clock ? `Прямая связь: работает ✓ (${clock})` : 'Прямая связь: работает ✓';
   }
 
   function directLinkLine(agent) {
@@ -883,8 +862,6 @@
     directLinkPhase,
     directLinkClock,
     directCardSummary,
-    directCardPlain,
-    directCardDefaultOpen,
     isServicePing,
     serviceAgents,
     moscowClock,

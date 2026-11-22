@@ -5,6 +5,7 @@
 
   let generation = 0;
   let loaded = false;
+  let focusAgent = '';
 
   function password() {
     try { return localStorage.getItem('appPassword') || ''; } catch (_) { return ''; }
@@ -216,6 +217,11 @@
       if (view.res.status !== 200) noteOf(row, (view.res.data && view.res.data.error) || 'Не удалось прочитать', 'err');
       root.append(row);
     }
+    if (!focusAgent) return;
+    const row = root.querySelector(`[data-direct-row][data-agent="${focusAgent}"]`);
+    if (!row) return;
+    row.classList.add('direct-row-focus');
+    row.scrollIntoView({ block: 'nearest' });
   }
 
   function onClick(event) {
@@ -289,5 +295,17 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
   else mount();
 
-  window.DirectLink = { refresh };
+  function openFor(agentId) {
+    focusAgent = agentId || '';
+    loaded = false;
+    const pop = document.getElementById('servicePop');
+    const fold = document.getElementById('serviceFold');
+    const btn = document.getElementById('btnKey');
+    if (pop) pop.hidden = false;
+    if (fold) fold.open = true;
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+    refresh();
+  }
+
+  window.DirectLink = { refresh, openFor };
 })();

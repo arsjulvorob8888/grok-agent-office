@@ -138,19 +138,18 @@ test('в карточке одна строка маршрута и вход в 
   try {
     await page.waitForFunction(() => {
       const card = document.querySelector('#panel.open[data-agent="army"] [data-direct-card]');
-      const plain = card && card.querySelector('[data-direct-plain]');
-      return card && card.open && plain && /Кремль: входящие с сайта/.test(plain.textContent) && card.querySelector('#directLock');
+      return card && /Прямая связь не работает/.test(card.textContent) && card.querySelector('[data-open-key]');
     }, { timeout: 8000 });
     const card = await page.evaluate(() => {
       const panel = document.querySelector('#panel');
       const form = panel.querySelector('#taskForm');
-      const routes = form ? [...form.querySelectorAll('#taskRoute, [data-direct-link], [data-direct-plain]')] : [];
+      const routes = form ? [...form.querySelectorAll('#taskRoute, [data-direct-link]')] : [];
       return {
         routes: routes.map((el) => el.textContent.replace(/\s+/g, ' ').trim()),
         delivery: panel.querySelectorAll('[data-delivery-root], [data-delivery-kind]').length,
         password: panel.innerText.includes('Нужен пароль персонала'),
         heading: [...panel.querySelectorAll('h4')].some((el) => el.textContent.trim() === 'Доставка'),
-        keyField: !!panel.querySelector('[data-card-key]'),
+        inputs: panel.querySelectorAll('[data-anchor="link"] input').length,
       };
     });
     assert.equal(card.routes.length, 1);
@@ -159,14 +158,14 @@ test('в карточке одна строка маршрута и вход в 
     assert.equal(card.delivery, 0);
     assert.equal(card.password, false);
     assert.equal(card.heading, false);
-    assert.equal(card.keyField, false);
+    assert.equal(card.inputs, 0);
     fs.mkdirSync(artifacts, { recursive: true });
     await page.screenshot({ path: path.join(artifacts, 'direct-link-card-1280.png') });
     const dev = await openPage({ width: 1280, height: 800 }, 'dev');
     try {
       await dev.waitForFunction(() => {
         const summary = document.querySelector('#panel.open[data-agent="dev"] [data-direct-summary]');
-        return summary && /проверяется/.test(summary.textContent);
+        return summary && /Прямая связь не работает/.test(summary.textContent);
       }, { timeout: 8000 });
       const quiet = await dev.evaluate(() => {
         const form = document.querySelector('#taskForm');
@@ -178,8 +177,8 @@ test('в карточке одна строка маршрута и вход в 
     }
     await page.goto(`${base}/?agent=grok`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => {
-      const plain = document.querySelector('#panel.open[data-agent="grok"] [data-direct-plain]');
-      return plain && /Кремль: входящие с сайта/.test(plain.textContent);
+      const card = document.querySelector('#panel.open[data-agent="grok"] [data-direct-card]');
+      return card && /Прямая связь не работает/.test(card.textContent) && card.querySelectorAll('input').length === 0;
     }, { timeout: 8000 });
     const putin = await page.evaluate(() => ({
       form: document.querySelector('#taskForm') ? document.querySelector('#taskForm').innerText : '',
@@ -319,14 +318,12 @@ test('на 390 строка и поля не вылезают за окно', { 
   try {
     await page.waitForFunction(() => {
       const card = document.querySelector('#panel.open[data-agent="army"] [data-direct-card]');
-      const url = card && card.querySelector('[data-card-url]');
-      const key = card && card.querySelector('[data-card-key]');
-      return card && card.open && url && key && key.type === 'password' && url.getClientRects().length > 0;
+      return card && /Прямая связь не работает/.test(card.textContent) && card.querySelector('[data-open-key]');
     }, { timeout: 8000 });
     const card = await page.evaluate(() => {
-      const field = document.querySelector('#panel [data-card-url]');
-      field.scrollIntoView({ block: 'center' });
-      const box = field.getBoundingClientRect();
+      const warn = document.querySelector('#panel [data-direct-card]');
+      warn.scrollIntoView({ block: 'center' });
+      const box = warn.getBoundingClientRect();
       const panel = document.querySelector('#panel').getBoundingClientRect();
       const form = document.querySelector('#taskForm');
       const routes = form ? [...form.querySelectorAll('#taskRoute, [data-direct-link]')] : [];
@@ -338,9 +335,11 @@ test('на 390 строка и поля не вылезают за окно', { 
         panelRight: panel.right,
         delivery: document.querySelectorAll('#panel [data-delivery-root]').length,
         password: document.querySelector('#panel').innerText.includes('Нужен пароль персонала'),
+        inputs: document.querySelectorAll('#panel [data-anchor="link"] input').length,
         vw: window.innerWidth,
       };
     });
+    assert.equal(card.inputs, 0);
     assert.equal(card.routes.length, 1);
     assert.match(card.routes[0], /Куда уйдёт приказ/);
     assert.equal(card.delivery, 0);
