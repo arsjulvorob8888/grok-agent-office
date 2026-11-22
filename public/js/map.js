@@ -480,7 +480,7 @@
 
   // ── Здания направлений ─────────────────────────────────────────────────
   // Высота «шапки» здания над точкой агента (для расстановки облачков).
-  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, qa: 108, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, advisor: 110, social: 100, routines: 110, generic: 110 };
+  const TALL = { putin: 150, trading: 190, blog: 260, lang: 200, army: 130, poker: 110, devops: 100, dev: 130, qa: 108, temshik: 100, finance: 120, invest: 78, analyst: 72, vacant: 120, biz: 110, advisor: 110, social: 100, routines: 110, health: 78, generic: 110 };
 
   function building(kind, color) {
     const R = rng(color.length * 97 + kind.length * 13);
@@ -589,6 +589,15 @@
         s += `<path d="M-3,-74c0,-3 2.2,-4 3.4,-1.8 1.2,-2.2 3.4,-1.2 3.4,1.8 0,3.2-3.4,5.4-3.4,5.4s-3.4,-2.2-3.4,-5.4z" fill="#fb7185"/>`;
         s += `<circle cx="0" cy="-50" r="1.4" fill="#f0abfc"/>`;
         s += `<rect x="-50" y="-2" width="100" height="3" fill="${c}"/>`;
+        return s;
+      }
+      case 'health': {
+        let s = box(-58, -12, 116, 18, 26, '#e3efe0', { top: '#f4f8f1', front: '#d0e0cb', windows: true, rand: R });
+        s += `<ellipse cx="0" cy="-44" rx="40" ry="15" fill="#8fb57a"/>`;
+        s += `<ellipse cx="0" cy="-44" rx="40" ry="15" fill="none" stroke="#f7fbf5" stroke-width="2"/>`;
+        s += `<ellipse cx="0" cy="-44" rx="22" ry="8" fill="none" stroke="#f7fbf5" stroke-width="1.1"/>`;
+        s += `<path d="M0,-52 v16 M-6,-44 h12" stroke="#f7fbf5" stroke-width="1" opacity=".85"/>`;
+        s += `<rect x="-58" y="-2" width="116" height="3" fill="${c}"/>`;
         return s;
       }
       case 'routines': {

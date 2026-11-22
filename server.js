@@ -56,7 +56,7 @@ const STATUS_LABELS = {
 // x / y — координаты на карте (холст 1600×1100, север сверху, Кремль ≈ 800×540).
 // kind — тип фигурки на клиенте: putin, army, poker, trading, devops, dev, qa,
 //        temshik, blog, finance, invest, analyst, lang, biz, advisor, social,
-//        routines, vacant, generic.
+//        routines, health, vacant, generic.
 // tier — main (Путин), dept (направление), sub (помощник, parentId), extra (союзник).
 // Номер на карте — среди видимых агентов, без пропусков. Помощники Финансов: 7.1, 7.2.
 // trading, biz и lang в архиве: записи остаются, на карту и в новые приказы не попадают.
@@ -77,7 +77,7 @@ const SEED_AGENTS = [
     grokAgentId: '8b9d4ad0-4222-49a8-84b4-b125d3b7ec01',
     x: 800,
     y: 540,
-    links: ['army', 'poker', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'advisor', 'social', 'routines'],
+    links: ['army', 'poker', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'advisor', 'social', 'routines', 'health'],
     responsibilities: [
       'Принимает задачи и распределяет их по направлениям',
       'Следит за сроками и качеством результатов',
@@ -398,6 +398,27 @@ const SEED_AGENTS = [
       'Учит владельца собирать и запускать рутины',
       'Автоматизирует повторяющиеся действия штаба',
       'Следит, чтобы рутины совпадали с приказами',
+    ],
+  },
+  // 13-е направление: спортивный комплекс на северном берегу излучины у Лужников.
+  {
+    id: 'health',
+    name: 'Здоровье и спорт · Кремль',
+    color: '#3f6b4a',
+    accent: '#e7f2e4',
+    role: 'Здоровье, тренировки и восстановление',
+    district: 'Лужники',
+    kind: 'health',
+    tier: 'dept',
+    order: 13,
+    grokAgentId: '0ed66c28-6327-4768-8bf1-f2e06f72c2ac',
+    x: 556,
+    y: 620,
+    links: [],
+    responsibilities: [
+      'Следит за режимом, сном и восстановлением',
+      'Готовит спокойные планы тренировок',
+      'Собирает короткие сводки по самочувствию',
     ],
   },
 ];

@@ -68,7 +68,7 @@ if (!CHROME || !puppeteer) {
           lastClipped: last.right > box.right + 1,
         };
       });
-      assert.equal(before.count, 11, `в полосе только главные здания, сейчас ${before.count}`);
+      assert.equal(before.count, 12, `в полосе только главные здания, сейчас ${before.count}`);
       assert.equal(before.ids.includes('invest') || before.ids.includes('analyst') || before.ids.includes('advisor'), false);
       assert.ok(before.max > 40, 'полоса не переполнена, листать нечего');
       assert.notEqual(before.scrollbar, 'none');
@@ -95,7 +95,7 @@ if (!CHROME || !puppeteer) {
           inside: last.left >= box.left - 1 && last.right <= box.right + 2,
         };
       });
-      assert.equal(end.id, 'routines', `последний в полосе ${end.id}, ждали Рутины`);
+      assert.equal(end.id, 'health', `последний в полосе ${end.id}, ждали Здоровье и спорт`);
       assert.equal(end.inside, true, `последний агент ${end.id} не попал в видимую полосу`);
     } finally {
       await page.close();

@@ -199,6 +199,11 @@
       hair: HAIR.short('#3a2a22'),
       extra: `<g transform="translate(16,-36)"><path d="M8,0 l2.1,4.4 4.8,.6 -3.6,3.3 .9,4.8 L8,10.8 3.8,13.1 l.9-4.8 -3.6-3.3 4.8-.6z" fill="#f5c451"/></g>`,
     }),
+    health: () => generic({
+      top: '#3f6b4a', shirt: '#f3faf2', pants: '#243528',
+      hair: HAIR.short('#3a2a22'),
+      extra: `<g transform="translate(16,-34)" fill="none" stroke="#e7f2e4" stroke-width="1.6" stroke-linecap="round"><path d="M2,8c2,-6 6,-8 8,-4"/><circle cx="12" cy="2" r="2.2" fill="#e7f2e4" stroke="none"/></g>`,
+    }),
     routines: () => generic({
       top: '#9a3412', shirt: '#fff7ed', tie: '#f5c451', pants: '#3f1d0d',
       hair: HAIR.short('#2a2118'),

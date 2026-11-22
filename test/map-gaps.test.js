@@ -26,7 +26,7 @@ function mapAgents(M) {
   const kind = {
     grok: 'putin', blog: 'blog', dev: 'dev', social: 'social', poker: 'poker',
     finance: 'finance', routines: 'routines', army: 'army', temshik: 'temshik',
-    devops: 'devops', qa: 'qa',
+    devops: 'devops', qa: 'qa', health: 'health',
   };
   const agents = [];
   for (const item of body[1].matchAll(/(\w+):\s*\[(\d+),\s*(\d+)\]/g)) {
