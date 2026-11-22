@@ -94,6 +94,77 @@ test('инвариант: «Ответ получен» только при answ
   }
 });
 
+function noiseTasks(agentId) {
+  return [
+    {
+      id: 't-2',
+      agent: agentId,
+      agentId,
+      orderStatus: 'cancelled',
+      status: 'в очереди агента',
+      delivery: 'queue',
+      text: 'отменённая t-2',
+      createdAt: '2026-11-17T08:00:00.000Z',
+    },
+    {
+      id: 't-2-status',
+      agent: agentId,
+      agentId,
+      orderStatus: 'sent',
+      status: 'отменён',
+      text: 'отмена только в status',
+      createdAt: '2026-11-17T08:10:00.000Z',
+    },
+    {
+      id: 't-delivered',
+      agent: agentId,
+      agentId,
+      orderStatus: 'sent',
+      forwardStatus: 200,
+      outboxStatus: 'delivered',
+      deliveryLabel: 'Доставлено',
+      status: 'отправлена Путину',
+      text: 'доставленная',
+      createdAt: '2026-11-17T09:00:00.000Z',
+    },
+    {
+      id: 't-delivered-label',
+      agent: agentId,
+      agentId,
+      orderStatus: 'sent',
+      deliveryLabel: 'Доставлено',
+      text: 'подпись доставки',
+      createdAt: '2026-11-17T09:10:00.000Z',
+    },
+    {
+      id: 't-delivered-outbox',
+      agent: agentId,
+      agentId,
+      orderStatus: 'sent',
+      outboxStatus: 'delivered',
+      forwardStatus: null,
+      text: 'outbox delivered',
+      createdAt: '2026-11-17T09:20:00.000Z',
+    },
+  ];
+}
+
+function liveTasks(agentId, count) {
+  const tasks = [];
+  for (let i = 0; i < count; i += 1) {
+    tasks.push({
+      id: `live-${agentId}-${i}`,
+      agent: agentId,
+      agentId,
+      orderStatus: i % 2 === 0 ? 'in_progress' : 'accepted',
+      text: `живая ${i}`,
+      createdAt: '2026-11-22T10:00:00.000Z',
+      status: 'в работе',
+    });
+  }
+  return tasks;
+}
+
 test('инвариант: числа обзора равны видимым карточкам, слово склоняется', () => {
   assert.equal(Feed.ruCount(1, 'задача', 'задачи', 'задач'), 'задача');
   assert.equal(Feed.ruCount(2, 'задача', 'задачи', 'задач'), 'задачи');
@@ -102,58 +173,72 @@ test('инвариант: числа обзора равны видимым ка
   assert.equal(Feed.ruCount(21, 'задача', 'задачи', 'задач'), 'задача');
   assert.equal(Feed.ruCount(0, 'задача', 'задачи', 'задач'), 'задач');
 
-  const tasks = [
-    {
-      id: 't-3',
-      agent: 'finance',
-      agentId: 'finance',
-      orderStatus: 'sent',
-      forwardStatus: 200,
-      outboxStatus: 'delivered',
-      deliveryLabel: 'Доставлено',
-      text: 'Ответ Арсения на «Финансовая сводка»: цифры',
-      createdAt: '2026-11-17T14:05:00.000Z',
-      status: 'отправлена Путину',
-    },
-    {
-      id: 't-live',
-      agent: 'finance',
-      agentId: 'finance',
-      orderStatus: 'in_progress',
-      forwardStatus: 200,
-      text: 'Сверяю отчёт',
-      createdAt: '2026-11-22T10:00:00.000Z',
-      status: 'в работе',
-    },
-    {
-      id: 't-cancel',
-      agent: 'finance',
-      agentId: 'finance',
-      orderStatus: 'cancelled',
-      status: 'отменён',
-      text: 'тест',
-      createdAt: '2026-11-22T09:00:00.000Z',
-    },
-  ];
-  const view = buildDashboard({
-    agent: { id: 'finance', name: 'Финансы', completed: 0 },
-    tasks,
-    messages: [],
-    activity: { activity: 'resting' },
-    now: NOW,
-  });
-  const visible = view.tasks.filter((task) => task.column === 'new' || task.column === 'work' || task.column === 'done');
-  assert.equal(view.tasks.find((task) => task.id === 't-3').column, 'delivered');
-  assert.equal(columnOf(tasks[2]), 'cancelled');
-  assert.equal(isDone(tasks[2]), false);
-  assert.equal(view.metrics.total, visible.length);
-  assert.equal(view.metrics.total, 1);
-  assert.equal(Feed.ruCount(view.metrics.total, 'задача', 'задачи', 'задач'), 'задача');
-  assert.equal(view.metrics.inProgress, visible.filter((task) => task.column === 'work').length);
-  assert.equal(view.metrics.done, visible.filter((task) => task.orderStatus === 'done').length);
-  assert.equal(view.analytics.byStatus.in_progress, 1);
-  assert.equal(view.analytics.byStatus.sent, 0);
-  assert.equal(view.analytics.byStatus.done, 0);
-  const daySum = view.analytics.days.reduce((sum, day) => sum + day.count, 0);
-  assert.equal(daySum, visible.length);
+  const agents = ['qa', 'finance', 'social', 'dev', 'advisor', 'health', 'army', 'routines'];
+  const words = { 1: 'задача', 2: 'задачи', 5: 'задач' };
+  for (const agentId of agents) {
+    const onlyNoise = buildDashboard({
+      agent: { id: agentId, name: agentId, completed: 0 },
+      tasks: noiseTasks(agentId),
+      messages: [],
+      activity: { activity: 'resting' },
+      now: NOW,
+    });
+    assert.equal(onlyNoise.metrics.total, 0, agentId);
+    assert.equal(onlyNoise.metrics.done, 0, agentId);
+    assert.equal(onlyNoise.metrics.inProgress, 0, agentId);
+    assert.equal(onlyNoise.analytics.byStatus, null, agentId);
+    assert.equal(onlyNoise.analytics.days, null, agentId);
+    assert.equal(Feed.ruCount(onlyNoise.metrics.total, 'задача', 'задачи', 'задач'), 'задач', agentId);
+    assert.equal(onlyNoise.tasks.find((task) => task.id === 't-2').column, 'cancelled', agentId);
+    assert.equal(columnOf(noiseTasks(agentId)[0]), 'cancelled', agentId);
+    assert.equal(isDone(noiseTasks(agentId)[0]), false, agentId);
+
+    for (const count of [1, 2, 5]) {
+      const tasks = liveTasks(agentId, count).concat(noiseTasks(agentId));
+      const view = buildDashboard({
+        agent: { id: agentId, name: agentId, completed: 0 },
+        tasks,
+        messages: [],
+        activity: { activity: 'resting' },
+        now: NOW,
+      });
+      const visible = view.tasks.filter((task) => task.column === 'new' || task.column === 'work' || task.column === 'done');
+      const hidden = view.tasks.filter((task) => task.column === 'cancelled' || task.column === 'delivered');
+      assert.equal(hidden.length, noiseTasks(agentId).length, `${agentId} ${count}`);
+      assert.equal(view.metrics.total, visible.length, `${agentId} ${count}`);
+      assert.equal(view.metrics.total, count, `${agentId} ${count}`);
+      assert.equal(Feed.ruCount(view.metrics.total, 'задача', 'задачи', 'задач'), words[count], `${agentId} ${count}`);
+      assert.equal(view.metrics.inProgress, visible.filter((task) => task.column === 'work').length, `${agentId} ${count}`);
+      assert.equal(view.metrics.inProgress, count, `${agentId} ${count}`);
+      assert.equal(view.metrics.done, 0, `${agentId} ${count}`);
+      const statusSum = Object.values(view.analytics.byStatus).reduce((sum, value) => sum + value, 0);
+      assert.equal(statusSum, visible.length, `${agentId} ${count}`);
+      const daySum = view.analytics.days.reduce((sum, day) => sum + day.count, 0);
+      assert.equal(daySum, visible.length, `${agentId} ${count}`);
+      for (const task of noiseTasks(agentId)) {
+        assert.equal(Feed.countsAsActiveTask(task), false, `${agentId} ${task.id}`);
+        assert.equal(visible.some((row) => row.id === task.id), false, `${agentId} ${task.id}`);
+      }
+    }
+
+    const withDone = buildDashboard({
+      agent: { id: agentId, name: agentId, completed: 0 },
+      tasks: liveTasks(agentId, 1).concat(noiseTasks(agentId), [{
+        id: `done-${agentId}`,
+        agent: agentId,
+        agentId,
+        orderStatus: 'done',
+        status: 'выполнена',
+        text: 'готово',
+        createdAt: '2026-11-22T11:00:00.000Z',
+      }]),
+      messages: [],
+      activity: {},
+      now: NOW,
+    });
+    assert.equal(withDone.metrics.total, 2, agentId);
+    assert.equal(withDone.metrics.done, 1, agentId);
+    assert.equal(withDone.metrics.inProgress, 1, agentId);
+    assert.equal(Feed.ruCount(withDone.metrics.total, 'задача', 'задачи', 'задач'), 'задачи', agentId);
+  }
 });

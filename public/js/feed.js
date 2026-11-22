@@ -555,7 +555,7 @@
     if (task.status === 'выполнена' || task.status === 'отменён') return true;
     if (task.answered === true || task.answerStatus === 'answered') return true;
     if (agentAnswered(task, messages)) return true;
-    const delivered = orderDelivered(task) || task.outboxStatus === 'delivered';
+    const delivered = orderDelivered(task) || task.outboxStatus === 'delivered' || task.deliveryLabel === 'Доставлено';
     return delivered && status !== 'accepted' && status !== 'in_progress';
   }
 
