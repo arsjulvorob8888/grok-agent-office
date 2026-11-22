@@ -74,6 +74,34 @@
     return `с ${clock} МСК · ${dur}`;
   }
 
+  const ROUTE_LABEL = {
+    agent: 'Свой вебхук агента',
+    putin: 'Через Путина',
+    env: 'Адрес из окружения',
+    none: 'Нет маршрута',
+  };
+  const ROUTE_ORDER = ['agent', 'putin', 'env', 'none'];
+
+  function routeLabel(kind) {
+    return ROUTE_LABEL[kind] || ROUTE_LABEL.none;
+  }
+
+  function routePhrase(kind) {
+    return `Куда уйдёт приказ: ${routeLabel(kind)}`;
+  }
+
+  function routeSummary(kinds) {
+    const list = (Array.isArray(kinds) ? kinds : []).map((kind) => (ROUTE_LABEL[kind] ? kind : 'none'));
+    if (!list.length) return routePhrase('none');
+    const unique = [...new Set(list)];
+    if (unique.length === 1) return routePhrase(unique[0]);
+    const parts = ROUTE_ORDER.filter((kind) => list.includes(kind)).map((kind) => {
+      const count = list.filter((item) => item === kind).length;
+      return `${routeLabel(kind)} — ${count}`;
+    });
+    return `Куда уйдёт приказ: ${parts.join('. ')}`;
+  }
+
   // Пустой код без маршрута — доставка не подключена. Маршрут есть, а кода ещё нет — ждёт отправки.
   // extra.route: agent | putin | env | none. Без extra поведение прежнее: пустой код = не подключена.
   function deliveryCaption(forwardStatus, extra) {
@@ -407,6 +435,9 @@
     RECENT_CLOSED_MS,
     taskExecutor,
     deliveryCaption,
+    routeLabel,
+    routePhrase,
+    routeSummary,
     moscowClock,
     formatClockMsk,
     formatDateTimeMsk,

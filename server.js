@@ -1036,6 +1036,7 @@ function publicState(opts = {}) {
       grokAgentId: a.grokAgentId || null,
       vacant: !!a.vacant,
       completed: a.completed || 0,
+      deliveryRoute: delivery.publicRoute(a.id, state, process.env),
       responsibilities: (a.responsibilities || []).slice(),
       ...activityFor(a, state.tasks, live.now(), activeWindowMs(), activityExtras()),
       live: publicAgentLive(a.live, live.now()),
@@ -1566,6 +1567,7 @@ function publicTask(t) {
   const view = withStoredFields(base, t);
   view.deliveryLabel = deliveryLabelFor(t);
   view.routeLabel = orderRoute(t, routeName);
+  view.deliveryRoute = delivery.publicRoute(t.agentId || t.agent, state, process.env);
   return view;
 }
 
@@ -3472,13 +3474,15 @@ app.get('/api/agents/:id/dashboard', (req, res) => {
   const agent = findAgent(String(req.params.id || ''));
   if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
   const activity = activityFor(agent, state.tasks, Date.now(), activeWindowMs(), activityExtras());
-  res.json(buildDashboard({
+  const view = buildDashboard({
     agent: { ...agent, number: agentNumber(agent) },
     tasks: state.tasks.map(publicTask),
     messages: state.messages,
     activity,
     now: Date.now(),
-  }));
+  });
+  view.deliveryRoute = delivery.publicRoute(agent.id, state, process.env);
+  res.json(view);
 });
 
 app.post('/api/agents/:id/orders/:orderId', requireAppPassword, async (req, res) => {

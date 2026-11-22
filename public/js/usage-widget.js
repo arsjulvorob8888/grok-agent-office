@@ -1,4 +1,4 @@
-/* Виджет «Лимит Grok». Пороги: от 80 жёлтый, от 95 красный баннер. */
+/* Виджет «Лимит». Пороги: от 80 жёлтый, от 95 красный баннер. Пока снимка нет, блок скрыт. */
 (function (root, factory) {
   'use strict';
   const api = factory();
@@ -56,7 +56,7 @@
       timesText: '',
       banner: '',
       meter: 0,
-      label: 'Лимит Grok: нет данных',
+      label: 'Лимит: нет данных',
     };
   }
 
@@ -71,7 +71,7 @@
     const updated = formatMsk(latest.updatedAt);
     const plan = typeof latest.plan === 'string' && latest.plan.trim() ? latest.plan.trim() : 'нет данных';
     const banner = level === 'critical'
-      ? `Лимит Grok почти исчерпан: использовано ${used}%. Сброс ${reset}`
+      ? `Лимит почти исчерпан: использовано ${used}%. Сброс ${reset}`
       : '';
     const resetText = reset ? `сброс ${reset}` : '';
     const updatedText = updated ? `обновлено ${updated}` : '';
@@ -86,7 +86,7 @@
       timesText: [resetText, updatedText].filter(Boolean).join(' · '),
       banner,
       meter: Math.max(0, Math.min(100, pct)),
-      label: `Лимит Grok, план ${plan}, использовано ${used}%, осталось ${left}%, сброс ${reset}, обновлено ${updated}`,
+      label: `Лимит, план ${plan}, использовано ${used}%, осталось ${left}%, сброс ${reset}, обновлено ${updated}`,
     };
   }
 

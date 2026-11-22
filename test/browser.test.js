@@ -515,7 +515,8 @@ test('«Решить» экранирует ссылку и подсказку �
       assert.match(card.html, /Чат &lt;img src=x&gt;/);
       assert.match(card.html, /Решить &lt;img&gt;/);
       assert.doesNotMatch(card.href, /grokbot:/);
-      assert.match(card.html, /Прочитать: grokbot:/);
+      assert.doesNotMatch(card.html, /grokbot:/);
+      assert.doesNotMatch(card.html, /Прочитать: grokbot:/);
       assert.doesNotMatch(card.html, /подсказка <b>/);
       assert.equal(card.label, 'Решить <img>');
       assert.equal(card.href, `/needs/${created.body.id}`);
@@ -615,7 +616,7 @@ test('задача из панели уходит на сервер и без ф
     await page.evaluate(() => localStorage.setItem('appPassword', 'pw-ui'));
     await page.$eval('#taskText', (el) => { el.value = 'Текстовая задача без файла'; });
     await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
-    await page.waitForFunction(() => /Готово/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 15000 });
+    await page.waitForFunction(() => /Приказ сохранён/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 15000 });
     assert.ok(posts.includes('/api/task'), `без файла POST не ушёл: ${posts.join(',')}`);
     assert.equal(posts.includes('/api/upload'), false);
     const plain = await page.$eval('#panel', (el) => el.textContent);
@@ -627,7 +628,7 @@ test('задача из панели уходит на сервер и без ф
     await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
     await page.waitForFunction(() => {
       const msg = document.querySelector('#formMsg');
-      return msg && /Готово/.test(msg.textContent);
+      return msg && /Приказ сохранён/.test(msg.textContent);
     }, { timeout: 15000 });
     await page.waitForFunction(() => {
       const link = document.querySelector('#panel .file-link, #panel .thumb');
@@ -641,10 +642,10 @@ test('задача из панели уходит на сервер и без ф
     await attachOnPage(page, mid);
     await page.$eval('#taskText', (el) => { el.value = 'И большой скриншот на три мегабайта'; });
     await page.evaluate(() => document.querySelector('#taskForm').requestSubmit());
-    await page.waitForFunction(() => /Готово/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 20000 });
+    await page.waitForFunction(() => /Приказ сохранён/.test(document.querySelector('#formMsg')?.textContent || ''), { timeout: 20000 });
     await page.waitForFunction(() => /image-3mb\.png/.test(document.querySelector('#panel').textContent || ''), { timeout: 8000 });
     const msg = await page.$eval('#formMsg', (el) => el.textContent);
-    assert.match(msg, /Готово/);
+    assert.match(msg, /Приказ сохранён/);
     assert.doesNotMatch(msg, /Нет связи/);
     assert.ok(posts.includes('/api/upload') && posts.includes('/api/task'));
   } finally {
@@ -1364,8 +1365,9 @@ test('страница вопроса с деталями показывает �
       assert.match(view.who, /7\.\s*Финансы/);
       assert.equal(view.href, 'https://example.com/budget');
       assert.equal(view.grokLinks, 0);
-      assert.match(view.grokText, /grokbot:\/\/app\/v1\/agent\?id=demo/);
-      assert.match(view.grokText, /откройте чат агента в Grok/);
+      assert.match(view.grokText, /чат агента/);
+      assert.doesNotMatch(view.grokText, /grokbot:/);
+      assert.doesNotMatch(view.grokText, /Grok/);
       assert.equal(view.script, false);
       assert.match(view.html, /&lt;script&gt;/);
       assert.equal(view.form, false);
@@ -1614,14 +1616,16 @@ async function quietPage(viewport) {
 }
 
 async function openFinanceRoom(page) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const point = await hitAgent(page, 'finance');
-    await page.mouse.click(point.x, point.y);
-    try {
-      await page.waitForSelector('#room.open', { timeout: 1500 });
-      return;
-    } catch (_) { /* точка могла уехать вместе с камерой */ }
-  }
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const point = await hitAgent(page, 'finance');
+      await page.mouse.click(point.x, point.y);
+      try {
+        await page.waitForSelector('#room.open', { timeout: 1500 });
+        return;
+      } catch (_) { /* точка могла уехать вместе с камерой */ }
+    }
+  } catch (_) { /* здание за краем экрана: откроем табличку */ }
   await page.evaluate(() => {
     const tag = document.querySelector('#overlay .tag[data-id="finance"]');
     if (tag) tag.click();
