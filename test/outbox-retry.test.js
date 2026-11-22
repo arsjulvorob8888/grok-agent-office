@@ -222,7 +222,9 @@ test('подпись ответа меняется только после 2xx',
     assert.equal(saved.status, 200);
     const state = await officeJson(office.base, '/api/state');
     const finance = state.body.needs.find((item) => item.id === 'need-finance');
-    assert.equal(finance.answerDeliveryLabel, 'Ответ получен агентом');
+    assert.equal(finance.answer, null);
+    assert.equal(finance.answerDeliveryLabel, 'Ваш ответ доставлен агенту');
+    assert.equal(JSON.stringify(finance).includes('Цифры позже'), false);
     assert.equal(finance.closedAt, null);
     assert.equal(office.text().includes('need-key-not-logged'), false);
   } finally {

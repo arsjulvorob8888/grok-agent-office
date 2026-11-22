@@ -154,7 +154,7 @@ test('дашборд считает колонки, московские дни,
   assert.equal(view.agent.currentTask, 'В работе');
   assert.deepEqual(view.agent.live, { status: 'working', doing: 'Смотрю карту' });
   assert.equal(JSON.stringify(view).includes('secret-live'), false);
-  assert.equal(view.metrics.total, 4);
+  assert.equal(view.metrics.total, 3);
   assert.equal(view.metrics.done, 1);
   assert.equal(view.metrics.inProgress, 1);
   assert.equal(view.agent.level.xp, 1 * 100 + 4 * 10);
@@ -174,10 +174,10 @@ test('дашборд считает колонки, московские дни,
   assert.equal(view.analytics.days.length, 14);
   assert.equal(view.analytics.days[0].date, '2026-11-04');
   assert.equal(view.analytics.days[13].date, '2026-11-17');
-  assert.equal(view.analytics.days[13].count, 2);
+  assert.equal(view.analytics.days[13].count, 1);
   assert.equal(view.analytics.days[12].count, 1);
-  assert.equal(view.analytics.days.reduce((sum, day) => sum + day.count, 0), 3);
-  assert.deepEqual(view.analytics.byStatus, { sent: 2, accepted: 0, in_progress: 1, done: 1, failed: 0 });
+  assert.equal(view.analytics.days.reduce((sum, day) => sum + day.count, 0), 2);
+  assert.deepEqual(view.analytics.byStatus, { sent: 1, accepted: 0, in_progress: 1, done: 1, failed: 0 });
   assert.equal(view.analytics.avgCompletionMs, 60 * 60 * 1000);
   assert.deepEqual(view.analytics.delivered, { delivered: 1, total: 2 });
 

@@ -214,15 +214,37 @@
     return (tasks || []).slice();
   }
 
-  function journalSplit(tasks) {
+  const JOURNAL_SETTLED_MS = 24 * 60 * 60 * 1000;
+
+  function journalSettled(task) {
+    if (!task || task.orderStatus === 'cancelled') return false;
+    const label = taskBadge(task)[1];
+    return label === 'Доставлено' || label === 'Выполнена';
+  }
+
+  function journalSplit(tasks, now = Date.now()) {
     const active = [];
+    const delivered = [];
     const cancelled = [];
+    const clock = Number.isFinite(now) ? now : Date.now();
     for (const task of tasks || []) {
       if (!task) continue;
-      if (task.orderStatus === 'cancelled') cancelled.push(task);
+      if (task.orderStatus === 'cancelled') {
+        cancelled.push(task);
+        continue;
+      }
+      const created = Date.parse(task.createdAt);
+      const age = Number.isFinite(created) ? clock - created : 0;
+      if (journalSettled(task) && age > JOURNAL_SETTLED_MS) delivered.push(task);
       else active.push(task);
     }
-    return { active, cancelled, badge: active.length };
+    return {
+      active,
+      delivered,
+      cancelled,
+      badge: active.length,
+      empty: active.length ? '' : 'Активных заданий нет',
+    };
   }
 
   function ordersForAgent(tasks, agentId) {
@@ -365,40 +387,65 @@
 
   function agentAnswered(task, messages) {
     if (!task || !task.id) return false;
+    if (task.answeredAt) return true;
     return (messages || []).some((message) => message && message.role === 'agent' && message.taskId === task.id);
   }
 
-  function needAnswerBody(need) {
-    if (!need) return '';
-    if (typeof need.answer === 'string' && need.answer.trim()) return need.answer.trim();
-    const list = Array.isArray(need.answers) ? need.answers : [];
-    for (let i = list.length - 1; i >= 0; i -= 1) {
-      const text = list[i] && typeof list[i].text === 'string' ? list[i].text.trim() : '';
-      if (text) return text;
-    }
-    return '';
+  function storedNeedAnswer(need) {
+    if (!need || need.answer == null) return '';
+    return String(need.answer).trim();
+  }
+
+  function linkedAnswerTasks(need, tasks) {
+    const id = need && need.id;
+    const prefix = need && need.what ? `Ответ Арсения на «${need.what}»` : '';
+    return (tasks || []).filter((task) => {
+      if (!task) return false;
+      if (id && task.needId === id) return true;
+      return !!(prefix && String(task.text || '').startsWith(prefix));
+    });
+  }
+
+  function taskAnswerText(need, task) {
+    const raw = String(task && task.text || '').trim();
+    const prefix = need && need.what ? `Ответ Арсения на «${need.what}»: ` : '';
+    if (prefix && raw.startsWith(prefix)) return raw.slice(prefix.length).trim();
+    const mark = raw.indexOf('»: ');
+    if (raw.startsWith('Ответ Арсения на «') && mark >= 0) return raw.slice(mark + 3).trim();
+    return raw;
+  }
+
+  function taskDelivered(task) {
+    return !!(task && (orderDelivered(task) || task.outboxStatus === 'delivered'));
   }
 
   function answerDeliveryCaption(need, tasks, outbox) {
-    if (!needAnswerBody(need)) return null;
-    const id = need.id;
-    const deliveredTask = (task) => !!(task && (orderDelivered(task) || task.outboxStatus === 'delivered'));
-    for (const entry of outbox || []) {
-      if (!entry || !entry.payload || entry.payload.needId !== id) continue;
-      if (entry.payload.type && entry.payload.type !== 'answer') continue;
-      if (entry.status !== 'delivered') continue;
+    if (!need) return null;
+    const own = storedNeedAnswer(need);
+    const linked = linkedAnswerTasks(need, tasks);
+    const delivered = linked.filter(taskDelivered);
+    const boxDelivered = (outbox || []).some((entry) => {
+      if (!entry || entry.status !== 'delivered' || !entry.payload || entry.payload.needId !== need.id) return false;
+      if (entry.payload.type && entry.payload.type !== 'answer') return false;
       const code = Number(entry.lastStatus);
-      if (Number.isInteger(code) && code >= 200 && code < 300) return 'Ответ получен агентом';
+      if (Number.isInteger(code) && code >= 200 && code < 300) return true;
       const task = (tasks || []).find((row) => row && row.id === entry.taskId);
-      if (deliveredTask(task)) return 'Ответ получен агентом';
-    }
-    for (const task of tasks || []) {
-      if (!task) continue;
-      const linked = task.needId === id
-        || (need.what && String(task.text || '').startsWith(`Ответ Арсения на «${need.what}»`));
-      if (linked && deliveredTask(task)) return 'Ответ получен агентом';
-    }
-    return 'Сохранён, ещё не доставлен';
+      return taskDelivered(task);
+    });
+    if (own && (delivered.length || boxDelivered)) return 'Ответ получен агентом';
+    if (own) return 'Сохранён, ещё не доставлен';
+    if (delivered.length) return 'Ваш ответ доставлен агенту';
+    if (linked.length) return 'Сохранён, ещё не доставлен';
+    return null;
+  }
+
+  function ruCount(n, one, few, many) {
+    const value = Math.abs(Math.trunc(Number(n) || 0));
+    const n10 = value % 10;
+    const n100 = value % 100;
+    if (n10 === 1 && n100 !== 11) return one;
+    if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
+    return many;
   }
 
   function silentTask(task) {
@@ -530,7 +577,7 @@
     if (task.status === 'выполнена' || task.status === 'отменён') return true;
     if (task.answered === true || task.answerStatus === 'answered') return true;
     if (agentAnswered(task, messages)) return true;
-    const delivered = orderDelivered(task) || task.outboxStatus === 'delivered';
+    const delivered = orderDelivered(task) || task.outboxStatus === 'delivered' || task.deliveryLabel === 'Доставлено';
     return delivered && status !== 'accepted' && status !== 'in_progress';
   }
 
@@ -629,8 +676,9 @@
     formatDateTimeMsk,
     formatProcessStamp,
     replyWaitCaption,
-    needAnswerBody,
     answerDeliveryCaption,
+    taskAnswerText,
+    ruCount,
     countsAsActiveTask,
     PROCESS_HOLD_MS,
     journalSplit,

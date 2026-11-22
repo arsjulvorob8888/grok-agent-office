@@ -1569,10 +1569,16 @@
         <div class="attach-preview" id="attachPreview"></div>
       </form>`;
     }
-    const shown = tasks.slice(0, 20);
-    if (pin && !shown.some((t) => t.id === pin.id)) shown.unshift(pin);
+    const journal = Feed.journalSplit ? Feed.journalSplit(tasks, Date.now()) : { active: tasks, delivered: [], cancelled: [], empty: '' };
+    const shown = journal.active.slice(0, 20);
+    if (pin && journal.active.some((t) => t.id === pin.id) && !shown.some((t) => t.id === pin.id)) shown.unshift(pin);
     const focusCls = (t) => (S.pinnedOrder === t.id ? ' order-focus' : '');
-    const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${shown.map((t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id).replace('class="quest"', `class="quest${focusCls(t)}"`)).join('') || emptyQuests()}</div></div>`;
+    const roomQuest = (t) => questHTML(t, (t.agentId || t.agent) !== a.id, a.id).replace('class="quest"', `class="quest${focusCls(t)}"`);
+    const roomFold = (items, cls, title) => (items && items.length
+      ? `<details class="${cls}"><summary>${title} (${items.length})</summary>${items.slice(0, 60).map(roomQuest).join('')}</details>`
+      : '');
+    const roomIdle = journal.active.length ? '' : `<div class="empty"><b>${esc(journal.empty || 'Активных заданий нет')}</b></div>`;
+    const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${shown.map(roomQuest).join('')}${roomIdle}${roomFold(journal.delivered, 'j-delivered', 'Доставленные')}${roomFold(journal.cancelled, 'j-cancelled', 'Отменённые')}</div></div>`;
     panel.innerHTML = `
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
@@ -1672,8 +1678,6 @@
     apply();
     requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
   }
-  const emptyQuests = () => '<div class="empty"><b>Заданий пока нет</b>Дай первую задачу — и агент возьмётся за работу.</div>';
-
   // ── Отправка задач ───────────────────────────────────────────────────────
   const getPassword = () => localStorage.getItem('appPassword') || '';
   // Очередь действия, которое ждёт пароль: закрытие пункта, отправка задачи.
@@ -1959,19 +1963,17 @@
     const top = list.scrollTop;
     const saved = {};
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
-    const split = Feed.journalSplit ? Feed.journalSplit(Feed.ordersForGeneral(S.tasks)) : { active: Feed.ordersForGeneral(S.tasks), cancelled: [], badge: S.tasks.length };
-    const sig = split.active.concat(split.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
-    const badge = split.active.filter((t) => !(window.TaskRules && TaskRules.isSilentTask(t))).length;
-    $('#jCount').textContent = String(badge);
+    const split = Feed.journalSplit ? Feed.journalSplit(Feed.ordersForGeneral(S.tasks), Date.now()) : { active: Feed.ordersForGeneral(S.tasks), delivered: [], cancelled: [], badge: S.tasks.length, empty: '' };
+    const sig = split.active.concat(split.delivered || [], split.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
+    $('#jCount').textContent = String(split.badge != null ? split.badge : split.active.length);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
     const quest = (t) => questHTML(t, true);
-    const activeHtml = split.active.slice(0, 60).map(quest).join('');
-    const cancelledHtml = split.cancelled.length
-      ? `<details class="j-cancelled"><summary>Отменённые (${split.cancelled.length})</summary>${split.cancelled.slice(0, 60).map(quest).join('')}</details>`
-      : '';
-    const empty = '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
-    list.innerHTML = (activeHtml || (cancelledHtml ? '' : empty)) + cancelledHtml;
+    const fold = (items, cls, title) => (items && items.length
+      ? `<details class="${cls}"><summary>${title} (${items.length})</summary>${items.slice(0, 60).map(quest).join('')}</details>`
+      : '');
+    const idle = split.active.length ? '' : `<div class="empty"><b>${esc(split.empty || 'Активных заданий нет')}</b></div>`;
+    list.innerHTML = idle + split.active.slice(0, 60).map(quest).join('') + fold(split.delivered, 'j-delivered', 'Доставленные') + fold(split.cancelled, 'j-cancelled', 'Отменённые');
     list.scrollTop = top;
     list.querySelectorAll('[data-scroll-key]').forEach((el) => {
       if (typeof saved[el.dataset.scrollKey] === 'number') el.scrollTop = saved[el.dataset.scrollKey];
@@ -1985,10 +1987,7 @@
     });
   }
   function taskWord(n) {
-    const n10 = n % 10, n100 = n % 100;
-    if (n10 === 1 && n100 !== 11) return 'задача';
-    if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return 'задачи';
-    return 'задач';
+    return Feed.ruCount(n, 'задача', 'задачи', 'задач');
   }
   function openTaskCount(id) {
     return S.tasks.filter((t) => (t.agentId || t.agent) === id && Feed.countsAsActiveTask(t) && !(window.TaskRules && TaskRules.isSilentTask(t))).length;
@@ -2520,7 +2519,10 @@
       }
       who.textContent = `Ждёт: ${titled(agent)}`;
     }
-    document.addEventListener('officestate', paintWho);
+    document.addEventListener('officestate', () => {
+      if (need) paintPublic();
+      else paintWho();
+    });
 
     function paintExternal() {
       if (!external) return;
@@ -2578,7 +2580,12 @@
       if (title) title.textContent = need.what || 'Вопрос';
       if (where) where.textContent = need.where ? `Где: ${need.where}` : '';
       if (badge) {
-        const cap = need && need.answerDeliveryLabel ? need.answerDeliveryLabel : '';
+        let cap = need && need.answerDeliveryLabel ? need.answerDeliveryLabel : '';
+        if (cap === 'Ваш ответ доставлен агенту' && Feed.taskAnswerText) {
+          const task = (S.tasks || []).find((item) => item && (item.needId === need.id || (need.what && String(item.text || '').startsWith(`Ответ Арсения на «${need.what}»`))));
+          const text = task ? Feed.taskAnswerText(need, task) : '';
+          if (text) cap = `${cap}: ${text}`;
+        }
         badge.hidden = !cap;
         if (cap) badge.textContent = cap;
       }
