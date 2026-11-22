@@ -83,6 +83,10 @@ body.proc-on #journal{display:none}
 .proc-elapsed{margin-left:auto;font:700 12px/1.3 var(--display);font-variant-numeric:tabular-nums;color:var(--gold)}
 .proc-retry{margin-left:auto;min-height:32px;padding:0 10px;border-radius:999px;border:1px solid rgba(245,196,81,.45);background:rgba(245,196,81,.12);color:var(--gold);font:800 12px/1 var(--font);cursor:pointer}
 .proc-retry:disabled{opacity:.6;cursor:default}
+.proc-cancel{min-height:32px;padding:0 10px;border-radius:999px;border:1px solid rgba(252,165,165,.45);background:rgba(239,68,68,.12);color:#fca5a5;font:800 12px/1 var(--font);cursor:pointer}
+.proc-cancel:disabled{opacity:.6;cursor:default}
+.proc-held{margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.proc-held h3{margin:2px 4px 8px;font:800 12px/1.3 var(--display);letter-spacing:.04em;color:#fca5a5}
 .quest.order-focus{border-color:rgba(34,197,94,.65);box-shadow:0 0 0 1px rgba(34,197,94,.35)}
 
 @media (max-width:900px){

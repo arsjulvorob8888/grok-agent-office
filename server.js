@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
-const { activityFor, activeWindowMs } = require('./lib/activity');
+const { activityFor, activeWindowMs, orderRoute } = require('./lib/activity');
 const { deliveryCaption } = require('./public/js/feed');
 const retry = require('./lib/outbox-retry');
 const { buildDashboard } = require('./lib/agent-dashboard');
@@ -1565,7 +1565,19 @@ function publicTask(t) {
   };
   const view = withStoredFields(base, t);
   view.deliveryLabel = deliveryLabelFor(t);
+  view.routeLabel = orderRoute(t, routeName);
   return view;
+}
+
+function routeName(id) {
+  if (!id || id === 'owner') return 'Путин';
+  const agent = findAgent(id);
+  if (!agent) return String(id || '');
+  const name = agent.id === 'grok' ? 'Путин' : (agent.name || agent.id);
+  const number = agentNumber(agent);
+  if (!number) return name;
+  const num = String(number).includes('.') ? String(number) : `${number}.`;
+  return `${num} ${name}`;
 }
 
 function outboxForTask(taskId) {
@@ -2348,6 +2360,24 @@ app.post('/api/delivery/retry', async (req, res) => {
   res.json({ ok: true, sent: result.sent, failed: result.failed });
 });
 
+app.post('/api/orders/:id/cancel', requireAppPassword, async (req, res) => {
+  const task = state.tasks.find((item) => item && item.id === req.params.id);
+  if (!task) return res.status(404).json({ error: 'Задача не найдена' });
+  task.orderStatus = 'cancelled';
+  retry.applyCancelledFields(task);
+  const dropped = [];
+  for (const item of state.outbox || []) {
+    if (!item || item.taskId !== task.id) continue;
+    if (item.status === 'delivered' || item.status === 'cancelled') continue;
+    item.status = 'cancelled';
+    store.noteOutbox(item);
+    dropped.push(item.id);
+  }
+  store.noteTask(task);
+  await store.flush();
+  res.json({ ok: true, task: publicTask(task), outbox: dropped });
+});
+
 app.post('/api/orders/:id/retry', requireAppPassword, async (req, res) => {
   const task = state.tasks.find((item) => item && item.id === req.params.id);
   if (!task) return res.status(404).json({ error: 'Задача не найдена' });
@@ -2696,9 +2726,19 @@ function markDeliveredAgent(item, task) {
   store.noteAgent(agent);
 }
 
+function silenceCancelledOutbox(item) {
+  if (!item || item.status === 'delivered') return false;
+  if (item.status === 'cancelled') return true;
+  const task = (state.tasks || []).find((entry) => entry && entry.id === item.taskId);
+  if (!task || task.orderStatus !== 'cancelled') return false;
+  item.status = 'cancelled';
+  store.noteOutbox(item);
+  return true;
+}
+
 async function sendOutboxItem(item, options = {}) {
   const force = !!(options && options.force);
-  if (!item || item.status === 'delivered' || item.status === 'sending') {
+  if (!item || item.status === 'delivered' || item.status === 'sending' || silenceCancelledOutbox(item)) {
     return { sent: false, attempted: false, skipped: true };
   }
   if (!retry.claimMemory(item, process.env, force)) {
@@ -2780,10 +2820,11 @@ function recordOutboxResult(item, result) {
 }
 
 async function drainOutbox(mode) {
+  rememberCancelledOrders();
   const now = Date.now();
   const pending = (state.outbox || [])
     .filter((item) => {
-      if (!item || item.status !== 'queued') return false;
+      if (!item || item.status !== 'queued' || silenceCancelledOutbox(item)) return false;
       if (mode === 'timer') return retry.dueOnTimer(item, now);
       return !retry.exhausted(item);
     })
@@ -2808,7 +2849,15 @@ function flushOutbox(mode) {
   return run;
 }
 
+function rememberCancelledOrders() {
+  const plan = retry.normalizeCancelledOrders(state.tasks, state.outbox);
+  for (const task of plan.tasks) store.noteTask(task);
+  for (const item of plan.outbox) store.noteOutbox(item);
+  return plan;
+}
+
 function backfillMissingOutbox() {
+  rememberCancelledOrders();
   if (!Array.isArray(state.outbox)) state.outbox = [];
   const plan = retry.planBackfill(state.tasks, state.outbox, state.needs);
   for (const task of plan.cancelled) store.noteTask(task);
@@ -2831,7 +2880,9 @@ function backfillMissingOutbox() {
 }
 
 async function deliverPendingAfterRouteChange() {
+  rememberCancelledOrders();
   backfillMissingOutbox();
+  rememberCancelledOrders();
   await store.flush();
   return flushOutbox('now');
 }

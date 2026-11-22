@@ -318,6 +318,78 @@
     return '';
   }
 
+  const PROCESS_HOUR_MS = 60 * 60 * 1000;
+
+  function processBuckets(tasks, routines, now = Date.now()) {
+    const live = [];
+    const undelivered = [];
+    for (const task of tasks || []) {
+      if (!task) continue;
+      const status = task.orderStatus || 'sent';
+      if (status === 'cancelled' || status === 'done' || status === 'failed') continue;
+      if (status !== 'sent' && status !== 'accepted' && status !== 'in_progress') continue;
+      if (status === 'accepted' || status === 'in_progress' || orderDelivered(task)) {
+        live.push(task);
+        continue;
+      }
+      const created = Date.parse(task.createdAt || '');
+      const age = Number.isFinite(created) ? now - created : Infinity;
+      if (age > PROCESS_HOUR_MS) undelivered.push(task);
+    }
+    const pulses = (routines || []).filter((item) => item && item.active && !item.finishedAt);
+    return { live, undelivered, pulses };
+  }
+
+  function countsAsQueued(task) {
+    if (!task) return false;
+    if (task.orderStatus === 'cancelled' || task.orderStatus === 'done' || task.orderStatus === 'failed') return false;
+    if (task.status === 'выполнена') return false;
+    return task.status === 'в очереди агента' || task.delivery === 'queue' || !task.orderStatus || task.orderStatus === 'sent';
+  }
+
+  function taskBadge(task, ctx) {
+    const t = task || {};
+    const context = ctx || {};
+    const captionOf = (item) => item.deliveryLabel || deliveryCaption(item.forwardStatus);
+    if (t.orderStatus === 'cancelled') return ['cancel', 'Отменено'];
+    if (t.orderStatus === 'failed') return ['fail', 'Не выполнен'];
+    if (t.orderStatus === 'done' || t.status === 'выполнена') return ['done', 'Выполнена'];
+    if (t.orderStatus === 'in_progress') return ['work', 'В работе'];
+    if (t.orderStatus === 'accepted') return ['work', 'Принял'];
+    if (!t.orderStatus || t.orderStatus === 'sent') {
+      const code = Number(t.forwardStatus);
+      const failed = t.forwardStatus != null && t.forwardStatus !== '' && !(Number.isInteger(code) && code >= 200 && code < 300);
+      return [failed ? 'fail' : 'sent', captionOf(t)];
+    }
+    if (t.status === 'выполнена') return ['done', 'Выполнена'];
+    const mode = context.mode;
+    const agent = context.agent;
+    const latest = context.latest;
+    const working = mode ? mode === 'working' : !!(agent && agent.status === 'working');
+    if (working && latest && latest.id === t.id) return ['work', 'В работе'];
+    if (t.status === 'в очереди агента') return ['sent', captionOf(t)];
+    if (t.status === 'отправлена Путину') return ['sent', captionOf(t)];
+    if (String(t.status || '').startsWith('не отправлена')) return ['fail', 'Не отправлена'];
+    if (t.forwardStatus === 0 || (t.forwardStatus && (t.forwardStatus < 200 || t.forwardStatus >= 300))) {
+      return ['fail', deliveryCaption(t.forwardStatus)];
+    }
+    return ['sent', deliveryCaption(t.forwardStatus)];
+  }
+
+  function historyCaption(task, entry) {
+    const status = entry && entry.status;
+    if (task && task.orderStatus === 'cancelled' && (status === 'sent' || status === 'cancelled' || !status)) return 'Отменено';
+    if (status === 'sent') return (task && task.deliveryLabel) || deliveryCaption(task && task.forwardStatus);
+    const words = {
+      accepted: 'принял',
+      in_progress: 'в работе',
+      done: 'выполнено',
+      failed: 'не выполнен',
+      cancelled: 'отменено',
+    };
+    return words[status] || status || '';
+  }
+
   function countsMatch(state, agentId, now) {
     const tasks = state.tasks || [];
     const messages = state.messages || [];
@@ -340,6 +412,10 @@
     formatDateTimeMsk,
     formatProcessStamp,
     replyWaitCaption,
+    processBuckets,
+    countsAsQueued,
+    taskBadge,
+    historyCaption,
     orderParticipantIds,
     seesOrder,
     ordersForGeneral,

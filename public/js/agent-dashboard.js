@@ -498,8 +498,8 @@
     const metrics = data.metrics || { total: 0, done: 0, inProgress: 0 };
     const level = agent.level || { lvl: 1, xp: 0, into: 0, need: 150 };
     const pct = level.need ? Math.max(0, Math.min(100, Math.round((level.into / level.need) * 100))) : 0;
-    const activity = ACTIVITY[agent.activity] || STATUS[agent.status] || 'Свободен';
-    const mode = agent.activity || 'resting';
+    const mode = window.AgentStatus ? AgentStatus.activityMode(agent) : (agent.activity || 'resting');
+    const activity = window.AgentStatus ? AgentStatus.activityLabel(agent) : (ACTIVITY[mode] || STATUS[agent.status] || 'Спит');
     const live = agent.live
       ? `<span class="dash-pill ${esc(agent.live.status)}">Живой ход: ${esc(LIVE[agent.live.status] || agent.live.status)}${agent.live.doing ? ` · ${esc(agent.live.doing)}` : ''}</span>`
       : '';

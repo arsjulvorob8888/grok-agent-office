@@ -42,10 +42,22 @@
     return Number.isInteger(code) && code >= 200 && code < 300;
   }
 
-  function canRetry(task) {
-    if (!ownerReady() || !task || !task.id) return false;
-    if (task.orderStatus === 'done' || task.orderStatus === 'failed' || task.orderStatus === 'cancelled') return false;
-    return !deliveredCode(task);
+  async function cancelOrder(id, btn) {
+    let password = '';
+    try { password = localStorage.getItem('appPassword') || ''; } catch (_) { password = ''; }
+    if (!id || !password) return;
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: '{}',
+      });
+      if (res.status === 401) {
+        try { localStorage.removeItem('appPassword'); } catch (_) { /* пароль уже стёрт */ }
+      }
+    } catch (_) { /* сеть: список обновит следующий опрос */ }
+    if (btn) btn.disabled = false;
   }
 
   async function retryOrder(id, btn) {
@@ -130,28 +142,60 @@
     });
   }
 
+  function routeText(task, map) {
+    if (task && task.routeLabel) return task.routeLabel;
+    const from = person(task.fromAgentId || 'grok', map);
+    const to = person(task.agentId || task.agent, map);
+    return `${from} → ${to}`;
+  }
+
+  function orderRow(task, map, now, withActions) {
+    const route = routeText(task, map);
+    const what = task.text || 'Задача';
+    const status = task.orderStatus || 'sent';
+    const label = rowStatus(task);
+    const actions = withActions && ownerReady()
+      ? `<button type="button" class="proc-retry" data-retry="${esc(task.id)}">Повторить</button><button type="button" class="proc-cancel" data-cancel="${esc(task.id)}">Отменить</button>`
+      : '';
+    const parts = esc(route).split('→');
+    const routeHtml = parts.length === 2
+      ? `<b>${parts[0].trim()}</b><span class="arr" aria-hidden="true">→</span><b>${parts[1].trim()}</b>`
+      : `<b>${esc(route)}</b>`;
+    return `<div class="proc-row ${esc(status)}" data-order-id="${esc(task.id)}" role="button" tabindex="0">
+      <span class="proc-route">${routeHtml}</span>
+      <span class="proc-what">${esc(what)}</span>
+      <span class="proc-meta"><span class="proc-st ${esc(status)}">${esc(label)}</span><time class="proc-elapsed" datetime="${esc(task.createdAt)}">${esc(formatStamp(task.createdAt, now))}</time>${actions}</span>
+    </div>`;
+  }
+
   function render() {
     const list = document.getElementById('procList');
     const count = document.getElementById('procCount');
     const badge = document.getElementById('procBadge');
     if (!list) return;
-    const rows = active();
-    const runs = activeRoutines();
+    const visibleTasks = tasks.filter((task) => task && !archivedParty(task.agentId || task.agent) && !archivedParty(task.fromAgentId));
+    const visibleRuns = routines.filter((item) => item && !archivedParty(item.agentId));
+    const buckets = window.OfficeFeed
+      ? OfficeFeed.processBuckets(visibleTasks, visibleRuns, Date.now())
+      : { live: active(), undelivered: [], pulses: activeRoutines() };
+    const rows = buckets.live;
+    const held = buckets.undelivered;
+    const runs = buckets.pulses;
     const total = rows.length + runs.length;
     if (count) count.textContent = String(total);
     if (badge) {
       badge.textContent = String(total);
       badge.classList.toggle('zero', total === 0);
     }
-    const sig = rows.map((t) => [t.id, t.orderStatus, t.forwardStatus, t.deliveryLabel, t.text, t.fromAgentId, t.agentId || t.agent, t.createdAt, ownerReady() ? 1 : 0].join('\u0001')).join('\u0002')
-      + '\u0003' + runs.map((r) => [r.id, r.name, r.agentId, r.startedAt].join('\u0001')).join('\u0002');
+    const pack = (listRows) => listRows.map((t) => [t.id, t.orderStatus, t.forwardStatus, t.deliveryLabel, t.routeLabel, t.text, t.fromAgentId, t.agentId || t.agent, t.createdAt, ownerReady() ? 1 : 0].join('\u0001')).join('\u0002');
+    const sig = pack(rows) + '\u0003' + runs.map((r) => [r.id, r.name, r.agentId, r.startedAt].join('\u0001')).join('\u0002') + '\u0003' + pack(held);
     tick();
     if (list.dataset.sig === sig) return;
     const top = list.scrollTop;
     list.dataset.sig = sig;
     const map = byId();
-    if (!rows.length && !runs.length) {
-      list.innerHTML = '<div class="proc-empty"><b>Сейчас тихо</b>Нет приказов в пути, принятых или в работе.</div>';
+    if (!rows.length && !runs.length && !held.length) {
+      list.innerHTML = '<div class="proc-empty"><b>Сейчас тихо</b>Нет доставленных приказов и живых пульсов.</div>';
       list.scrollTop = 0;
       return;
     }
@@ -164,26 +208,17 @@
         <span class="proc-meta"><span class="proc-st in_progress">Идёт</span><time class="proc-elapsed" datetime="${esc(r.startedAt)}">${esc(formatStamp(r.startedAt, now))}</time></span>
       </button>`;
     }).join('');
-    list.innerHTML = routineHtml + rows.map((t) => {
-      const from = person(t.fromAgentId || 'grok', map);
-      const to = person(t.agentId || t.agent, map);
-      const what = t.text || 'Задача';
-      const status = t.orderStatus;
-      const label = rowStatus(t);
-      const retry = canRetry(t)
-        ? `<button type="button" class="proc-retry" data-retry="${esc(t.id)}">Отправить повторно</button>`
-        : '';
-      return `<div class="proc-row ${esc(status)}" data-order-id="${esc(t.id)}" role="button" tabindex="0">
-        <span class="proc-route"><b>${esc(from)}</b><span class="arr" aria-hidden="true">→</span><b>${esc(to)}</b></span>
-        <span class="proc-what">${esc(what)}</span>
-        <span class="proc-meta"><span class="proc-st ${esc(status)}">${esc(label)}</span><time class="proc-elapsed" datetime="${esc(t.createdAt)}">${esc(formatStamp(t.createdAt, now))}</time>${retry}</span>
-      </div>`;
-    }).join('');
+    const liveHtml = rows.map((task) => orderRow(task, map, now, false)).join('');
+    const heldHtml = held.length
+      ? `<section class="proc-held"><h3>Не доставлено</h3>${held.map((task) => orderRow(task, map, now, true)).join('')}</section>`
+      : '';
+    list.innerHTML = routineHtml + liveHtml + heldHtml;
     list.scrollTop = top;
     list.querySelectorAll('.proc-row').forEach((btn) => {
       btn.onclick = (event) => {
-        if (event.target.closest('[data-retry]')) return;
+        if (event.target.closest('[data-retry], [data-cancel]')) return;
         const id = btn.dataset.orderId;
+        if (!id) return;
         if (window.Office && typeof window.Office.openOrder === 'function') window.Office.openOrder(id);
         if (innerWidth <= 900) setOpen(false);
       };
@@ -193,6 +228,13 @@
         event.preventDefault();
         event.stopPropagation();
         retryOrder(btn.dataset.retry, btn);
+      };
+    });
+    list.querySelectorAll('[data-cancel]').forEach((btn) => {
+      btn.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        cancelOrder(btn.dataset.cancel, btn);
       };
     });
   }
