@@ -161,6 +161,7 @@ body.hier-on .link.sub{opacity:1;stroke-dasharray:none;stroke-width:3.2}
 .tag.sub .nm{font-size:11.5px}
 .tag.sub .lvl{min-width:18px;height:18px;font-size:9px}
 .tag .dot{width:7px;height:7px;border-radius:50%;background:#8b93a3;flex:none}
+.tag.guest{width:14px;height:14px;min-width:0;padding:0;border:0;background:transparent;box-shadow:none;pointer-events:none}
 .tag .dot.working{background:var(--ok)}
 .tag .dot.waiting{background:var(--warn)}
 @keyframes dot{50%{box-shadow:0 0 0 6px rgba(255,255,255,0)}}
@@ -386,6 +387,7 @@ body.hier-on #journal{display:none}
 .badge.work{background:rgba(34,197,94,.14);color:#86efac}
 .badge.done{background:rgba(245,196,81,.16);color:var(--gold)}
 .badge.fail{background:rgba(239,68,68,.14);color:#fca5a5}
+.badge.cancel{background:rgba(148,163,184,.16);color:#cbd5e1}
 .empty{padding:18px 14px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.5}
 .empty b{display:block;color:var(--ink);font:700 13px var(--display);margin-bottom:4px}
 .reply-wait{margin:0 0 10px;color:var(--muted);font-size:12.5px;line-height:1.45}

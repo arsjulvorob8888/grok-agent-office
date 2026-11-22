@@ -421,7 +421,8 @@ test('классы яркости: idle, working и coordinating на здани
     }, { timeout: 5000 });
     await page.waitForFunction(() => {
       const el = document.querySelector('#agents .agent[data-id="grok"] .fig-wrap');
-      return el && Math.abs(parseFloat(getComputedStyle(el).opacity) - 0.8) < 0.05;
+      const style = el ? getComputedStyle(el) : null;
+      return style && Math.abs(parseFloat(style.opacity) - 1) < 0.05 && !/grayscale/.test(style.filter);
     }, { timeout: 2000 });
     const clickable = await page.$eval('#agents .agent[data-id="poker"]', (el) => getComputedStyle(el).pointerEvents);
     assert.notEqual(clickable, 'none');
@@ -460,5 +461,240 @@ test('неактивный спящий чип серый, а reduced-motion г�
     assert.match(String(motion.filter), /grayscale\(0?\.4\)/, JSON.stringify(motion));
   } finally {
     await quiet.close();
+  }
+});
+
+test('зелёная точка совпадает с яркостью фигурки, здания и полосы', { timeout: 30000 }, async () => {
+  for (const id of ['health', 'social']) {
+    const posted = await api('/api/agent-status', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer status-aui' },
+      body: JSON.stringify({ agentId: id, status: 'working', doing: 'На линии' }),
+    });
+    assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  }
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForFunction(() => {
+      const health = document.querySelector('#agents .agent[data-id="health"]');
+      const poker = document.querySelector('#agents .agent[data-id="poker"]');
+      return health && health.classList.contains('st-working') && poker && poker.classList.contains('act-idle');
+    }, { timeout: 8000 });
+    const look = await page.evaluate(() => {
+      const green = (color) => {
+        const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color || '');
+        if (!match) return false;
+        const g = Number(match[2]);
+        return g > 140 && g > Number(match[1]) + 40 && g > Number(match[3]) + 40;
+      };
+      const read = (id) => {
+        const agent = document.querySelector(`#agents .agent[data-id="${id}"]`);
+        const bld = agent.querySelector('.bld');
+        const fig = agent.querySelector('.fig-wrap');
+        const body = agent.querySelector('.fig-body');
+        const dot = document.querySelector(`#overlay .tag[data-id="${id}"] .dot`);
+        const chip = document.querySelector(`#roster .chip[data-id="${id}"]`);
+        const av = chip.querySelector('.av');
+        const st = chip.querySelector('.st');
+        const part = (el) => {
+          const style = getComputedStyle(el);
+          return { opacity: style.opacity, filter: style.filter };
+        };
+        return {
+          dot: green(getComputedStyle(dot).backgroundColor),
+          chipDot: green(getComputedStyle(st).backgroundColor),
+          bld: part(bld),
+          fig: part(fig),
+          body: body ? part(body) : null,
+          av: part(av),
+        };
+      };
+      return { health: read('health'), social: read('social'), poker: read('poker') };
+    });
+    for (const id of ['health', 'social']) {
+      const row = look[id];
+      assert.equal(row.dot, true, `${id} точка на карте`);
+      assert.equal(row.chipDot, true, `${id} точка в полосе`);
+      for (const part of ['bld', 'fig', 'body', 'av']) {
+        assert.ok(Math.abs(Number(row[part].opacity) - 1) < 0.05, `${id} ${part} ${JSON.stringify(row[part])}`);
+        assert.equal(/grayscale/.test(row[part].filter), false, `${id} ${part} ${row[part].filter}`);
+      }
+    }
+    assert.equal(look.poker.dot, false);
+    assert.equal(look.poker.chipDot, false);
+    assert.ok(Math.abs(Number(look.poker.fig.opacity) - 0.55) < 0.05, JSON.stringify(look.poker.fig));
+    assert.match(look.poker.bld.filter, /grayscale/);
+    await page.screenshot({ path: '/tmp/wave2-map-opacity.png' });
+  } finally {
+    await page.close();
+  }
+});
+
+test('status=working и activity=resting дают одну точку, яркость и счётчик', { timeout: 40000 }, async () => {
+  const ids = ['finance', 'qa', 'social', 'advisor'];
+  const old = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  for (const id of ids) {
+    const agent = state.agents.find((item) => item.id === id);
+    agent.status = 'working';
+    agent.now = 'Старая отметка';
+    agent.lastStatusAt = old;
+    agent.lastSeenAt = null;
+    agent.live = null;
+    agent.heartbeatNote = '';
+    agent.lastDashboardAt = null;
+  }
+  const check = async (width, height) => {
+    const page = await openPage({ width, height });
+    try {
+      await page.waitForFunction(() => {
+        const dot = document.querySelector('#overlay .tag[data-id="advisor"] .dot');
+        const active = document.querySelector('#stActive');
+        return dot && active && active.textContent.includes('/');
+      }, { timeout: 8000 });
+      const view = await page.evaluate(() => {
+        const green = (color) => {
+          const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color || '');
+          if (!match) return false;
+          const g = Number(match[2]);
+          return g > 140 && g > Number(match[1]) + 40 && g > Number(match[3]) + 40;
+        };
+        const token = (el) => [...el.classList].find((name) => name === 'working' || name === 'waiting' || name === 'idle') || '';
+        const rows = ['finance', 'qa', 'social', 'advisor'].map((id) => {
+          const agent = document.querySelector(`#agents .agent[data-id="${id}"]`);
+          const mapDot = document.querySelector(`#overlay .tag[data-id="${id}"] .dot`);
+          const chipDot = document.querySelector(`#roster .chip[data-id="${id}"] .st`);
+          const fig = agent && agent.querySelector('.fig-wrap');
+          const bld = agent && agent.querySelector('.bld');
+          const part = (el) => {
+            if (!el) return null;
+            const style = getComputedStyle(el);
+            return { opacity: style.opacity, filter: style.filter };
+          };
+          return {
+            id,
+            map: mapDot ? token(mapDot) : '',
+            chip: chipDot ? token(chipDot) : '',
+            mapGreen: mapDot ? green(getComputedStyle(mapDot).backgroundColor) : false,
+            chipGreen: chipDot ? green(getComputedStyle(chipDot).backgroundColor) : false,
+            mixed: !!(agent && agent.classList.contains('st-working') && agent.classList.contains('act-idle')),
+            fig: part(fig),
+            bld: part(bld),
+          };
+        });
+        return { rows, active: document.querySelector('#stActive').textContent };
+      });
+      for (const row of view.rows) {
+        assert.notEqual(row.map, '', `${width} ${row.id} точка на карте`);
+        assert.equal(row.mixed, false, `${width} ${row.id}`);
+        assert.equal(row.map, 'idle', `${width} ${row.id}`);
+        assert.equal(row.mapGreen, false, `${width} ${row.id}`);
+        if (row.chip) {
+          assert.equal(row.chip, row.map, `${width} ${row.id}`);
+          assert.equal(row.chipGreen, row.mapGreen, `${width} ${row.id}`);
+        }
+        if (row.fig) {
+          assert.ok(Number(row.fig.opacity) < 0.8, `${width} ${row.id} ${JSON.stringify(row.fig)}`);
+          assert.match(row.fig.filter, /grayscale/);
+        }
+        if (row.bld) assert.ok(Number(row.bld.opacity) < 0.8, `${width} ${row.id}`);
+      }
+      const counted = Number(String(view.active).split('/')[0]);
+      const pageWorking = await page.evaluate(() => document.querySelectorAll('#overlay .tag .dot.working').length);
+      assert.equal(counted, pageWorking, `${width} шапка ${view.active}`);
+      assert.equal(view.rows.every((row) => row.map !== 'working'), true);
+      return page;
+    } catch (err) {
+      await page.close();
+      throw err;
+    }
+  };
+  const desktop = await check(1280, 800);
+  await desktop.close();
+  const phone = await check(390, 844);
+  await phone.close();
+});
+
+test('у каждого агента точка карты и точка полосы одного класса и яркости', { timeout: 30000 }, async () => {
+  const quiet = await api('/api/agent-status', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer status-aui' },
+    body: JSON.stringify({ agentId: 'poker', status: 'idle' }),
+  });
+  assert.equal(quiet.status, 200, JSON.stringify(quiet.body));
+  const finance = await api('/api/agent-status', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer status-aui' },
+    body: JSON.stringify({ agentId: 'finance', status: 'working', doing: 'Свожу отчёт' }),
+  });
+  assert.equal(finance.status, 200, JSON.stringify(finance.body));
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    const read = () => page.evaluate(() => {
+      const green = (color) => {
+        const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color || '');
+        if (!match) return false;
+        const g = Number(match[2]);
+        return g > 140 && g > Number(match[1]) + 40 && g > Number(match[3]) + 40;
+      };
+      return [...document.querySelectorAll('#agents .agent')].map((agent) => {
+        const id = agent.dataset.id;
+        const mapDot = document.querySelector(`#overlay .tag[data-id="${id}"] .dot`);
+        const chip = document.querySelector(`#roster .chip[data-id="${id}"]`);
+        const chipDot = chip && chip.querySelector('.st');
+        const fig = agent.querySelector('.fig-wrap');
+        if (!mapDot || !chipDot || !fig) return null;
+        const mapClass = [...mapDot.classList].find((name) => name === 'working' || name === 'waiting' || name === 'idle') || '';
+        const chipClass = [...chipDot.classList].find((name) => name === 'working' || name === 'waiting' || name === 'idle') || '';
+        return {
+          id,
+          mapClass,
+          chipClass,
+          mapGreen: green(getComputedStyle(mapDot).backgroundColor),
+          chipGreen: green(getComputedStyle(chipDot).backgroundColor),
+          opacity: getComputedStyle(fig).opacity,
+          idle: agent.classList.contains('act-idle'),
+        };
+      }).filter(Boolean);
+    });
+    await page.waitForFunction(() => {
+      const map = document.querySelector('#overlay .tag[data-id="finance"] .dot');
+      const chip = document.querySelector('#roster .chip[data-id="finance"] .st');
+      return map && chip && map.classList.contains('working') && chip.classList.contains('working');
+    }, { timeout: 8000 });
+    const mixed = await read();
+    const fin = mixed.find((row) => row.id === 'finance');
+    const poker = mixed.find((row) => row.id === 'poker');
+    assert.ok(fin && poker);
+    for (const row of mixed) {
+      assert.equal(row.mapClass, row.chipClass, row.id);
+      assert.equal(row.mapGreen, row.chipGreen, row.id);
+      if (row.mapClass === 'working') assert.ok(Math.abs(Number(row.opacity) - 1) < 0.05, row.id);
+      if (row.idle) assert.ok(Number(row.opacity) < 0.8, row.id);
+    }
+    assert.equal(fin.mapClass, 'working');
+    assert.notEqual(poker.mapClass, 'working');
+
+    const asleep = await api('/api/agent-status', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer status-aui' },
+      body: JSON.stringify({ agentId: 'finance', status: 'idle' }),
+    });
+    assert.equal(asleep.status, 200);
+    await page.waitForFunction(() => {
+      const map = document.querySelector('#overlay .tag[data-id="finance"] .dot');
+      const chip = document.querySelector('#roster .chip[data-id="finance"] .st');
+      const fig = document.querySelector('#agents .agent[data-id="finance"] .fig-wrap');
+      const token = (el) => [...el.classList].filter((name) => name === 'working' || name === 'waiting' || name === 'idle').join();
+      return map && chip && fig && token(map) === token(chip) && !map.classList.contains('working')
+        && parseFloat(getComputedStyle(fig).opacity) < 0.8;
+    }, { timeout: 8000 });
+    const after = await read();
+    const finAfter = after.find((row) => row.id === 'finance');
+    assert.equal(finAfter.mapClass, finAfter.chipClass);
+    assert.equal(finAfter.mapGreen, false);
+    assert.equal(finAfter.chipGreen, false);
+    assert.ok(Number(finAfter.opacity) < 0.8);
+  } finally {
+    await page.close();
   }
 });
