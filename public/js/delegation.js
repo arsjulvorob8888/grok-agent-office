@@ -73,6 +73,8 @@
   function activeOrders(tasks) {
     return (tasks || []).filter((t) => {
       if (!t) return false;
+      // Прямое сообщение владельца не стрелка от Путина. Открытость — только isOpenOrder.
+      if (window.OfficeFeed && typeof OfficeFeed.isDirectOwnerMessage === 'function' && OfficeFeed.isDirectOwnerMessage(t)) return false;
       if (window.OfficeFeed && typeof OfficeFeed.isOpenOrder === 'function') return OfficeFeed.isOpenOrder(t);
       if (!OPEN.has(t.orderStatus)) return false;
       if (window.TaskRules && TaskRules.isSilentTask(t)) return false;

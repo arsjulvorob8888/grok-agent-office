@@ -1471,11 +1471,6 @@
 
   function questWhoText(t) {
     const names = orderChain(t);
-    const direct = Feed.ownerDirectTask && Feed.ownerDirectTask(t);
-    if (direct && names.length <= 2) {
-      const a = S.byId.get(t.agentId || t.agent) || { name: t.agent };
-      return titled(a);
-    }
     if (t.routeLabel && names.length <= 2) return t.routeLabel;
     if (names.length >= 2) return names.join(' → ');
     const a = S.byId.get(t.agentId || t.agent) || { name: t.agent };
@@ -2113,7 +2108,7 @@
     const saved = {};
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
     const view = Feed.visibleJournal(Feed.ordersForGeneral(S.tasks), Date.now());
-    const sig = view.active.concat(view.delivered || [], view.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
+    const sig = view.active.concat(view.delivered || [], view.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length, t.answeredAt || '', t.routeLabel || ''].join(':')).join('|');
     const badge = view.total;
     $('#jCount').textContent = String(badge);
     syncJournalChrome(badge);

@@ -210,7 +210,7 @@ test('строка журнала на 1280 и 390 не выше 40px: кому,
       assert.ok(before.height > 0 && before.height <= 40, `высота ${before.height}px на ${viewport.width}`);
       assert.equal(before.line, true, JSON.stringify(before));
       assert.equal(before.open, false);
-      assert.equal(/Путин\s*→/.test(before.who.text), false, before.who.text);
+      assert.match(before.who.text, /Путин/);
       assert.match(before.who.text, /Здоровье/);
       assert.match(before.when.text, /\d{2}:\d{2}\s*МСК/);
       assert.ok(before.badge.text.length > 0, JSON.stringify(before.badge));
@@ -244,7 +244,7 @@ test('строка журнала на 1280 и 390 не выше 40px: кому,
       assert.equal(after.open, true);
       assert.match(after.visible, /СТРОКА-ЖУРНАЛА/);
       assert.equal(after.title.display === 'none' || after.title.height < 1, false);
-      assert.equal(/Путин\s*→/.test(after.who.text), false, after.who.text);
+      assert.match(after.who.text, /Путин/);
       assert.match(after.when.text, /МСК/);
       assert.ok(after.badge.text.length > 0);
       assert.equal(after.insideList, true, JSON.stringify({ who: after.who, title: after.title, inside: after.insideList }));

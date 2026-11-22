@@ -111,15 +111,21 @@ test('свежее «Доставлено» и «Выполнена» сразу
   assert.equal(quiet.cancelled.length, 1);
 });
 
-test('прямое сообщение владельца — общий признак, приказ Путина — нет', () => {
-  assert.equal(typeof Feed.ownerDirectTask, 'function');
-  assert.equal(Feed.ownerDirectTask({ fromAgentId: 'owner' }), true);
-  assert.equal(Feed.ownerDirectTask({ fromAgentId: '' }), true);
-  assert.equal(Feed.ownerDirectTask({ fromAgentId: null }), true);
-  assert.equal(Feed.ownerDirectTask({ fromAgentId: 'grok' }), false);
-  assert.equal(Feed.ownerDirectTask({ fromAgentId: 'dev' }), false);
-  const source = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
-  assert.match(source, /ownerDirectTask/);
+test('прямой маршрут владельца — один признак isDirectOwnerMessage', () => {
+  assert.equal(typeof Feed.ownerDirectTask, 'undefined');
+  assert.equal(Feed.isDirectOwnerMessage({ fromAgentId: 'owner', sentRoute: 'agent' }), true);
+  assert.equal(Feed.isDirectOwnerMessage({ fromAgentId: '', sentRoute: 'agent' }), true);
+  assert.equal(Feed.isDirectOwnerMessage({ fromAgentId: null, sentRoute: 'agent' }), true);
+  assert.equal(Feed.isDirectOwnerMessage({ fromAgentId: 'owner', sentRoute: 'putin' }), false);
+  assert.equal(Feed.isDirectOwnerMessage({ fromAgentId: 'owner' }), false);
+  assert.equal(Feed.isDirectOwnerMessage({ fromAgentId: 'grok', sentRoute: 'agent' }), false);
+  const feed = fs.readFileSync(path.join(__dirname, '../public/js/feed.js'), 'utf8');
+  const arrow = fs.readFileSync(path.join(__dirname, '../public/js/delegation.js'), 'utf8');
+  const route = fs.readFileSync(path.join(__dirname, '../lib/activity.js'), 'utf8');
+  assert.equal(feed.split('function isDirectOwnerMessage').length, 2);
+  assert.match(arrow, /isDirectOwnerMessage/);
+  assert.match(route, /isDirectOwnerMessage/);
+  assert.equal(feed.includes('function ownerDirectTask'), false);
 });
 
 function chromePath() {
@@ -275,8 +281,9 @@ if (!puppeteer || !chrome) {
         assert.equal(first.liveTop, true, `${viewport.width} живая очередь не сверху`);
         assert.equal(String(first.open), first.badge, `${viewport.width} счётчик ${first.badge}`);
         assert.ok(first.open >= 1, `${viewport.width}`);
+        assert.match(first.freshWho, /^Вы → /);
         assert.equal(/Путин\s*→/.test(first.freshWho), false, first.freshWho);
-        assert.equal(/Путин\s*→/.test(first.liveWho), false, first.liveWho);
+        assert.match(first.liveWho, /Путин\s*→/, first.liveWho);
         assert.match(first.putinWho, /Путин\s*→/);
         await page.evaluate(() => { window.__stay = 1; });
         const hooked = await fetch(`${base}/api/agents/${viewport.liveAgent}/delivery`, {
@@ -297,6 +304,7 @@ if (!puppeteer || !chrome) {
         assert.equal(moved.liveTop, false, `${viewport.width}`);
         assert.equal(moved.liveFold, true, `${viewport.width}`);
         assert.match(moved.summary, /^Доставленные \(\d+\)$/);
+        assert.match(moved.liveWho, /^Вы → /, moved.liveWho);
         assert.equal(/Путин\s*→/.test(moved.liveWho), false, moved.liveWho);
         const cancelled = await fetch(`${base}/api/orders/${putinBody.id}/cancel`, {
           method: 'POST',
