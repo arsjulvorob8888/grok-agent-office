@@ -274,9 +274,9 @@ test('проверка вебхука бьёт в локальный серве�
   assert.equal(JSON.stringify(value.body).includes(FIXTURE_KEY), false);
   assert.equal(hits.length, beforeHits + 1);
   const hit = hits[hits.length - 1];
-  assert.equal(hit.body.type, 'test');
+  assert.equal(hit.body.type, 'ping');
   assert.equal(hit.body.agentId, 'dev');
-  assert.equal(hit.body.text, 'Проверка доставки');
+  assert.equal(hit.body.text, 'Проверка связи');
   assert.equal(hit.headers.authorization, `Bearer ${FIXTURE_KEY}`);
   assert.equal(hit.headers['x-webhook-key'], FIXTURE_KEY);
   assert.equal(office.state.outbox.length, beforeOutbox);

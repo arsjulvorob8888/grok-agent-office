@@ -649,6 +649,32 @@
     return words[status] || status || '';
   }
 
+  // Одна строка карточки. У Путина нет фразы «через Путина»: его маршрут putin — это его адрес.
+  function directLinkLine(agent) {
+    const id = agent && agent.id;
+    const route = agent && agent.deliveryRoute;
+    const own = id === 'grok' ? (route === 'agent' || route === 'putin') : route === 'agent';
+    if (own) return 'Прямая связь: подключена';
+    if (id === 'grok') return 'Прямая связь: не подключена';
+    return 'Сообщение уйдёт через Путина';
+  }
+
+  function serviceAgents(agents) {
+    const list = (agents || []).filter((agent) => agent && !agent.archived && !agent.vacant);
+    const parts = (agent) => String(agent.number == null ? '' : agent.number).split('.').map((part) => Number(part) || 0);
+    list.sort((a, b) => {
+      const left = parts(a);
+      const right = parts(b);
+      const n = Math.max(left.length, right.length);
+      for (let i = 0; i < n; i += 1) {
+        const diff = (left[i] || 0) - (right[i] || 0);
+        if (diff) return diff;
+      }
+      return String(a.id).localeCompare(String(b.id));
+    });
+    return list;
+  }
+
   function countsMatch(state, agentId, now) {
     const tasks = state.tasks || [];
     const messages = state.messages || [];
@@ -671,6 +697,8 @@
     routePhrase,
     sentRoutePhrase,
     routeSummary,
+    directLinkLine,
+    serviceAgents,
     moscowClock,
     formatClockMsk,
     formatDateTimeMsk,

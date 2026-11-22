@@ -1559,6 +1559,7 @@
             ${depts.map((d) => `<option value="${esc(d.id)}">${esc(titled(d))}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <p class="task-route" id="taskRoute" data-route="none"></p>
+        <p class="direct-link" id="directLink" data-direct-link></p>
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
         <textarea id="taskText" maxlength="4000" placeholder="${tier === 'main' ? 'Например: собери итоги недели по всем направлениям' : 'Опиши, что нужно сделать…'}"></textarea>
         <div class="attach-row">
@@ -1727,6 +1728,10 @@
     return kind === 'agent' || kind === 'putin' || kind === 'env' || kind === 'none' ? kind : 'none';
   }
   function paintTaskRoute() {
+    const line = $('#directLink');
+    if (line && window.OfficeFeed && typeof OfficeFeed.directLinkLine === 'function') {
+      line.textContent = OfficeFeed.directLinkLine(S.byId.get(S.selected));
+    }
     const el = $('#taskRoute');
     if (!el || !window.OfficeFeed || typeof OfficeFeed.routeSummary !== 'function') return;
     const sel = $('#taskTarget');
@@ -1935,7 +1940,15 @@
       if (Date.now() - Number($('#modal').dataset.openedAt || 0) < 500) return;
       closeModal();
     };
-    $('#btnKey').onclick = () => { dropPendingAuth(); blockAuthClicksUntil = 0; openModal(); };
+    $('#btnKey').onclick = () => {
+      dropPendingAuth();
+      blockAuthClicksUntil = 0;
+      if (window.DirectLink && typeof window.DirectLink.toggle === 'function') {
+        window.DirectLink.toggle();
+        return;
+      }
+      openModal();
+    };
   }
 
   // ── Тосты ────────────────────────────────────────────────────────────────
