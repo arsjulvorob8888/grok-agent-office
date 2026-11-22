@@ -273,7 +273,7 @@ test('GET дашборда отдаёт задачи агента и не сод
   const task = res.body.tasks.find((item) => item.id === created.body.id);
   assert.ok(task);
   assert.equal(task.column, 'new');
-  assert.equal(task.deliveryLabel, 'В очереди, доставка не подключена');
+  assert.equal(task.deliveryLabel, 'нет маршрута доставки');
   assert.equal(res.body.metrics.total >= 1, true);
   const raw = JSON.stringify(res.body);
   assert.equal(raw.includes('pw-dash'), false);

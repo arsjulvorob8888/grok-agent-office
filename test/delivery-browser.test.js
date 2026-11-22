@@ -154,6 +154,9 @@ async function exercise(viewport, shot) {
     assert.equal(keyField.value, '');
     const titles = await page.$$eval('[data-delivery-root] h4', (nodes) => nodes.map((node) => node.textContent));
     assert.deepEqual(titles, ['Общий вебхук', 'Доставка']);
+    const sharedNote = await page.$eval('[data-delivery-shared-note]', (el) => el.textContent);
+    assert.match(sharedNote, /Доставка Путина — это общий вебхук для агентов без своего адреса/);
+    assert.match(sharedNote, /Если заполнен «Общий вебхук», события идут туда/);
     await page.waitForSelector('#panel.open .dash-expand', { timeout: 4000 });
     const alone = await page.evaluate(() => ({
       delivery: document.querySelectorAll('[data-delivery-root]').length,

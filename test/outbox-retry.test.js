@@ -246,7 +246,7 @@ test('появление общего вебхука досылает очере
       body: JSON.stringify({ agent: 'social', text: 'Старый пост' }),
     });
     assert.equal(created.status, 201);
-    assert.equal(created.body.deliveryLabel, 'В очереди, доставка не подключена');
+    assert.equal(created.body.deliveryLabel, 'нет маршрута доставки');
     assert.equal(hook.hits.length, 0);
     const saved = await officeJson(office.base, '/api/delivery/putin', {
       method: 'PUT',
