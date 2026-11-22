@@ -316,7 +316,8 @@
       const peek = S.peekId === a.id || S.selected === a.id;
       e.bubble.className = `bubble ${a.status}${show && peek ? '' : ' hide'}`;
       e.bubbleOn = !!(show && peek);
-      e.bubble.innerHTML = (a.status === 'working' ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(a.now || '');
+      const thinking = a.live && a.live.status === 'working';
+      e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(a.now || '');
       if (e.link) {
         const hot = a.status === 'working';
         e.link.setAttribute('class', `link${tier === 'sub' ? ' sub' : ''}${hot ? ' hot' : ''}${S.selected === a.id ? ' sel' : ''}`);
@@ -1435,8 +1436,10 @@
   function chatHTML(agent) {
     const msgs = Feed.messagesForAgent(S.messages, S.tasks, agent.id).slice().sort((a, b) =>
       String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
-    if (!msgs.length) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
-    return msgs.map((m) => {
+    const wait = Feed.replyWaitCaption ? Feed.replyWaitCaption(S.tasks, S.messages, agent.id) : '';
+    const note = wait ? `<p class="reply-wait">${esc(wait)}</p>` : '';
+    if (!msgs.length && !note) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
+    return note + msgs.map((m) => {
       if (m.role === 'system') {
         return `<div class="msg-row system"><div class="msg-sys">${linkify(Sender.displayOrderSender(m.text))}</div></div>`;
       }

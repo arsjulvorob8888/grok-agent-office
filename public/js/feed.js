@@ -294,6 +294,30 @@
     return 'normal';
   }
 
+  const OPEN_ORDER = new Set(['sent', 'accepted', 'in_progress']);
+
+  function orderDelivered(task) {
+    const code = Number(task && task.forwardStatus);
+    return Number.isInteger(code) && code >= 200 && code < 300;
+  }
+
+  function agentAnswered(task, messages) {
+    if (!task || !task.id) return false;
+    return (messages || []).some((message) => message && message.role === 'agent' && message.taskId === task.id);
+  }
+
+  // Спокойная подпись, не реплика агента. Пустая строка — ждать нечего.
+  function replyWaitCaption(tasks, messages, agentId) {
+    const open = (tasks || []).filter((task) => {
+      if (!task || !OPEN_ORDER.has(task.orderStatus || 'sent')) return false;
+      return (task.agentId || task.agent) === agentId;
+    });
+    if (!open.length) return '';
+    if (open.some((task) => !orderDelivered(task))) return 'Агенту ещё не доставлено';
+    if (open.some((task) => !agentAnswered(task, messages))) return 'Ответ придёт сюда, когда агент его пришлёт';
+    return '';
+  }
+
   function countsMatch(state, agentId, now) {
     const tasks = state.tasks || [];
     const messages = state.messages || [];
@@ -315,6 +339,7 @@
     formatClockMsk,
     formatDateTimeMsk,
     formatProcessStamp,
+    replyWaitCaption,
     orderParticipantIds,
     seesOrder,
     ordersForGeneral,

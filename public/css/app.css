@@ -386,6 +386,7 @@ body.hier-on #journal{display:none}
 .badge.fail{background:rgba(239,68,68,.14);color:#fca5a5}
 .empty{padding:18px 14px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.5}
 .empty b{display:block;color:var(--ink);font:700 13px var(--display);margin-bottom:4px}
+.reply-wait{margin:0 0 10px;color:var(--muted);font-size:12.5px;line-height:1.45}
 
 /* ── Ростер ─────────────────────────────────── */
 #agentBar{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:4;max-width:calc(100% - 520px);width:max-content;min-width:min(280px,calc(100vw - 24px));display:grid;align-items:end}

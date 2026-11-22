@@ -671,6 +671,9 @@
 
   function chatHtml() {
     const messages = (data && data.messages) || [];
+    const wait = window.OfficeFeed && OfficeFeed.replyWaitCaption
+      ? OfficeFeed.replyWaitCaption(data.tasks, messages, agentId)
+      : '';
     const lines = messages.map((message) => {
       const role = message.role === 'owner' ? 'owner' : message.role === 'system' ? 'system' : 'agent';
       const who = role === 'owner' ? ownerName() : role === 'system' ? 'Система' : ((data.agent && data.agent.name) || 'Агент');
@@ -685,7 +688,7 @@
     const templates = TEMPLATES.map(([label, text]) =>
       `<button type="button" class="dash-template" data-text="${esc(text)}">${esc(label)}</button>`).join('');
     return `
-      <div class="dash-chat" id="dashChatLog">${lines || '<p class="dash-empty">Сообщений пока нет</p>'}</div>
+      <div class="dash-chat" id="dashChatLog">${wait ? `<p class="reply-wait">${esc(wait)}</p>` : ''}${lines || (wait ? '' : '<p class="dash-empty">Сообщений пока нет</p>')}</div>
       <div class="dash-templates">${templates}</div>
       <form class="dash-compose" id="dashChatForm">
         <label for="dashChatInput">Сообщение агенту</label>

@@ -975,6 +975,20 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
+function publicAgentLive(record, now) {
+  if (!record || typeof record !== 'object') return null;
+  if (record.status === 'working') {
+    const until = Date.parse(record.until);
+    if (!Number.isFinite(until) || now >= until) return null;
+    return {
+      status: 'working',
+      doing: typeof record.doing === 'string' ? record.doing.slice(0, 80) : '',
+    };
+  }
+  if (record.status === 'idle') return { status: 'idle', doing: '' };
+  return null;
+}
+
 function publicState(opts = {}) {
   return {
     agents: state.agents.map((a) => ({
@@ -1001,6 +1015,7 @@ function publicState(opts = {}) {
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
       ...activityFor(a, state.tasks, live.now(), activeWindowMs(), activityExtras()),
+      live: publicAgentLive(a.live, live.now()),
       ...(a.analysis !== undefined ? { analysis: a.analysis } : {}),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),

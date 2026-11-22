@@ -114,6 +114,17 @@ test('закрытый пункт с closedBy=owner не попадает в «�
   assert.deepEqual(Feed.openNeedsForAgent(needs, 'finance').map((n) => n.id), ['need-finance']);
 });
 
+test('подпись ожидания ответа не выдумывает реплику агента', () => {
+  const held = [{ id: 't-1', agentId: 'social', orderStatus: 'sent', forwardStatus: null, text: 'Пост' }];
+  assert.equal(Feed.replyWaitCaption(held, [], 'social'), 'Агенту ещё не доставлено');
+  const sent = [{ id: 't-1', agentId: 'social', orderStatus: 'sent', forwardStatus: 200, text: 'Пост' }];
+  const owner = [{ id: 'task:t-1', role: 'owner', agentId: 'social', taskId: 't-1', text: 'Пост' }];
+  assert.equal(Feed.replyWaitCaption(sent, owner, 'social'), 'Ответ придёт сюда, когда агент его пришлёт');
+  const replied = owner.concat([{ id: 'm-1', role: 'agent', agentId: 'social', taskId: 't-1', text: 'Готово' }]);
+  assert.equal(Feed.replyWaitCaption(sent, replied, 'social'), '');
+  assert.equal(Feed.replyWaitCaption([], [], 'social'), '');
+});
+
 test('просроченный пункт не красится как срочный, но остаётся в счётчике', () => {
   const need = { id: 'n', fromAgentId: 'devops', closedAt: null, stale: true, urgency: 'high' };
   assert.equal(Feed.needUrgencyView(need), 'stale');
