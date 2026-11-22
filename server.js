@@ -2015,6 +2015,10 @@ function allowAgentMessage(agentId) {
   return true;
 }
 
+function replyTextHash(text) {
+  return crypto.createHash('sha256').update(String(text), 'utf8').digest('hex');
+}
+
 function addMessage(input) {
   if (input.id) {
     const existing = state.messages.find((m) => m.id === input.id);
@@ -2028,7 +2032,8 @@ function addMessage(input) {
     }
   }
   if (input.taskId && input.role === 'agent' && input.text) {
-    const same = state.messages.find((m) => m.agentId === input.agentId && m.taskId === input.taskId && m.role === 'agent' && m.text === input.text);
+    const hash = replyTextHash(input.text);
+    const same = state.messages.find((m) => m.role === 'agent' && m.agentId === input.agentId && m.taskId === input.taskId && m.text && replyTextHash(m.text) === hash);
     if (same) return { message: publicMessage(same), duplicate: true };
   }
   const message = {
@@ -2044,6 +2049,13 @@ function addMessage(input) {
   state.messages.push(message);
   trimMessages(message.agentId);
   store.noteMessage(message);
+  if (message.role === 'agent' && message.taskId) {
+    const task = state.tasks.find((item) => item && item.id === message.taskId);
+    if (task && !task.answeredAt) {
+      task.answeredAt = message.createdAt;
+      store.noteTask(task);
+    }
+  }
   return { message: publicMessage(message), duplicate: false };
 }
 
@@ -2056,6 +2068,25 @@ function readTimestamp(body) {
   return new Date(t).toISOString();
 }
 
+function resolveMessageAgent(raw) {
+  const id = typeof raw === 'string' ? raw.trim() : '';
+  if (!id) return null;
+  return findAgent(id) || live.resolveAgent(id, state.agents);
+}
+
+function messageRateId(raw) {
+  const agent = resolveMessageAgent(raw);
+  if (agent) return agent.id;
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function agentMayAnswer(agentId, task) {
+  if (!task) return false;
+  const assignee = task.agentId || task.agent;
+  if (assignee === agentId) return true;
+  return agentId === 'grok' && task.fromAgentId === 'grok';
+}
+
 function prepareRelayMessage(body, uploaded) {
   body = body || {};
   const earlyId = body.id != null && body.id !== '' ? cleanMessageId(body.id) : '';
@@ -2063,10 +2094,11 @@ function prepareRelayMessage(body, uploaded) {
     const existing = state.messages.find((m) => m.id === earlyId);
     if (existing) return { message: publicMessage(existing), duplicate: true };
   }
-  const agentId = typeof body.agentId === 'string' ? body.agentId.trim() : (typeof body.agent === 'string' ? body.agent.trim() : '');
-  if (!agentId) throw httpError(400, 'Нужен agentId');
-  const agent = findAgent(agentId);
+  const rawAgentId = typeof body.agentId === 'string' ? body.agentId.trim() : (typeof body.agent === 'string' ? body.agent.trim() : '');
+  if (!rawAgentId) throw httpError(400, 'Нужен agentId');
+  const agent = resolveMessageAgent(rawAgentId);
   if (!agent) throw httpError(400, 'Неизвестный агент');
+  const agentId = agent.id;
   if (agent.vacant) throw httpError(400, 'Это свободное направление: сначала дай ему название');
   const role = typeof body.role === 'string' ? body.role.trim() : '';
   if (role !== 'owner' && role !== 'agent') throw httpError(400, 'role должен быть owner или agent');
@@ -2086,7 +2118,7 @@ function prepareRelayMessage(body, uploaded) {
   if (taskId) {
     const task = state.tasks.find((item) => item && item.id === taskId);
     if (!task) throw httpError(400, 'Неизвестная задача');
-    if (role === 'agent' && (task.agentId || task.agent) !== agentId) {
+    if (role === 'agent' && !agentMayAnswer(agentId, task)) {
       throw httpError(400, 'Задача другого агента');
     }
   }
@@ -2244,7 +2276,18 @@ function usageAuthorized(req) {
   return decideAgentToken(req).ok;
 }
 
+function statusBearerOk(req) {
+  const statusToken = typeof process.env.AGENT_STATUS_TOKEN === 'string' ? process.env.AGENT_STATUS_TOKEN : '';
+  if (!statusToken) return false;
+  const header = String(req.get('authorization') || '');
+  const match = /^Bearer\s+(\S+)\s*$/i.exec(header.trim());
+  if (!match) return false;
+  return safeEqual(match[1], statusToken);
+}
+
 function finishAgentAuth(req, res, next) {
+  const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
+  if (req.method === 'POST' && pathOnly === '/api/messages' && statusBearerOk(req)) return next();
   const decision = decideAgentToken(req);
   if (decision.ok) return next();
   return res.status(decision.status).json({ error: decision.error });
@@ -3249,7 +3292,7 @@ app.post('/api/messages', requireAgentToken, async (req, res) => {
         return res.status(400).json({ error: 'Пакет messages не сочетается с загрузкой файлов. Сначала POST /api/upload.' });
       }
       if (req.body.messages.length > 20) return res.status(400).json({ error: 'Слишком много сообщений за раз (максимум 20)' });
-      const agentsInBatch = new Set(req.body.messages.map((item) => (item && (item.agentId || item.agent)) || '').filter(Boolean));
+      const agentsInBatch = new Set(req.body.messages.map((item) => messageRateId(item && (item.agentId || item.agent))).filter(Boolean));
       for (const agentId of agentsInBatch) {
         if (!allowAgentMessage(agentId)) {
           res.set('Retry-After', '60');
@@ -3264,7 +3307,7 @@ app.post('/api/messages', requireAgentToken, async (req, res) => {
       return res.status(created ? 201 : 200).json({ ok: true, results });
     }
     const body = req.body || {};
-    const rateAgent = typeof body.agentId === 'string' ? body.agentId.trim() : (typeof body.agent === 'string' ? body.agent.trim() : '');
+    const rateAgent = messageRateId(typeof body.agentId === 'string' ? body.agentId : body.agent);
     if (rateAgent && !allowAgentMessage(rateAgent)) {
       discardUploads(req.files);
       res.set('Retry-After', '60');
@@ -3480,7 +3523,7 @@ app.post('/api/usage', async (req, res) => {
   res.json(view);
 });
 
-// Живой статус не вызывает noteAgent: agent.live не попадает в agent_state.
+// Живой ход пишется в agent_live, не в карточку agent_state: status, now, опыт и analysis не затираются.
 live.register(app, {
   agents: () => state.agents,
   addFeed(agent, text, at) {
@@ -3495,6 +3538,32 @@ live.register(app, {
   },
   activityView(agent) {
     return activityFor(agent, state.tasks, live.now(), activeWindowMs(), activityExtras());
+  },
+  previewReply(agent, reply) {
+    const task = state.tasks.find((item) => item && item.id === reply.taskId);
+    if (!task) return { status: 400, error: 'Неизвестная задача' };
+    if (!agentMayAnswer(agent.id, task)) return { status: 400, error: 'Задача другого агента' };
+    return null;
+  },
+  allowMessage(agentId) {
+    return allowAgentMessage(agentId);
+  },
+  commitReply(agent, reply, at) {
+    const task = state.tasks.find((item) => item && item.id === reply.taskId);
+    const result = addMessage({
+      agentId: agent.id,
+      role: 'agent',
+      text: reply.text,
+      attachments: [],
+      createdAt: new Date(at).toISOString(),
+      source: 'relay',
+      taskId: task.id,
+    });
+    return { duplicate: result.duplicate, message: result.message };
+  },
+  persist(agent) {
+    store.noteLive(agent);
+    return store.flush();
   },
   publish() {
     try { hub.publish(); } catch (_) { /* поток не обязателен для ответа */ }

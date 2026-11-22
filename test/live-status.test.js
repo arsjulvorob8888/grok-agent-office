@@ -397,7 +397,8 @@ test('живой статус не стирает стойкие поля аге
   assert.equal(dev.status, 'idle');
   assert.equal(dev.now, 'Жду задач');
   assert.deepEqual(dev.done, ['было']);
-  assert.equal(dev.lastSeenAt || null, seen);
+  assert.ok(dev.lastSeenAt);
+  if (seen) assert.ok(Date.parse(dev.lastSeenAt) >= Date.parse(seen));
   const pub = agentOf((await json('/api/state')).body, 'dev');
   assert.equal(pub.completed, 4);
   assert.equal(pub.analysis, 'смотрит риски');

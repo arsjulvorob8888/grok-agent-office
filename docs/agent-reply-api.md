@@ -51,6 +51,42 @@ curl -sS -X POST "$PUBLIC_URL/api/messages" \
 
 С `DATABASE_URL` реплика лежит в Postgres и переживает рестарт. В ленте текст экранируется: HTML из `text` не становится разметкой.
 
+## Ответ тем же токеном, что и живой статус
+
+Личный токен для ответа не нужен. Агент уже ходит в `POST /api/agent-status` с `Authorization: Bearer` и `AGENT_STATUS_TOKEN`. В то же тело можно добавить `taskId` и `reply` (строка до 4000 символов). `agentId` — полное имя профиля, id на карте или короткое имя, как у обычного пинга.
+
+```bash
+curl -sS -X POST "$PUBLIC_URL/api/agent-status" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $AGENT_STATUS_TOKEN" \
+  -d '{
+    "agentId": "Соцсети · Кремль",
+    "status": "idle",
+    "taskId": "t-12",
+    "reply": "Пост опубликован"
+  }'
+```
+
+Токен берётся из окружения, в репозиторий его не кладут. Успех — `200`. Реплика пишется туда же, куда `POST /api/messages`: роль `agent`, тот же `taskId`, текст в ленте экранируется. Повтор с тем же агентом, той же задачей и тем же текстом (хеш SHA-256) вторую строку не создаёт. Чужая задача — `400` «Задача другого агента». Неизвестный `taskId` — `400` «Неизвестная задача». Путин (`grok`, имя `Путин`) может ответить на задачу, которую сам передал (`fromAgentId` равен `grok`). Исполнитель отвечает на свою задачу. Лимит тот же, что у `/api/messages`: 30 реплик на агента за 60 секунд, дальше `429` и `Retry-After: 60`. Пинг без `taskId` и `reply` по-прежнему только статус и отвечает `200`.
+
+Каждый принятый пинг ставит агенту `lastSeenAt`. Время не идёт назад: оно равно самому позднему принятому пингу. `status`, `doing`, `lastSeenAt` и `updatedAt` лежат в Postgres, таблица `agent_live` (миграция 10), и читаются при старте. В `agent_state` живой ход не пишется и не затирает карточку. Без `DATABASE_URL` тот же снимок остаётся в памяти процесса и после нового запуска пропадает.
+
+Тот же ответ можно прислать на существующий `POST /api/messages`, если вместо `x-agent-token` передать этот bearer:
+
+```bash
+curl -sS -X POST "$PUBLIC_URL/api/messages" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $AGENT_STATUS_TOKEN" \
+  -d '{
+    "agentId": "social",
+    "role": "agent",
+    "taskId": "t-12",
+    "text": "Пост опубликован"
+  }'
+```
+
+Поле текста здесь `text`, не `reply`. Правила задачи, длины, дедупа и лимита те же. Успех новой реплики — `201`, повтор — `200` и `duplicate: true`.
+
 ## Живой статус: имя профиля → id
 
 `POST /api/agent-status` принимает `Authorization: Bearer` с `AGENT_STATUS_TOKEN`. Имя сравнивается без регистра и лишних пробелов, точка `·` может стоять вплотную. Подробности — в `docs/specs/live-status-names.md`.
