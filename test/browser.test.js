@@ -125,8 +125,11 @@ test('на ширине 390 иерархия не прячется под пан
     assert.match(treeText, /11\.\s*Соцсети/);
     assert.match(treeText, /12\.\s*Рутины/);
     assert.doesNotMatch(treeText, /Language Coach/);
-    assert.doesNotMatch(treeText, /Business Adviser/);
     assert.doesNotMatch(treeText, /Трейдинг/);
+    assert.doesNotMatch(treeText, /Business Adviser/);
+    assert.match(treeText, /7\.1\s*Инвестиции/);
+    assert.match(treeText, /7\.2\s*Бизнес-аналитик/);
+    assert.match(treeText, /7\.3\s*Темщик/);
     assert.equal(hit.panelOpen, false);
     assert.equal(hit.overlap, false);
     assert.ok(hit.cardH > 30, 'строка иерархии не видна');
@@ -1121,8 +1124,9 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.equal(ui.mapIds.includes('biz'), false);
     assert.equal(ui.mapIds.includes('lang'), false);
     assert.ok(ui.mapIds.includes('devops') && ui.mapIds.includes('finance') && ui.mapIds.includes('grok'));
-    assert.equal(ui.mapIds.includes('advisor'), false);
+    assert.equal(ui.mapIds.includes('advisor'), true);
     assert.equal(ui.mapIds.includes('invest'), false);
+    assert.equal(ui.mapIds.includes('temshik'), false);
     assert.equal(ui.mapIds.includes('analyst'), false);
     assert.doesNotMatch(ui.tagText, /Трейдинг|Business Adviser|Language Coach|Главный агент/);
     const chip = (id) => ui.chips.find((c) => c.id === id).text;
@@ -1131,7 +1135,7 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.match(chip('poker'), /^3\./);
     assert.match(chip('devops'), /^4\./);
     assert.match(chip('dev'), /^5\./);
-    assert.match(chip('temshik'), /^6\./);
+    assert.equal(chipIds.includes('temshik'), false);
     assert.match(chip('finance'), /^7\./);
     assert.equal(chipIds.includes('invest'), false);
     assert.equal(chipIds.includes('analyst'), false);
@@ -1175,9 +1179,12 @@ test('на ширине 390 архивные агенты скрыты, исто
     const treeText = await page.$eval('#hTree', (el) => el.textContent);
     assert.match(treeText, /7\.1\s*Инвестиции/);
     assert.match(treeText, /7\.2\s*Бизнес-аналитик/);
+    assert.match(treeText, /7\.3\s*Темщик/);
+    assert.doesNotMatch(treeText, /Трейдинг/);
+    assert.doesNotMatch(treeText, /Business Adviser/);
     assert.match(treeText, /1\.\s*Путин/);
     assert.match(treeText, /10\.\s*Советник Путина/);
-    assert.doesNotMatch(treeText, /Трейдинг|Business Adviser|Language Coach|Главный агент/);
+    assert.doesNotMatch(treeText, /Language Coach|Главный агент/);
     const parentage = await page.evaluate(() => {
       const root = document.querySelector('#hTree > .org-item');
       const rootName = root.querySelector(':scope > .org-row .nm').textContent.replace(/\s+/g, ' ').trim();
@@ -1234,12 +1241,14 @@ test('на десктопе подписи «1. Путин» и «10. Совет
     assert.equal(ui.vw, 1280);
     assert.equal(ui.advisorTitle, '10. Советник Путина');
     assert.equal(ui.advisorChip, '10. Советник Путина');
-    assert.equal(ui.advisorTag, '');
+    assert.equal(ui.advisorTag, '10. Советник Путина');
     assert.match(ui.advisorKicker, /Кремль/);
     assert.match(ui.advisorRole, /стратегический советник Путина/i);
     assert.equal(ui.grokChip, '1. Путин');
     assert.equal(ui.grokTag, '1. Путин');
-    assert.equal(ui.onMap, false);
+    assert.equal(ui.onMap, true);
+    const advisorFig = await page.$('#agents .agent[data-id="advisor"] .fig-wrap');
+    assert.ok(advisorFig);
     assert.equal(ui.grokOnMap, true);
     assert.equal(ui.lang, false);
     assert.doesNotMatch(ui.page, /Главный агент|Language Coach/);
@@ -1703,7 +1712,8 @@ test('помещения, лента, подсказка, бейдж и зазо
         }
       }
       assert.deepEqual(bad, [], `${viewport.width}: ${bad.join(', ')}`);
-      assert.equal(boxes.agents.some((b) => b.id === 'invest' || b.id === 'analyst' || b.id === 'advisor'), false);
+      assert.equal(boxes.agents.some((b) => b.id === 'invest' || b.id === 'analyst'), false);
+      assert.equal(boxes.agents.some((b) => b.id === 'trading' || b.id === 'biz'), false);
       assert.equal(boxes.chips.includes('invest'), false);
       assert.equal(boxes.chips.includes('analyst'), false);
       assert.equal(boxes.chips.includes('advisor'), true);
@@ -1721,7 +1731,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await desk.page.waitForFunction(() => {
       const tip = document.querySelector('#tooltip');
       const text = tip ? tip.textContent : '';
-      return tip && tip.classList.contains('show') && /Заместители:\s*4/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && /Трейдинг/.test(text) && /Business Adviser/.test(text);
+      return tip && tip.classList.contains('show') && /Заместители:\s*3/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && /Темщик/.test(text) && !/Трейдинг/.test(text) && !/Business Adviser/.test(text);
     }, { timeout: 4000 });
     assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
     await desk.page.mouse.click(point.x, point.y);
@@ -1729,7 +1739,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await desk.page.waitForSelector('#room.open .room-seat[data-id="invest"]');
     await desk.page.waitForSelector('#room.open .room-seat[data-id="analyst"]');
     const seats = await desk.page.$$eval('#room .room-seat', (els) => els.map((el) => el.dataset.id));
-    assert.deepEqual(seats, ['finance', 'invest', 'analyst', 'trading', 'biz']);
+    assert.deepEqual(seats, ['finance', 'invest', 'analyst', 'temshik']);
     await desk.page.click('#room .room-go[data-id="invest"]');
     await desk.page.waitForSelector('#panel.open[data-agent="invest"]', { timeout: 8000 });
     assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
@@ -1764,7 +1774,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await phone.page.waitForFunction(() => {
       const tip = document.querySelector('#tooltip');
       const text = tip ? tip.textContent : '';
-      return tip && tip.classList.contains('show') && /Заместители:\s*4/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && /Трейдинг/.test(text) && /Business Adviser/.test(text);
+      return tip && tip.classList.contains('show') && /Заместители:\s*3/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && /Темщик/.test(text) && !/Трейдинг/.test(text) && !/Business Adviser/.test(text);
     }, { timeout: 4000 });
     assert.equal(await phone.page.$eval('#room', (el) => el.classList.contains('open')), false);
     await phone.page.touchscreen.touchEnd();

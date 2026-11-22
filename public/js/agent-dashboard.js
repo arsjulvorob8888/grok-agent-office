@@ -445,8 +445,6 @@
   function overviewHtml() {
     const agent = data.agent;
     const metrics = data.metrics || { total: 0, done: 0, inProgress: 0 };
-    const level = agent.level || { lvl: 1, xp: 0, into: 0, need: 150 };
-    const pct = level.need ? Math.max(0, Math.min(100, Math.round((level.into / level.need) * 100))) : 0;
     const mode = window.AgentStatus ? AgentStatus.activityMode(agent) : (agent.activity || 'resting');
     const activity = window.AgentStatus && AgentStatus.statusLabel
       ? AgentStatus.statusLabel(agent)
@@ -469,14 +467,6 @@
         <div class="dash-metric"><b>${metrics.total}</b><span>${esc(window.OfficeFeed && OfficeFeed.ruCount ? OfficeFeed.ruCount(metrics.total, 'задача', 'задачи', 'задач') : 'задач')}</span></div>
         <div class="dash-metric"><b>${metrics.done}</b><span>Выполнено</span></div>
         <div class="dash-metric"><b>${metrics.inProgress}</b><span>В работе</span></div>
-      </div>
-      <div class="dash-level">
-        <div class="dash-level-badge"><div><b>${level.lvl}</b><span>УРОВЕНЬ</span></div></div>
-        <div>
-          <p>Опыт <b>${level.into}</b> / ${level.need}</p>
-          <p>Всего опыта ${level.xp}</p>
-          <div class="dash-bar" aria-hidden="true"><i style="width:${pct}%"></i></div>
-        </div>
       </div>
       <div class="dash-block">
         <h3>Последние активности</h3>

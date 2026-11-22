@@ -208,9 +208,7 @@
     return (hostId && S.byId.get(hostId)) || a;
   };
   function roomGuests(hostId) {
-    const visible = S.agents.filter((a) => roomHostId(a) === hostId);
-    const deputies = (S.deputies || []).filter((a) => a && a.parentId === hostId && !visible.some((item) => item.id === a.id));
-    return visible.concat(deputies).sort((a, b) => {
+    return S.agents.filter((a) => roomHostId(a) === hostId).sort((a, b) => {
       const rank = (agent) => (agent.number ? 0 : 1);
       const byRank = rank(a) - rank(b);
       if (byRank) return byRank;
@@ -238,26 +236,29 @@
     gA.innerHTML = ''; gL.innerHTML = ''; overlay.innerHTML = '';
     S.els.clear();
     const [kx, ky] = kremlin();
-    const sorted = [...S.agents].filter(onMap).sort((a, b) => a.y - b.y);
+    const sorted = [...S.agents].filter((a) => onMap(a) || a.id === 'advisor').sort((a, b) => a.y - b.y);
     for (const a of sorted) {
       const tier = tierOf(a);
+      const escort = a.id === 'advisor';
+      const shift = escort ? [120, 130] : [0, 0];
       const g = document.createElementNS(NS, 'g');
       g.setAttribute('class', `agent tier-${tier} st-${statusTone(a)}`);
-      g.setAttribute('transform', `translate(${a.x},${a.y})`);
+      g.setAttribute('transform', `translate(${a.x + shift[0]},${a.y + shift[1]})`);
       g.dataset.id = a.id;
       g.style.setProperty('--agent-glow', Figures.shade(a.color, 0.35));
       const feet = figFeet();
       const plot = `<ellipse class="ground" cx="0" cy="${feet + 2}" rx="34" ry="10"/>`;
       const bld = tier === 'main' ? M.building('putin', a.color) : M.building(a.kind || 'generic', a.color);
       const beaconY = -Math.min(tallOf(a), 120) - 8;
-      g.innerHTML = `${plot}<g class="bld">${bld}</g>
+      const figure = `<g class="fig-wrap" transform="translate(0,${feet}) scale(${figScaleOf()})">${Figures.render(a.kind, a.color)}</g>`;
+      g.innerHTML = escort ? figure : `${plot}<g class="bld">${bld}</g>
         <g class="beacon" transform="translate(0,${beaconY})"><circle r="6" fill="${a.color}" opacity=".45"/></g>
-        <g class="fig-wrap" transform="translate(0,${feet}) scale(${figScaleOf()})">${Figures.render(a.kind, a.color)}</g>`;
+        ${figure}`;
       gA.appendChild(g);
 
       let link = null, packets = null;
       const parent = tier === 'sub' ? S.byId.get(a.parentId) : null;
-      if (tier !== 'main' && (tier !== 'sub' || parent)) {
+      if (!escort && tier !== 'main' && (tier !== 'sub' || parent)) {
         const x0 = parent ? parent.x : kx, y0 = parent ? parent.y + 10 : ky;
         const x1 = a.x, y1 = a.y + (tier === 'sub' ? 10 : 14), dx = x1 - x0, dy = y1 - y0, len = Math.max(1, Math.hypot(dx, dy));
         const bend = tier === 'sub' ? 0.08 : 0.16;
@@ -277,7 +278,7 @@
       }
 
       const tag = document.createElement('div');
-      tag.className = `tag ${tier}`;
+      tag.className = `tag ${tier}${escort ? ' escort' : ''}`;
       tag.style.setProperty('--c', a.color);
       tag.dataset.id = a.id;
       tag.onclick = (e) => {
@@ -308,19 +309,6 @@
       overlay.appendChild(awaitBadge);
       S.els.set(a.id, { g, tag, bubble, badge, awaitBadge, link, packets, w: 0 });
     }
-    for (const a of S.agents) {
-      if (a.id !== 'advisor' || a.archived || a.vacant) continue;
-      const tag = document.createElement('div');
-      tag.className = `tag ${tierOf(a)} guest`;
-      tag.style.setProperty('--c', a.color);
-      tag.dataset.id = a.id;
-      tag.onclick = (e) => {
-        e.stopPropagation();
-        select(a.id, { opener: tag });
-      };
-      overlay.appendChild(tag);
-      S.els.set(a.id, { g: null, tag, bubble: null, badge: null, awaitBadge: null, link: null, packets: null, w: 0 });
-    }
     buildRoster();
     buildMiniDots();
   }
@@ -335,11 +323,12 @@
       const label = window.AgentStatus ? AgentStatus.statusLabel(a) : activityLabel(a);
       if (e.g) e.g.setAttribute('class', `agent tier-${tier} st-${tone}${act}${S.selected === a.id ? ' sel' : ''}`);
       if (e.tag) e.tag.dataset.status = label;
+      const escort = e.tag && e.tag.classList.contains('escort');
       if (!e.g) {
         e.tag.className = `tag guest${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
         e.tag.innerHTML = `<span class="dot ${tone}" data-status="${esc(label)}"></span>`;
       } else {
-        e.tag.className = `tag ${tier}${a.id === 'health' ? ' fit' : ''}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
+        e.tag.className = `tag ${tier}${a.id === 'health' ? ' fit' : ''}${escort ? ' escort' : ''}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
         e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${tone}" data-status="${esc(label)}"></span>`;
       }
       e.w = 0;
@@ -514,6 +503,8 @@
     const pts = new Map();
     let moved = 0, start = null, pinch = null;
     svg.addEventListener('pointerdown', (e) => {
+      tipPinned = false;
+      hideTip();
       const top = document.elementFromPoint(e.clientX, e.clientY);
       // Жест по панели, полосе или кнопке не захватываем: у карты touch-action:none,
       // и палец иначе уходит в пан вместо клика.
@@ -556,7 +547,10 @@
       if (pts.size === 0) {
         svg.classList.remove('dragging');
         if (eatClick) { eatClick = false; clearHold(); return; }
-        if (moved <= 5 && start) clickAt(start.target);
+        if (moved <= 5 && start) {
+          if (e.pointerType === 'touch') showArrowTip(start.target, e.clientX, e.clientY, true);
+          clickAt(start.target);
+        }
       }
     };
     svg.addEventListener('pointerup', up);
@@ -613,6 +607,7 @@
   }
   const tip = $('#tooltip');
   function hoverAt(e) {
+    if (showArrowTip(e.target, e.clientX, e.clientY, false)) return;
     const ag = e.target.closest && e.target.closest('.agent');
     const lm = !ag && e.target.closest && e.target.closest('.landmark');
     if (ag) {
@@ -694,13 +689,33 @@
       if (e.g) e.g.classList.toggle('peek', S.peekId === a.id);
     }
   }
+  let tipPinned = false;
+  function arrowTipTarget(target) {
+    if (!target || !target.closest) return null;
+    return target.closest('#delegations [data-tip]');
+  }
+  function showArrowTip(target, x, y, pin) {
+    const node = arrowTipTarget(target);
+    if (!node) return false;
+    const text = node.dataset.tip || (node.closest('.deleg') && node.closest('.deleg').dataset.tip) || '';
+    if (!text) return false;
+    tip.textContent = text;
+    tip.classList.add('show', 'tip-list');
+    if (pin) tipPinned = true;
+    placeTip(x, y);
+    return true;
+  }
   function showTip(e, text) {
+    tipPinned = false;
     tip.textContent = text;
     tip.classList.add('show');
     tip.classList.remove('tip-list');
     placeTip(e.clientX, e.clientY);
   }
-  function hideTip() { tip.classList.remove('show'); }
+  function hideTip() {
+    if (tipPinned) return;
+    tip.classList.remove('show');
+  }
 
   // ── Таблички и облачка (HTML поверх карты) ───────────────────────────────
   let overlayRaf = 0;
@@ -720,8 +735,9 @@
       if (!e) continue;
       e.tag.classList.toggle('compact', compact);
       e.w = e.tag.offsetWidth; e.h = e.tag.offsetHeight;
-      const gx = a.x + (e.tag.classList.contains('guest') ? 70 : 0);
-      const gy = a.y + (e.tag.classList.contains('guest') ? 90 : 0);
+      const escort = e.tag.classList.contains('escort');
+      const gx = a.x + (escort ? 120 : (e.tag.classList.contains('guest') ? 70 : 0));
+      const gy = a.y + (escort ? 130 : (e.tag.classList.contains('guest') ? 90 : 0));
       const sx = gx * k + tx, sy = (gy + (tierOf(a) === 'main' ? 84 : 50)) * k + ty;
       const r = { x: sx - e.w / 2, y: sy, w: e.w, h: e.h };
       const off = sx - e.w / 2 < 2 || sx + e.w / 2 > innerWidth - 2 || sy < 2 || sy + e.h > innerHeight - 2;
@@ -818,14 +834,24 @@
     }
     return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid slice">${Figures.render(a.kind, a.color)}</svg>`;
   }
+  function rosterRank(a) {
+    if (activityMode(a) === 'working') return 0;
+    if (activityMode(a) === 'waiting' || needsOnBadge(a.id, true).length > 0) return 1;
+    return 2;
+  }
   function rosterAgents() {
-    return S.agents.filter((a) => (window.AgentStatus && AgentStatus.inBottomRoster
+    const list = S.agents.filter((a) => (window.AgentStatus && AgentStatus.inBottomRoster
       ? AgentStatus.inBottomRoster(a, ROOM_OF)
       : onMap(a))).sort(cmpNum);
+    return list
+      .map((agent, index) => ({ agent, index }))
+      .sort((a, b) => rosterRank(a.agent) - rosterRank(b.agent) || a.index - b.index)
+      .map((item) => item.agent);
   }
   function buildRoster() {
     const r = $('#roster');
     const list = rosterAgents();
+    r.dataset.order = list.map((a) => a.id).join(',');
     let html = '', lastGroup = null;
     for (const a of list) {
       const t = tierOf(a);
@@ -834,7 +860,7 @@
       lastGroup = group;
       html += `<button class="chip ${t}${a.vacant ? ' vacant' : ''}" data-id="${esc(a.id)}" style="--c:${esc(a.color)}" title="${esc(titled(a))}">
         <span class="await-you is-off" data-id="${esc(a.id)}" hidden aria-hidden="true"></span>
-        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>
+        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>
         <span class="chip-events" hidden></span></button>`;
     }
     r.innerHTML = html;
@@ -871,6 +897,13 @@
     }, { passive: false });
   }
   function updateRoster() {
+    const r = $('#roster');
+    const wanted = rosterAgents().map((a) => a.id).join(',');
+    if (r && r.dataset.order !== wanted) {
+      const left = r.scrollLeft;
+      buildRoster();
+      r.scrollLeft = left;
+    }
     document.querySelectorAll('#roster .chip').forEach((c) => {
       const a = S.byId.get(c.dataset.id);
       if (!a) return;
@@ -887,11 +920,19 @@
       c.dataset.status = label;
       c.querySelector('.st').className = `st ${statusTone(a)}`;
       c.querySelector('.st').dataset.status = label;
-      c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
       paintAwaitBadge(c.querySelector('.await-you'), a.id, true);
       paintGuestEvents(c, a);
     });
     paintAgentBar();
+    syncBarClearance();
+  }
+  function syncBarClearance() {
+    const bar = $('#agentBar');
+    if (!bar) return;
+    const rect = bar.getBoundingClientRect();
+    if (rect.height < 1) return;
+    const clear = Math.max(96, Math.ceil(innerHeight - rect.top + 28));
+    document.documentElement.style.setProperty('--bar-clear', `${clear}px`);
   }
   function setAgentBar(collapsed, persist) {
     const bar = $('#agentBar');
@@ -908,6 +949,7 @@
     toggle.setAttribute('aria-label', collapsed ? 'Развернуть панель агентов' : 'Свернуть панель агентов');
     if (persist) localStorage.setItem('agentBar', collapsed ? 'collapsed' : 'open');
     paintAgentBar();
+    syncBarClearance();
     if (!S.loaded) return;
     placeOverlay();
     if (!S.userMoved && !S.selected) goHome(false);
@@ -1414,21 +1456,24 @@
     } catch (_) { return ''; }
   };
 
+  function questWhoText(t) {
+    const names = orderChain(t);
+    if (t.routeLabel && names.length <= 2) return t.routeLabel;
+    if (names.length >= 2) return names.join(' → ');
+    const a = S.byId.get(t.agentId || t.agent) || { name: t.agent };
+    return titled(a);
+  }
   function questHTML(t, showAgent, viewerId) {
     const a = S.byId.get(t.agent) || { name: t.agent, color: '#64748b' };
     const [cls, label] = taskBadge(t);
     const title = t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение');
     const dir = viewerId ? Feed.orderDirection(t, viewerId, S.tasks) : '';
-    const mark = dir === 'out' ? '→' : dir === 'in' ? '←' : dir === 'both' ? '↔' : '';
-    const dirLabel = dir === 'out' ? 'отдал' : dir === 'in' ? 'получил' : dir === 'both' ? 'себе' : '';
     const via = Feed.sentRoutePhrase ? Feed.sentRoutePhrase(t.sentRoute) : '';
     return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}"${dir ? ` data-dir="${dir}"` : ''} style="--c:${esc(a.color)}">
       <span class="qi">${ico(cls === 'done' ? 'check' : cls === 'fail' ? 'x' : 'send')}</span>
       <span class="qt">${esc(title)}</span>
-      <span class="qm">${mark ? `<span class="qdir" aria-label="${dirLabel}">${mark}</span>` : ''}<span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
-      ${chainHTML(t)}
+      <span class="qm"><span class="q-who">${esc(questWhoText(t))}</span><span class="q-when">${esc(fmtTime(t.createdAt))}</span><span class="badge ${cls}">${label}</span></span>
       ${via ? `<div class="quest-via">${esc(via)}</div>` : ''}
-      ${historyHTML(t)}
       ${attachmentsHTML(t.attachments)}
       ${t.result ? `<div class="qr" data-scroll-key="result:${esc(t.id)}">${linkify(t.result)}</div>` : ''}
     </div>`;
@@ -1487,13 +1532,25 @@
     }).join('')}</ol>`;
   }
 
+  function activityCaption(agent) {
+    const mode = activityMode(agent);
+    if (mode !== 'working' && mode !== 'coordinating') return '';
+    const doing = window.AgentStatus && AgentStatus.ownDoing ? AgentStatus.ownDoing(agent) : '';
+    if (mode === 'coordinating') return doing ? `последняя активность: координирует · ${doing}` : 'последняя активность: координирует';
+    return doing ? `последняя активность: работает · ${doing}` : 'последняя активность: работает';
+  }
   function chatHTML(agent) {
-    const msgs = Feed.messagesForAgent(S.messages, S.tasks, agent.id).slice().sort((a, b) =>
+    const source = Feed.correspondenceMessages
+      ? Feed.correspondenceMessages(S.messages, S.tasks, agent.id)
+      : Feed.messagesForAgent(S.messages, S.tasks, agent.id);
+    const msgs = source.slice().sort((a, b) =>
       String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
     const wait = Feed.replyWaitCaption ? Feed.replyWaitCaption(S.tasks, S.messages, agent.id) : '';
     const note = wait ? `<p class="reply-wait">${esc(wait)}</p>` : '';
-    if (!msgs.length && !note) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
-    return note + msgs.map((m) => {
+    const activity = activityCaption(agent);
+    const activityRow = activity ? `<p class="msg-activity">${esc(activity)}</p>` : '';
+    if (!msgs.length && !note && !activityRow) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
+    return note + activityRow + msgs.map((m) => {
       if (m.role === 'system') {
         return `<div class="msg-row system"><div class="msg-sys">${linkify(Sender.displayOrderSender(m.text))}</div></div>`;
       }
@@ -1524,7 +1581,7 @@
   function renderPanel(opts = {}) {
     const a = S.byId.get(S.selected);
     if (!a) return;
-    const tier = tierOf(a), L = levelInfo(a);
+    const tier = tierOf(a);
     const tasks = Feed.ordersForAgent(S.tasks, a.id).filter((t) => !(window.TaskRules && TaskRules.isSilentTask(t)));
     const pin = S.pinnedOrder && tasks.find((t) => t.id === S.pinnedOrder);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
@@ -1582,9 +1639,7 @@
       </div>
       <div class="p-body">
         ${panelNeedsHTML(a)}
-        ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
-          <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${L.completed != null ? L.completed : (a.completed || 0)}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}" data-status="${esc(activityLabel(a))}">${esc(activityLabel(a))}</span>${statusNowHTML(a)}</div>
+        ${a.vacant ? '' : `<div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}" data-status="${esc(activityLabel(a))}">${esc(activityLabel(a))}</span>${statusNowHTML(a)}</div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
@@ -1929,7 +1984,23 @@
       if (Date.now() - Number($('#modal').dataset.openedAt || 0) < 500) return;
       closeModal();
     };
-    $('#btnKey').onclick = () => { dropPendingAuth(); blockAuthClicksUntil = 0; openModal(); };
+    $('#btnKey').onclick = (e) => {
+      e.stopPropagation();
+      const pop = $('#servicePop');
+      if (!pop) { dropPendingAuth(); blockAuthClicksUntil = 0; openModal(); return; }
+      const open = pop.hidden;
+      pop.hidden = !open;
+      const fold = $('#serviceFold');
+      if (fold) fold.open = false;
+    };
+    const servicePassword = $('#servicePassword');
+    if (servicePassword) servicePassword.onclick = () => { dropPendingAuth(); blockAuthClicksUntil = 0; openModal(); };
+    document.addEventListener('click', (e) => {
+      const pop = $('#servicePop');
+      if (!pop || pop.hidden) return;
+      if (e.target.closest && e.target.closest('#servicePop, #btnKey')) return;
+      pop.hidden = true;
+    });
   }
 
   // ── Тосты ────────────────────────────────────────────────────────────────
@@ -1952,6 +2023,43 @@
   }
 
   // ── Журнал и HUD ─────────────────────────────────────────────────────────
+  function paintJournalChrome() {
+    const j = $('#journal');
+    if (!j) return;
+    const narrow = innerWidth <= 900;
+    const open = narrow ? j.classList.contains('mobile-open') : !j.classList.contains('collapsed');
+    if (open) {
+      j.classList.remove('map-off');
+      if (j.getAttribute('aria-hidden') === 'true') j.removeAttribute('aria-hidden');
+    } else if (!narrow && j.classList.contains('quiet')) {
+      j.classList.add('collapsed', 'map-off');
+      j.setAttribute('aria-hidden', 'true');
+      releaseFocus(j, $('#btnJournal'));
+    }
+    const btn = $('#btnJournal');
+    if (btn) btn.classList.toggle('on', open);
+  }
+  function syncJournalChrome(openCount) {
+    const j = $('#journal');
+    if (!j) return;
+    const quiet = openCount === 0;
+    j.classList.toggle('quiet', quiet);
+    if (j.dataset.userToggle === '1') {
+      paintJournalChrome();
+      return;
+    }
+    if (innerWidth <= 900) return;
+    if (quiet) {
+      j.classList.add('collapsed', 'map-off');
+      j.setAttribute('aria-hidden', 'true');
+      releaseFocus(j, $('#btnJournal'));
+      return;
+    }
+    j.classList.remove('map-off');
+    if (j.getAttribute('aria-hidden') === 'true') j.removeAttribute('aria-hidden');
+    if (localStorage.getItem('journal') === 'collapsed') j.classList.add('collapsed');
+    else j.classList.remove('collapsed');
+  }
   function renderJournal() {
     const list = $('#jList');
     const top = list.scrollTop;
@@ -1961,6 +2069,7 @@
     const sig = view.active.concat(view.delivered || [], view.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
     const badge = view.total;
     $('#jCount').textContent = String(badge);
+    syncJournalChrome(badge);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
     const quest = (t) => questHTML(t, true);
@@ -2092,25 +2201,41 @@
     document.body.classList.toggle('usage-hot', view.level === 'critical');
   }
   function renderHUD() {
-    const staff = S.agents.filter((a) => !a.vacant);
+    // Замы Финансов в счётчик шапки не входят: они видны только в помещении, и ширина экрана список не меняет.
+    const staff = rosterAgents();
     const active = staff.filter((a) => {
       const mode = window.AgentStatus && AgentStatus.finalStatus ? AgentStatus.finalStatus(a) : activityMode(a);
       return mode === 'working';
     }).length;
     const node = $('#stActive');
+    const hint = `Работают ${active} из ${staff.length} агентов`;
     if (node) node.textContent = `${active}/${staff.length}`;
+    const stat = node && node.closest('.stat');
+    if (stat) {
+      stat.title = hint;
+      stat.setAttribute('aria-label', hint);
+    }
     renderUsage();
   }
   function initJournal() {
     const j = $('#journal');
     if (innerWidth > 900 && localStorage.getItem('journal') === 'collapsed') j.classList.add('collapsed');
+    const noteToggle = () => {
+      j.dataset.userToggle = '1';
+      if (innerWidth > 900) {
+        localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
+      }
+      paintJournalChrome();
+    };
     $('#jClose').onclick = () => {
       if (innerWidth <= 900) {
         releaseFocus(j, $('#btnJournal'));
         j.classList.remove('mobile-open');
+        noteToggle();
         return;
       }
-      j.classList.toggle('collapsed'); localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
+      j.classList.toggle('collapsed');
+      noteToggle();
     };
     $('#btnJournal').onclick = () => {
       if (window.Processes) Processes.setOpen(false);
@@ -2123,12 +2248,10 @@
         j.classList.remove('collapsed');
       } else if (fromHier) {
         j.classList.remove('collapsed');
-        localStorage.setItem('journal', 'open');
       } else {
         j.classList.toggle('collapsed');
-        localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
       }
-      $('#btnJournal').classList.toggle('on', innerWidth <= 900 ? j.classList.contains('mobile-open') : !j.classList.contains('collapsed'));
+      noteToggle();
     };
     $('#btnHome').onclick = () => { blip(520); select(null); goHome(); };
     $('#btnHier').onclick = () => { blip(640); setHierarchy(!$('#hier').classList.contains('open')); };
@@ -2725,6 +2848,9 @@
       $('#panel').classList.remove('open');
     }
     if (!S.userMoved && !S.selected) goHome(false); else { clampCam(); applyCam(); }
+    syncBarClearance();
+    const journal = $('#journal');
+    if (journal && S.loaded) syncJournalChrome(Number($('#jCount') && $('#jCount').textContent) || 0);
   });
   if (window.LiveStream) LiveStream.start(() => { loadState().catch(() => {}); });
   // Кварталы строятся после первой загрузки, чтобы не застраивать участки агентов.

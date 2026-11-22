@@ -226,7 +226,8 @@ if (!CHROME || !puppeteer) {
         assert.equal(fit.journal, true, `журнал шире окна ${viewport.width}`);
         assert.equal(fit.list, true, `список шире окна ${viewport.width}`);
         assert.equal(info.label, 'Доставлено');
-        assert.equal(info.history.includes('Доставлено'), true);
+        assert.equal(info.detail.split('Доставлено').length - 1, 1);
+        assert.equal(info.roomDetail.split('Доставлено').length - 1, 1);
         assert.match(info.detail, /Куда ушёл приказ: Адрес из окружения/);
         assert.equal(info.detail.includes(ENV_KEY), false);
         assert.equal(info.detail.includes('journal-env'), false);
