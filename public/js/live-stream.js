@@ -15,6 +15,7 @@
   let closing = false;
   let hidden = typeof document !== 'undefined' && document.hidden;
   let suspended = false;
+  let seenOpen = false;
   let onRefresh = function () {};
 
   function ago(iso, at) {
@@ -110,8 +111,12 @@
     next.onopen = () => {
       if (source !== next) return;
       backoff = 1000;
+      const reconnect = seenOpen;
+      seenOpen = true;
       setUp(true);
-      queueRefresh();
+      // Первое открытие не перечитывает состояние: страница уже грузит его сама.
+      // Повторное — после обрыва, сна Render или возврата на вкладку.
+      if (reconnect) queueRefresh();
     };
     next.addEventListener('state', () => {
       if (source !== next) return;
