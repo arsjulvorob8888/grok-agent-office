@@ -114,11 +114,9 @@ test('дашборд раскрывается по кнопке, живёт в �
     const cardText = await page.$eval('.dash-card', (el) => el.textContent);
     assert.match(cardText, /Карточка для канбана/);
     assert.match(cardText, /нет маршрута доставки/);
-    await page.click('.dash-card [data-status="accepted"]');
-    await page.waitForFunction(() => {
-      const card = document.querySelector('.dash-col-work .dash-card');
-      return card && card.textContent.includes('Карточка для канбана');
-    }, { timeout: 4000 });
+    assert.equal(await page.$('.dash-card [data-status]'), null);
+    const column = await page.$eval('.dash-card', (el) => el.closest('.dash-col').className);
+    assert.match(column, /dash-col-new/);
 
     await page.click('[role="tab"][data-tab="chat"]');
     await page.waitForSelector('#dashChatInput');

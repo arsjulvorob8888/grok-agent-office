@@ -80,6 +80,7 @@ if (!CHROME || !puppeteer) {
       const h = hud.getBoundingClientRect();
       return {
         level: usage.dataset.level,
+        hidden: usage.hidden || getComputedStyle(usage).display === 'none',
         text: usage.innerText,
         bannerHidden: banner.hidden,
         bannerText: banner.textContent,
@@ -104,12 +105,10 @@ if (!CHROME || !puppeteer) {
     try {
       const empty = await boxOf(page);
       assert.equal(empty.level, 'empty');
-      assert.match(empty.text, /нет данных/);
+      assert.equal(empty.hidden, true);
+      assert.doesNotMatch(empty.text, /нет данных|0%/);
       assert.equal(empty.bannerHidden, true);
       assert.equal(empty.docOverflow, false);
-      assert.ok(empty.usageLeft >= -1 && empty.usageRight <= empty.vw + 1, 'виджет вылезает за экран');
-      assert.ok(empty.usageBottom <= empty.hudBottom + 1, 'виджет не внутри шапки');
-      assert.ok(empty.scrollWidth <= empty.clientWidth + 1, 'текст виджета шире блока');
 
       await postUsage({ usedPct: 80 });
       await page.reload({ waitUntil: 'load', timeout: 30000 });

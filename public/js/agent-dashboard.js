@@ -9,11 +9,6 @@
     ['Что в работе', 'Что сейчас в работе и какой следующий шаг?'],
     ['Пришли итог', 'Закрой текущую задачу и пришли короткий итог.'],
   ];
-  const NEXT = {
-    sent: [{ status: 'accepted', label: 'В работу' }, { status: 'failed', label: 'Не выполнено' }],
-    accepted: [{ status: 'in_progress', label: 'В работе' }, { status: 'done', label: 'Готово' }, { status: 'failed', label: 'Не выполнено' }],
-    in_progress: [{ status: 'done', label: 'Готово' }, { status: 'failed', label: 'Не выполнено' }],
-  };
   const ACTIVITY = { working: 'Работает', waiting: 'Ждёт', resting: 'Спит' };
   const STATUS = { working: 'Работает', idle: 'Свободен', waiting: 'Ждёт тебя' };
   const LIVE = { working: 'Работает', idle: 'Свободен' };
@@ -186,10 +181,6 @@
       event.preventDefault();
       if (event.target.id === 'dashChatForm') sendChat();
       if (event.target.id === 'dashCreateForm') createTask();
-      if (event.target.id === 'dashDoneForm') {
-        const field = event.target.querySelector('input');
-        finishTask(event.target.dataset.orderId, field ? field.value : '');
-      }
     });
     panel.addEventListener('keydown', (event) => {
       if (event.target.id === 'dashChatInput' && event.key === 'Enter' && !event.shiftKey) {
@@ -348,24 +339,6 @@
       retryTask(again.dataset.retry, again);
       return;
     }
-    const action = event.target.closest('[data-status]');
-    if (!action) return;
-    const orderId = action.dataset.orderId;
-    if (action.dataset.status === 'done') {
-      const card = action.closest('.dash-card');
-      if (card && !card.querySelector('#dashDoneForm')) {
-        const form = document.createElement('form');
-        form.id = 'dashDoneForm';
-        form.className = 'dash-done';
-        form.dataset.orderId = orderId;
-        form.innerHTML = '<label>Итог<input id="dashResult" required maxlength="4000" data-order-id=""></label><button class="btn gold" type="submit">Сохранить</button>';
-        form.querySelector('input').dataset.orderId = orderId;
-        card.appendChild(form);
-        form.querySelector('input').focus();
-      }
-      return;
-    }
-    postStatus(orderId, action.dataset.status, action.dataset.status === 'failed' ? { note: 'Не выполнено' } : {});
   }
 
   async function retryTask(orderId, btn) {
@@ -390,28 +363,6 @@
     }
     if (!res.ok) {
       note = body.error || 'Не удалось отправить повторно';
-      render();
-      return;
-    }
-    note = '';
-    await load();
-  }
-
-  async function postStatus(orderId, status, extra) {
-    note = '';
-    if (!password()) {
-      note = 'Нужен пароль штаба';
-      render();
-      return;
-    }
-    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/orders/${encodeURIComponent(orderId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-app-password': password() },
-      body: JSON.stringify(Object.assign({ status }, extra || {})),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      note = body.error || 'Не удалось сменить статус';
       render();
       return;
     }
@@ -452,14 +403,12 @@
       return;
     }
     if (input) input.value = '';
-    note = '';
+    const phrase = window.OfficeFeed && typeof OfficeFeed.routePhrase === 'function'
+      ? OfficeFeed.routePhrase(body.deliveryRoute)
+      : '';
+    note = phrase ? `Приказ сохранён. ${phrase}` : 'Приказ сохранён.';
+    if (body.deliveryRoute) data = Object.assign({}, data, { deliveryRoute: body.deliveryRoute });
     await load();
-  }
-
-  async function finishTask(orderId, result) {
-    const text = String(result || '').trim();
-    if (!text) return;
-    await postStatus(orderId, 'done', { result: text });
   }
 
   function render() {
@@ -543,9 +492,15 @@
     return !(Number.isInteger(code) && code >= 200 && code < 300);
   }
 
+  function routeLine() {
+    const kind = data && (data.deliveryRoute === 'agent' || data.deliveryRoute === 'putin' || data.deliveryRoute === 'env' || data.deliveryRoute === 'none')
+      ? data.deliveryRoute
+      : 'none';
+    const phrase = window.OfficeFeed && typeof OfficeFeed.routePhrase === 'function' ? OfficeFeed.routePhrase(kind) : '';
+    return `<p class="task-route" data-route="${esc(kind)}">${esc(phrase)}</p>`;
+  }
+
   function taskCard(task) {
-    const actions = (NEXT[task.orderStatus] || []).map((step) =>
-      `<button type="button" data-order-id="${esc(task.id)}" data-status="${esc(step.status)}">${esc(step.label)}</button>`).join('');
     const retry = password() && taskUndelivered(task)
       ? `<button type="button" data-retry="${esc(task.id)}">Отправить повторно</button>`
       : '';
@@ -555,7 +510,7 @@
     return `<article class="dash-card">
       <p>${esc(task.text || 'Задача')}</p>
       ${bits.length ? `<p class="dash-card-meta">${bits.join(' · ')}</p>` : ''}
-      ${(actions || retry) ? `<div class="dash-card-actions">${retry}${actions}</div>` : ''}
+      ${retry ? `<div class="dash-card-actions">${retry}</div>` : ''}
     </article>`;
   }
 
@@ -578,6 +533,7 @@
     const create = locked ? '' : `
       <form class="dash-create" id="dashCreateForm">
         <label for="dashTaskInput">Новая задача</label>
+        ${routeLine()}
         <textarea id="dashTaskInput" maxlength="4000" placeholder="Приказ агенту"></textarea>
         <button class="btn gold" type="submit">Создать задачу</button>
       </form>`;
@@ -597,7 +553,7 @@
       </div>
       ${body}
       ${create}
-      <p class="dash-note${note && note.startsWith('Нужен') ? '' : note ? '' : ''}">${esc(note)}</p>`;
+      <p class="dash-note${note.startsWith('Приказ сохранён') ? ' ok' : ''}">${esc(note)}</p>`;
   }
 
   function bars(days) {
@@ -692,10 +648,11 @@
       <div class="dash-templates">${templates}</div>
       <form class="dash-compose" id="dashChatForm">
         <label for="dashChatInput">Сообщение агенту</label>
+        ${routeLine()}
         <textarea id="dashChatInput" maxlength="4000" placeholder="Приказ. Enter отправляет, Shift+Enter переносит строку"></textarea>
         <button class="btn gold" id="dashSend" type="submit">Отправить</button>
       </form>
-      <p class="dash-note">${esc(note)}</p>`;
+      <p class="dash-note${note.startsWith('Приказ сохранён') ? ' ok' : ''}">${esc(note)}</p>`;
   }
 
   function ensureButton() {

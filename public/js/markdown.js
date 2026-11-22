@@ -1,13 +1,12 @@
 /* Безопасный markdown для страницы вопроса. HTML экранируется.
-   Ссылками становятся только http:// и https://. grokbot:// остаётся текстом. */
+   Ссылками становятся только http:// и https://.
+   grokbot:// не ссылка и не адрес: голый адрес читается как «чат агента». */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.renderSafeMarkdown = api.renderSafeMarkdown;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   'use strict';
-
-  const GROK_HINT = 'откройте чат агента в Grok';
 
   function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -23,8 +22,10 @@
     return /^grokbot:\/\/\S+$/i.test(url) && !/[\s<>"']/.test(url);
   }
 
-  function grokHtml(url) {
-    return `<span class="md-grok">${esc(url)}<span class="md-grok-hint">${esc(GROK_HINT)}</span></span>`;
+  function grokText(labelHtml) {
+    const raw = String(labelHtml || '').trim();
+    if (!raw || /grokbot:/i.test(raw)) return '<span class="md-grok">чат агента</span>';
+    return `<span class="md-grok">${raw}</span>`;
   }
 
   function anchorOrText(url, labelHtml) {
@@ -32,7 +33,7 @@
     if (isHttps(u)) {
       return `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${labelHtml}</a>`;
     }
-    if (isGrok(u)) return grokHtml(u);
+    if (isGrok(u)) return grokText(labelHtml);
     return labelHtml;
   }
 
@@ -61,7 +62,7 @@
     });
     s = s.replace(/grokbot:\/\/[^\s<]+/g, (url) => {
       const parts = splitTrail(url);
-      return hold(isGrok(parts.u) ? grokHtml(parts.u) : esc(parts.u)) + parts.trail;
+      return hold(isGrok(parts.u) ? grokText('') : esc(parts.u)) + parts.trail;
     });
     s = esc(s).replace(/\u0000(\d+)\u0000/g, (_, i) => tokens[Number(i)]);
     s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
@@ -131,5 +132,5 @@
     return blocks.join('');
   }
 
-  return { renderSafeMarkdown, GROK_HINT };
+  return { renderSafeMarkdown };
 });

@@ -1308,8 +1308,9 @@ test('безопасный markdown не делает html и grokbot ссылк
   assert.match(html, /&lt;script&gt;/);
   assert.doesNotMatch(html, /href="grokbot:/);
   assert.doesNotMatch(html, /href="http:/);
-  assert.match(html, /grokbot:\/\/app\/v1\/agent\?id=1/);
-  assert.match(html, /откройте чат агента в Grok/);
+  assert.doesNotMatch(html, /grokbot:/);
+  assert.doesNotMatch(html, /Grok/);
+  assert.match(html, /чат агента/);
   const httpLink = renderSafeMarkdown('Черновик http://example.com/plain');
   assert.doesNotMatch(httpLink, /<a /);
   assert.match(httpLink, /http:\/\/example.com\/plain/);
