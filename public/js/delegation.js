@@ -72,10 +72,25 @@
 
   function activeOrders(tasks) {
     return (tasks || []).filter((t) => {
-      if (!t || !OPEN.has(t.orderStatus)) return false;
+      if (!t) return false;
+      if (window.OfficeFeed && typeof OfficeFeed.isOpenOrder === 'function') return OfficeFeed.isOpenOrder(t);
+      if (!OPEN.has(t.orderStatus)) return false;
       if (window.TaskRules && TaskRules.isSilentTask(t)) return false;
       return true;
     });
+  }
+
+  function tipText(task, byId) {
+    const to = byId.get(task.agentId || task.agent);
+    const name = (to && (to.name || to.id)) || task.agentId || task.agent || '';
+    const fromId = !task.fromAgentId || task.fromAgentId === 'owner' ? 'grok' : task.fromAgentId;
+    const fromAgent = byId.get(fromId);
+    const from = fromId === 'grok' ? 'Путин' : ((fromAgent && (fromAgent.name || fromAgent.id)) || fromId);
+    const status = window.OfficeFeed && typeof OfficeFeed.taskBadge === 'function'
+      ? OfficeFeed.taskBadge(task)[1]
+      : (task.orderStatus || '');
+    const text = String(task.text || 'задание').trim() || 'задание';
+    return `${from} → ${name}: задание ${text}, статус ${status}`;
   }
 
   function draw(tasks, agents) {
@@ -109,7 +124,7 @@
         shape.y1 = again.y1;
       }
       const status = t.orderStatus;
-      parts.push({ id: t.id, status, shape });
+      parts.push({ id: t.id, status, shape, tip: tipText(t, byId) });
     }
     const sig = parts.map((p) => `${p.id}:${p.status}:${p.shape.d}`).join('|');
     if (sig !== lastSig) {
@@ -120,6 +135,7 @@
         node.setAttribute('class', `deleg ${p.status}`);
         node.dataset.orderId = p.id;
         node.dataset.status = p.status;
+        node.dataset.tip = p.tip;
         const hit = document.createElementNS(SVGNS, 'path');
         hit.setAttribute('class', 'deleg-hit');
         hit.setAttribute('data-order-id', p.id);

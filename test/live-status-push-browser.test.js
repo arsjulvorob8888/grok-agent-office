@@ -163,7 +163,13 @@ async function check(width, height) {
       return read('trading') && read('biz');
     }, { timeout: 5000 });
     assert.ok(Date.now() - roomAt < 5000, `${width}: помещение за ${Date.now() - roomAt} мс`);
-    assert.equal(await page.$eval('#stActive', (el) => el.textContent), counter, `${width} замы не входят в счётчик`);
+    const afterDeputies = await page.$eval('#stActive', (el) => el.textContent);
+    const [beforeNum, beforeDen] = counter.split('/').map(Number);
+    const [afterNum, afterDen] = afterDeputies.split('/').map(Number);
+    assert.equal(afterDen, beforeDen, `${width} знаменатель реального списка ${counter} → ${afterDeputies}`);
+    assert.equal(afterNum, beforeNum + 2, `${width} Трейдинг и Business Adviser в числителе ${counter} → ${afterDeputies}`);
+    assert.equal(await page.$('#agents .agent[data-id="trading"]'), null);
+    assert.equal(await page.$('#agents .agent[data-id="biz"]'), null);
 
     const roomIdle = Date.now();
     assert.equal((await postStatus({ agentId: 'trading', status: 'idle' })).status, 200);

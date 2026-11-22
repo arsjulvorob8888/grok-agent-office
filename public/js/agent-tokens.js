@@ -192,23 +192,23 @@
 
   function paint() {
     if (painting) return;
+    const host = document.getElementById('serviceTokens');
     const panel = document.getElementById('panel');
-    if (!panel || !panel.classList.contains('open')) return;
-    const agentId = panel.dataset.agent;
-    const body = panel.querySelector('.p-body');
-    if (!agentId || !body) return;
+    const stray = panel && panel.querySelector('[data-agent-tokens]');
+    if (stray) stray.remove();
+    if (!host) return;
+    const agentId = (panel && panel.dataset.agent) || 'dev';
     const locked = password() ? '0' : '1';
-    const existing = panel.querySelector('[data-agent-tokens]');
+    const existing = host.querySelector('[data-agent-tokens]');
     if (locked === '1') {
       if (existing) existing.remove();
       return;
     }
-    if (existing && existing.dataset.agent === agentId && existing.dataset.locked === '0') return;
+    if (existing && existing.dataset.locked === '0') return;
     painting = true;
     try {
       if (existing) existing.remove();
-      const root = openView(agentId);
-      body.insertBefore(root, body.firstChild);
+      host.append(openView(agentId));
     } finally {
       painting = false;
     }
@@ -229,6 +229,9 @@
     };
     const observer = new MutationObserver(kick);
     observer.observe(panel, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-agent'] });
+    document.addEventListener('click', (event) => {
+      if (event.target && event.target.closest && event.target.closest('#btnKey, #serviceFold summary')) setTimeout(kick, 0);
+    });
     document.addEventListener('submit', (event) => {
       if (event.target && event.target.id === 'pwForm') setTimeout(kick, 30);
     });

@@ -81,6 +81,61 @@ async function openOffice(password, viewport) {
   return page;
 }
 
+test('в окне агента нет токенов, уровня и опыта', async () => {
+  for (const password of ['', 'pw-tokens-ui']) {
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+      const page = await openOffice(password, viewport);
+      try {
+        await pageReady(page);
+        const text = await page.$eval('#panel.open', (el) => el.innerText);
+        assert.equal(/Токены/i.test(text), false, `${viewport.width} ${password ? 'вход' : 'гость'} ${text.slice(0, 180)}`);
+        assert.equal(/Уровень/i.test(text), false, text.slice(0, 180));
+        assert.equal(text.includes('/150'), false, text.slice(0, 180));
+        assert.equal(text.includes('Выполнено'), false, text.slice(0, 180));
+        assert.equal(await page.$('#panel [data-agent-tokens]'), null);
+        assert.equal(await page.$('#panel [data-anchor="level"]'), null);
+      } finally {
+        await page.close();
+      }
+    }
+  }
+});
+
+test('раздел «Служебное» под ключом свёрнут по умолчанию', async () => {
+  const page = await openOffice('pw-tokens-ui', { width: 1280, height: 800 });
+  try {
+    await pageReady(page);
+    await page.click('#btnKey');
+    const fold = await page.waitForSelector('#serviceFold', { timeout: 4000 });
+    const info = await page.evaluate(() => {
+      const details = document.querySelector('#serviceFold');
+      const key = document.querySelector('#btnKey').getBoundingClientRect();
+      const pop = document.querySelector('#servicePop').getBoundingClientRect();
+      const summary = details.querySelector('summary').textContent.trim();
+      return {
+        open: details.open,
+        summary,
+        below: pop.top >= key.bottom - 2,
+        note: document.querySelector('#serviceFold .service-note').textContent,
+        tokensInPanel: !!document.querySelector('#panel [data-agent-tokens]'),
+      };
+    });
+    assert.equal(info.open, false);
+    assert.equal(info.summary, 'Служебное');
+    assert.equal(info.below, true);
+    assert.match(info.note, /Личные ключи агентов/);
+    assert.equal(info.tokensInPanel, false);
+    const issueShown = await page.$eval('#serviceFold', (el) => {
+      const button = el.querySelector('[data-token-issue]');
+      if (!button) return false;
+      return button.getClientRects().length > 0;
+    });
+    assert.equal(issueShown, false);
+  } finally {
+    await page.close();
+  }
+});
+
 test('владелец выпускает токен в панели один раз и может отозвать', async () => {
   const locked = await openOffice('', { width: 1280, height: 800 });
   try {
@@ -94,7 +149,7 @@ test('владелец выпускает токен в панели один р
 
   const page = await openOffice('pw-tokens-ui', { width: 1280, height: 800 });
   try {
-    await page.waitForSelector('[data-token-issue]', { timeout: 8000 });
+    await openService(page);
     const box = await page.$eval('[data-token-issue]', (el) => {
       el.scrollIntoView({ block: 'center' });
       const r = el.getBoundingClientRect();
@@ -111,13 +166,13 @@ test('владелец выпускает токен в панели один р
       await dialog.dismiss();
     });
     await page.select('[data-token-scope]', 'all');
-    await page.click('[data-token-issue]');
+    await page.$eval('[data-token-issue]', (el) => el.click());
     await page.waitForFunction(() => document.querySelector('[data-token-scope]').value === 'all');
     assert.match(asked, /всем агентам/);
     assert.equal(await page.$('[data-token-value]'), null);
 
     await page.select('[data-token-scope]', 'one');
-    await page.click('[data-token-issue]');
+    await page.$eval('[data-token-issue]', (el) => el.click());
     await page.waitForSelector('[data-token-value]', { timeout: 8000 });
     const shown = await page.$eval('[data-agent-tokens]', (root) => ({
       warning: (root.querySelector('[data-token-warn]') || {}).textContent || '',
@@ -130,11 +185,11 @@ test('владелец выпускает токен в панели один р
     assert.equal(shown.copy, 'Копировать');
     assert.equal(shown.name, 'Программирование');
     assert.ok(shown.token.length >= 32);
-    await page.click('[data-token-copy]');
+    await page.$eval('[data-token-copy]', (el) => el.click());
     await page.$eval('[data-token-value]', (el) => el.scrollIntoView({ block: 'center' }));
     await page.screenshot({ path: path.join(artifacts, 'agent-tokens-issued.png') });
 
-    await page.click('[data-token-revoke]');
+    await page.$eval('[data-token-revoke]', (el) => el.click());
     await page.waitForFunction(() => document.body.innerText.includes('Токен отозван'));
     assert.equal(await page.$('[data-token-value]'), null);
     const afterRevoke = await page.evaluate(() => {
@@ -145,7 +200,7 @@ test('владелец выпускает токен в панели один р
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#panel.open', { timeout: 8000 });
-    await page.waitForSelector('[data-token-issue]', { timeout: 8000 });
+    await openService(page);
     const reloaded = await page.evaluate(() => {
       const fields = [...document.querySelectorAll('input,textarea')].map((el) => el.value).join('\n');
       return `${document.body.innerText}\n${fields}`;
@@ -157,7 +212,7 @@ test('владелец выпускает токен в панели один р
 
   const phone = await openOffice('pw-tokens-ui', { width: 390, height: 844 });
   try {
-    await phone.waitForSelector('[data-token-issue]', { timeout: 8000 });
+    await openService(phone);
     const fit = await phone.$eval('[data-token-issue]', (el) => {
       el.scrollIntoView({ block: 'center' });
       const r = el.getBoundingClientRect();
@@ -172,4 +227,13 @@ test('владелец выпускает токен в панели один р
 
 async function pageReady(page) {
   await page.waitForSelector('#panel.open .p-body', { timeout: 8000 });
+}
+
+async function openService(page) {
+  const shown = await page.$('#servicePop:not([hidden])');
+  if (!shown) await page.click('#btnKey');
+  await page.waitForSelector('#serviceFold', { timeout: 4000 });
+  const open = await page.$eval('#serviceFold', (el) => el.open);
+  if (!open) await page.click('#serviceFold summary');
+  await page.waitForSelector('#serviceFold [data-token-issue]', { timeout: 8000 });
 }

@@ -180,6 +180,8 @@
     button.className = 'btn ghost';
     button.textContent = 'Ввести пароль';
     button.addEventListener('click', () => {
+      const password = document.getElementById('servicePassword');
+      if (password) { password.click(); return; }
       const key = document.getElementById('btnKey');
       if (key) key.click();
     });

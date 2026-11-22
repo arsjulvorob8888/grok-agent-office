@@ -221,17 +221,25 @@ test('на экране нет уровня, опыта и «Выполнено:
         }
       }
       const chips = [...document.querySelectorAll('#roster .chip .lv')].filter(shown).length;
+      const html = ['#overlay', '#roster', '#panel', '#agentDash'].map((sel) => {
+        const el = document.querySelector(sel);
+        return el ? el.innerHTML : '';
+      }).join('\n');
       return {
         hits,
         chips,
         levelRow: !!document.querySelector('#panel [data-anchor="level"]'),
         dashLevel: !!document.querySelector('#agentDash .dash-level'),
+        html,
       };
     });
     assert.deepEqual(noise.hits, []);
     assert.equal(noise.chips, 0);
     assert.equal(noise.levelRow, false);
     assert.equal(noise.dashLevel, false);
+    assert.equal(/уровень/i.test(noise.html), false);
+    assert.equal(/опыт/i.test(noise.html), false);
+    assert.equal(noise.html.includes('Выполнено:'), false);
     assert.deepEqual(page.__errors, []);
     await page.screenshot({ path: '/tmp/screen-quiet-1280-card.png' });
   } finally {
@@ -477,8 +485,10 @@ test('счётчик шапки равен агентам нижней пане�
         onMap: ['invest', 'analyst', 'trading', 'biz'].filter((id) => document.querySelector(`#roster .chip[data-id="${id}"], #agents .agent[data-id="${id}"]`)),
       };
     });
-    assert.equal(info.den, info.chips, info.raw);
+    assert.equal(info.den, info.chips + 2, info.raw);
     assert.equal(info.num, info.working, info.raw);
+    assert.equal(info.ids.includes('trading'), false);
+    assert.equal(info.ids.includes('biz'), false);
     assert.deepEqual(info.onMap, []);
     assert.equal(info.ids.includes('army'), true);
     assert.equal(info.ids.includes('advisor'), true);
@@ -488,6 +498,37 @@ test('счётчик шапки равен агентам нижней пане�
     await page.waitForSelector('#room.open .room-seat[data-id="analyst"]', { timeout: 4000 });
     assert.deepEqual(page.__errors, []);
     await page.screenshot({ path: '/tmp/screen-quiet-1280-counter.png' });
+  } finally {
+    await page.close();
+  }
+});
+
+test('работающий советник на карте с фигуркой и подписью', { timeout: 30000 }, async () => {
+  const posted = await api('/api/status', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-quiet' },
+    body: JSON.stringify({ agent: 'advisor', status: 'working', now: 'Готовлю записку' }),
+  });
+  assert.equal(posted.status, 200);
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForFunction(() => {
+      const fig = document.querySelector('#agents .agent[data-id="advisor"] .fig-wrap');
+      const name = document.querySelector('#overlay .tag[data-id="advisor"] .nm');
+      return fig && name && name.textContent.includes('Советник Путина');
+    }, { timeout: 8000 });
+    const view = await page.evaluate(() => {
+      const agent = document.querySelector('#agents .agent[data-id="advisor"]');
+      const name = document.querySelector('#overlay .tag[data-id="advisor"] .nm').textContent.replace(/\s+/g, ' ').trim();
+      return {
+        working: agent.classList.contains('act-working') || agent.classList.contains('pulse'),
+        name,
+        figure: !!agent.querySelector('.fig-wrap'),
+      };
+    });
+    assert.equal(view.figure, true);
+    assert.equal(view.name, '10. Советник Путина');
+    assert.equal(view.working, true);
   } finally {
     await page.close();
   }

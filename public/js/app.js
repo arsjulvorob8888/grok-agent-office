@@ -238,26 +238,29 @@
     gA.innerHTML = ''; gL.innerHTML = ''; overlay.innerHTML = '';
     S.els.clear();
     const [kx, ky] = kremlin();
-    const sorted = [...S.agents].filter(onMap).sort((a, b) => a.y - b.y);
+    const sorted = [...S.agents].filter((a) => onMap(a) || a.id === 'advisor').sort((a, b) => a.y - b.y);
     for (const a of sorted) {
       const tier = tierOf(a);
+      const escort = a.id === 'advisor';
+      const shift = escort ? [120, 130] : [0, 0];
       const g = document.createElementNS(NS, 'g');
       g.setAttribute('class', `agent tier-${tier} st-${statusTone(a)}`);
-      g.setAttribute('transform', `translate(${a.x},${a.y})`);
+      g.setAttribute('transform', `translate(${a.x + shift[0]},${a.y + shift[1]})`);
       g.dataset.id = a.id;
       g.style.setProperty('--agent-glow', Figures.shade(a.color, 0.35));
       const feet = figFeet();
       const plot = `<ellipse class="ground" cx="0" cy="${feet + 2}" rx="34" ry="10"/>`;
       const bld = tier === 'main' ? M.building('putin', a.color) : M.building(a.kind || 'generic', a.color);
       const beaconY = -Math.min(tallOf(a), 120) - 8;
-      g.innerHTML = `${plot}<g class="bld">${bld}</g>
+      const figure = `<g class="fig-wrap" transform="translate(0,${feet}) scale(${figScaleOf()})">${Figures.render(a.kind, a.color)}</g>`;
+      g.innerHTML = escort ? figure : `${plot}<g class="bld">${bld}</g>
         <g class="beacon" transform="translate(0,${beaconY})"><circle r="6" fill="${a.color}" opacity=".45"/></g>
-        <g class="fig-wrap" transform="translate(0,${feet}) scale(${figScaleOf()})">${Figures.render(a.kind, a.color)}</g>`;
+        ${figure}`;
       gA.appendChild(g);
 
       let link = null, packets = null;
       const parent = tier === 'sub' ? S.byId.get(a.parentId) : null;
-      if (tier !== 'main' && (tier !== 'sub' || parent)) {
+      if (!escort && tier !== 'main' && (tier !== 'sub' || parent)) {
         const x0 = parent ? parent.x : kx, y0 = parent ? parent.y + 10 : ky;
         const x1 = a.x, y1 = a.y + (tier === 'sub' ? 10 : 14), dx = x1 - x0, dy = y1 - y0, len = Math.max(1, Math.hypot(dx, dy));
         const bend = tier === 'sub' ? 0.08 : 0.16;
@@ -277,7 +280,7 @@
       }
 
       const tag = document.createElement('div');
-      tag.className = `tag ${tier}`;
+      tag.className = `tag ${tier}${escort ? ' escort' : ''}`;
       tag.style.setProperty('--c', a.color);
       tag.dataset.id = a.id;
       tag.onclick = (e) => {
@@ -308,19 +311,6 @@
       overlay.appendChild(awaitBadge);
       S.els.set(a.id, { g, tag, bubble, badge, awaitBadge, link, packets, w: 0 });
     }
-    for (const a of S.agents) {
-      if (a.id !== 'advisor' || a.archived || a.vacant) continue;
-      const tag = document.createElement('div');
-      tag.className = `tag ${tierOf(a)} guest`;
-      tag.style.setProperty('--c', a.color);
-      tag.dataset.id = a.id;
-      tag.onclick = (e) => {
-        e.stopPropagation();
-        select(a.id, { opener: tag });
-      };
-      overlay.appendChild(tag);
-      S.els.set(a.id, { g: null, tag, bubble: null, badge: null, awaitBadge: null, link: null, packets: null, w: 0 });
-    }
     buildRoster();
     buildMiniDots();
   }
@@ -335,11 +325,12 @@
       const label = window.AgentStatus ? AgentStatus.statusLabel(a) : activityLabel(a);
       if (e.g) e.g.setAttribute('class', `agent tier-${tier} st-${tone}${act}${S.selected === a.id ? ' sel' : ''}`);
       if (e.tag) e.tag.dataset.status = label;
+      const escort = e.tag && e.tag.classList.contains('escort');
       if (!e.g) {
         e.tag.className = `tag guest${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
         e.tag.innerHTML = `<span class="dot ${tone}" data-status="${esc(label)}"></span>`;
       } else {
-        e.tag.className = `tag ${tier}${a.id === 'health' ? ' fit' : ''}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
+        e.tag.className = `tag ${tier}${a.id === 'health' ? ' fit' : ''}${escort ? ' escort' : ''}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
         e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${tone}" data-status="${esc(label)}"></span>`;
       }
       e.w = 0;
@@ -520,6 +511,8 @@
     const pts = new Map();
     let moved = 0, start = null, pinch = null;
     svg.addEventListener('pointerdown', (e) => {
+      tipPinned = false;
+      hideTip();
       const top = document.elementFromPoint(e.clientX, e.clientY);
       // Жест по панели, полосе или кнопке не захватываем: у карты touch-action:none,
       // и палец иначе уходит в пан вместо клика.
@@ -562,7 +555,10 @@
       if (pts.size === 0) {
         svg.classList.remove('dragging');
         if (eatClick) { eatClick = false; clearHold(); return; }
-        if (moved <= 5 && start) clickAt(start.target);
+        if (moved <= 5 && start) {
+          if (e.pointerType === 'touch') showArrowTip(start.target, e.clientX, e.clientY, true);
+          clickAt(start.target);
+        }
       }
     };
     svg.addEventListener('pointerup', up);
@@ -619,6 +615,7 @@
   }
   const tip = $('#tooltip');
   function hoverAt(e) {
+    if (showArrowTip(e.target, e.clientX, e.clientY, false)) return;
     const ag = e.target.closest && e.target.closest('.agent');
     const lm = !ag && e.target.closest && e.target.closest('.landmark');
     if (ag) {
@@ -700,13 +697,33 @@
       if (e.g) e.g.classList.toggle('peek', S.peekId === a.id);
     }
   }
+  let tipPinned = false;
+  function arrowTipTarget(target) {
+    if (!target || !target.closest) return null;
+    return target.closest('#delegations [data-tip]');
+  }
+  function showArrowTip(target, x, y, pin) {
+    const node = arrowTipTarget(target);
+    if (!node) return false;
+    const text = node.dataset.tip || (node.closest('.deleg') && node.closest('.deleg').dataset.tip) || '';
+    if (!text) return false;
+    tip.textContent = text;
+    tip.classList.add('show', 'tip-list');
+    if (pin) tipPinned = true;
+    placeTip(x, y);
+    return true;
+  }
   function showTip(e, text) {
+    tipPinned = false;
     tip.textContent = text;
     tip.classList.add('show');
     tip.classList.remove('tip-list');
     placeTip(e.clientX, e.clientY);
   }
-  function hideTip() { tip.classList.remove('show'); }
+  function hideTip() {
+    if (tipPinned) return;
+    tip.classList.remove('show');
+  }
 
   // ── Таблички и облачка (HTML поверх карты) ───────────────────────────────
   let overlayRaf = 0;
@@ -726,8 +743,9 @@
       if (!e) continue;
       e.tag.classList.toggle('compact', compact);
       e.w = e.tag.offsetWidth; e.h = e.tag.offsetHeight;
-      const gx = a.x + (e.tag.classList.contains('guest') ? 70 : 0);
-      const gy = a.y + (e.tag.classList.contains('guest') ? 90 : 0);
+      const escort = e.tag.classList.contains('escort');
+      const gx = a.x + (escort ? 120 : (e.tag.classList.contains('guest') ? 70 : 0));
+      const gy = a.y + (escort ? 130 : (e.tag.classList.contains('guest') ? 90 : 0));
       const sx = gx * k + tx, sy = (gy + (tierOf(a) === 'main' ? 84 : 50)) * k + ty;
       const r = { x: sx - e.w / 2, y: sy, w: e.w, h: e.h };
       const off = sx - e.w / 2 < 2 || sx + e.w / 2 > innerWidth - 2 || sy < 2 || sy + e.h > innerHeight - 2;
@@ -1962,7 +1980,23 @@
       if (Date.now() - Number($('#modal').dataset.openedAt || 0) < 500) return;
       closeModal();
     };
-    $('#btnKey').onclick = () => { dropPendingAuth(); blockAuthClicksUntil = 0; openModal(); };
+    $('#btnKey').onclick = (e) => {
+      e.stopPropagation();
+      const pop = $('#servicePop');
+      if (!pop) { dropPendingAuth(); blockAuthClicksUntil = 0; openModal(); return; }
+      const open = pop.hidden;
+      pop.hidden = !open;
+      const fold = $('#serviceFold');
+      if (fold) fold.open = false;
+    };
+    const servicePassword = $('#servicePassword');
+    if (servicePassword) servicePassword.onclick = () => { dropPendingAuth(); blockAuthClicksUntil = 0; openModal(); };
+    document.addEventListener('click', (e) => {
+      const pop = $('#servicePop');
+      if (!pop || pop.hidden) return;
+      if (e.target.closest && e.target.closest('#servicePop, #btnKey')) return;
+      pop.hidden = true;
+    });
   }
 
   // ── Тосты ────────────────────────────────────────────────────────────────
@@ -2058,8 +2092,22 @@
   function openTaskCount(id) {
     return S.tasks.filter((t) => (t.agentId || t.agent) === id && Feed.countsAsActiveTask(t) && !(window.TaskRules && TaskRules.isSilentTask(t))).length;
   }
+  function financeDeputies() {
+    const order = ['trading', 'biz'];
+    return order.map((id, index) => {
+      const agent = (S.deputies || []).find((item) => item && item.id === id && item.parentId === 'finance');
+      if (!agent) return null;
+      return { ...agent, number: `7.${index + 1}` };
+    }).filter(Boolean);
+  }
+  function countedStaff() {
+    const roster = rosterAgents();
+    const extra = financeDeputies().filter((agent) => !roster.some((item) => item.id === agent.id));
+    return roster.concat(extra);
+  }
   function treeChildren(a) {
-    const explicit = S.agents.filter((x) => x.parentId === a.id);
+    if (a.id === 'finance') return financeDeputies();
+    const explicit = S.agents.filter((x) => x.parentId === a.id && x.id !== 'invest' && x.id !== 'analyst');
     if (a.id !== CONFIG.mainId) return explicit.sort(cmpNum);
     const seen = new Set(explicit.map((x) => x.id));
     const implicit = S.agents.filter((x) => x.id !== a.id && !x.parentId && !seen.has(x.id));
@@ -2163,7 +2211,7 @@
     document.body.classList.toggle('usage-hot', view.level === 'critical');
   }
   function renderHUD() {
-    const staff = rosterAgents();
+    const staff = countedStaff();
     const active = staff.filter((a) => {
       const mode = window.AgentStatus && AgentStatus.finalStatus ? AgentStatus.finalStatus(a) : activityMode(a);
       return mode === 'working';

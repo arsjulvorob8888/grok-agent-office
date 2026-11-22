@@ -1002,7 +1002,8 @@ store.init(state, {
   seedAgentIds: SEED_AGENTS.map((agent) => agent.id),
 });
 store.ready.then(() => {
-  if (!usage.prune(state, usage.now())) return null;
+  rememberLegacyDelivered();
+  if (!usage.prune(state, usage.now())) return store.flush();
   store.noteGrokUsage(state.grokUsage);
   return store.flush();
 }).catch(() => {});
@@ -2923,6 +2924,27 @@ function flushOutbox(mode) {
   return run;
 }
 
+function clearTestNow() {
+  const changed = [];
+  for (const agent of state.agents || []) {
+    if (!agent || (agent.id !== 'qa' && agent.id !== 'advisor')) continue;
+    if (String(agent.now || '').trim().toLowerCase() !== 'тест') continue;
+    agent.now = '';
+    changed.push(agent);
+    store.noteAgent(agent);
+  }
+  return changed;
+}
+
+function rememberLegacyDelivered() {
+  if (!Array.isArray(state.outbox)) state.outbox = [];
+  const plan = retry.settleLegacyDelivered(state.tasks, state.outbox);
+  for (const task of plan.tasks) store.noteTask(task);
+  for (const item of plan.outbox) store.noteOutbox(item);
+  plan.now = clearTestNow();
+  return plan;
+}
+
 function rememberCancelledOrders() {
   const plan = retry.normalizeCancelledOrders(state.tasks, state.outbox);
   for (const task of plan.tasks) store.noteTask(task);
@@ -2954,6 +2976,7 @@ function backfillMissingOutbox() {
 }
 
 async function deliverPendingAfterRouteChange() {
+  rememberLegacyDelivered();
   rememberCancelledOrders();
   backfillMissingOutbox();
   rememberCancelledOrders();
@@ -3773,4 +3796,6 @@ module.exports = {
   kremlinWebhookHeaders,
   formatAtMsk,
   FINANCE_TEXT_NOTE,
+  rememberLegacyDelivered,
+  clearTestNow,
 };
