@@ -8,6 +8,7 @@ const multer = require('multer');
 const store = require('./lib/store');
 const { activityFor, activeWindowMs } = require('./lib/activity');
 const { deliveryCaption } = require('./public/js/feed');
+const retry = require('./lib/outbox-retry');
 const { buildDashboard } = require('./lib/agent-dashboard');
 const { registerHeartbeat } = require('./lib/heartbeat');
 const { createPoryadokSync } = require('./lib/poryadok-sync');
@@ -974,6 +975,20 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
+function publicAgentLive(record, now) {
+  if (!record || typeof record !== 'object') return null;
+  if (record.status === 'working') {
+    const until = Date.parse(record.until);
+    if (!Number.isFinite(until) || now >= until) return null;
+    return {
+      status: 'working',
+      doing: typeof record.doing === 'string' ? record.doing.slice(0, 80) : '',
+    };
+  }
+  if (record.status === 'idle') return { status: 'idle', doing: '' };
+  return null;
+}
+
 function publicState(opts = {}) {
   return {
     agents: state.agents.map((a) => ({
@@ -1000,6 +1015,7 @@ function publicState(opts = {}) {
       completed: a.completed || 0,
       responsibilities: (a.responsibilities || []).slice(),
       ...activityFor(a, state.tasks, live.now(), activeWindowMs(), activityExtras()),
+      live: publicAgentLive(a.live, live.now()),
       ...(a.analysis !== undefined ? { analysis: a.analysis } : {}),
     })),
     tasks: state.tasks.slice(0, 100).map(publicTask),
@@ -1092,6 +1108,7 @@ function publicNeed(item, now = Date.now(), opts = {}) {
     answer: item.answer || null,
     answeredAt: item.answeredAt || null,
     answerStatus: item.answerStatus === 'answered' ? 'answered' : null,
+    answerDeliveryLabel: answerDeliveryLabel(item),
   };
   if (opts.includePrivate || isFixtureTestNeed(item)) {
     view.details = typeof item.details === 'string' ? item.details : '';
@@ -1528,10 +1545,42 @@ function publicTask(t) {
   return view;
 }
 
+function outboxForTask(taskId) {
+  const rows = (state.outbox || []).filter((item) => item && item.taskId === taskId);
+  rows.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')) || String(b.id).localeCompare(String(a.id)));
+  return rows[0] || null;
+}
+
 function deliveryLabelFor(task) {
   if (!task) return null;
   if ((task.orderStatus || 'sent') !== 'sent') return null;
-  return deliveryCaption(task.forwardStatus);
+  const agentId = task.agentId || task.agent;
+  const route = delivery.routeFor(agentId, state, process.env);
+  const item = outboxForTask(task.id);
+  const next = item && item.status !== 'delivered' ? retry.nextRetryAt(item) : null;
+  return deliveryCaption(task.forwardStatus, { route, nextRetryAt: next });
+}
+
+function taskDelivered2xx(task) {
+  return retry.deliveredCode(task);
+}
+
+function answerDeliveryLabel(item) {
+  if (!item || item.answerStatus !== 'answered') return null;
+  const linked = [];
+  for (const task of state.tasks || []) {
+    if (!task) continue;
+    if (task.needId === item.id) linked.push(task);
+    else if (item.what && String(task.text || '').startsWith(`Ответ Арсения на «${item.what}»`)) linked.push(task);
+  }
+  for (const entry of state.outbox || []) {
+    if (!entry || !entry.payload || entry.payload.needId !== item.id) continue;
+    if (entry.status === 'delivered') return 'Ответ получен агентом';
+    const task = (state.tasks || []).find((row) => row && row.id === entry.taskId);
+    if (task && !linked.includes(task)) linked.push(task);
+  }
+  if (linked.some((task) => taskDelivered2xx(task))) return 'Ответ получен агентом';
+  return 'Сохранён, ещё не доставлен';
 }
 
 function publicOutbox(item) {
@@ -1884,6 +1933,22 @@ function trimMessages(agentId) {
   store.noteMessagesRemoved(drop);
 }
 
+const messageHits = new Map();
+const MESSAGE_RATE_MAX = 30;
+const MESSAGE_RATE_WINDOW_MS = 60 * 1000;
+
+function allowAgentMessage(agentId) {
+  const now = Date.now();
+  const list = (messageHits.get(agentId) || []).filter((stamp) => now - stamp < MESSAGE_RATE_WINDOW_MS);
+  if (list.length >= MESSAGE_RATE_MAX) {
+    messageHits.set(agentId, list);
+    return false;
+  }
+  list.push(now);
+  messageHits.set(agentId, list);
+  return true;
+}
+
 function addMessage(input) {
   if (input.id) {
     const existing = state.messages.find((m) => m.id === input.id);
@@ -1940,11 +2005,25 @@ function prepareRelayMessage(body, uploaded) {
   const role = typeof body.role === 'string' ? body.role.trim() : '';
   if (role !== 'owner' && role !== 'agent') throw httpError(400, 'role должен быть owner или agent');
   const text = typeof body.text === 'string' ? body.text.trim() : '';
-  if (text.length > 20000) throw httpError(400, 'Слишком длинное сообщение (максимум 20000 символов)');
+  const textMax = role === 'agent' ? 4000 : 20000;
+  if (text.length > textMax) throw httpError(400, `Слишком длинное сообщение (максимум ${textMax} символов)`);
   const attachments = [...normalizeAttachmentList(body.attachments), ...(uploaded || [])];
   if (attachments.length > MAX_FILES) throw httpError(400, `Слишком много вложений (максимум ${MAX_FILES})`);
   if (!text && attachments.length === 0) throw httpError(400, 'Нужен text или вложения');
-  const taskId = typeof body.taskId === 'string' && body.taskId.trim() ? body.taskId.trim().slice(0, 64) : null;
+  let taskId = null;
+  if (body.taskId != null && body.taskId !== '') {
+    if (typeof body.taskId !== 'string') throw httpError(400, 'taskId должен быть строкой');
+    taskId = body.taskId.trim().slice(0, 64);
+    if (!taskId) taskId = null;
+  }
+  if (role === 'agent' && !taskId && !earlyId) throw httpError(400, 'Нужен taskId');
+  if (taskId) {
+    const task = state.tasks.find((item) => item && item.id === taskId);
+    if (!task) throw httpError(400, 'Неизвестная задача');
+    if (role === 'agent' && (task.agentId || task.agent) !== agentId) {
+      throw httpError(400, 'Задача другого агента');
+    }
+  }
   return {
     duplicate: false,
     input: {
@@ -2123,14 +2202,18 @@ app.get('/api/health/delivery', (req, res) => {
   if (!deliveryAuthorized(req)) return res.status(401).json({ error: 'Нужна авторизация' });
   const list = state.outbox || [];
   const hooks = delivery.publicWebhookSummary(state);
+  const counts = retry.healthCounts(list);
   res.json({
     webhookUrlSet: webhookUrl() !== '',
     webhookKeySet: String(process.env.KREMLIN_WEBHOOK_KEY || '').trim() !== '',
     agentWebhooks: hooks.agentWebhooks,
     putinWebhookSet: hooks.putinWebhookSet,
     lastDelivery: lastDeliveryView(),
-    queued: list.filter((item) => item && item.status === 'queued').length,
-    delivered: list.filter((item) => item && item.status === 'delivered').length,
+    queued: counts.queued,
+    delivered: counts.delivered,
+    resent: counts.resent,
+    errors: counts.errors,
+    nextRetryAt: counts.nextRetryAt,
   });
 });
 
@@ -2147,14 +2230,61 @@ delivery.register(app, {
       KREMLIN_WEBHOOK_HEADER: process.env.KREMLIN_WEBHOOK_HEADER,
     });
   },
+  onWebhookSaved() {
+    return deliverPendingAfterRouteChange();
+  },
 });
 
 app.post('/api/outbox/retry', requireAppPassword, async (req, res) => {
   if (!delivery.anyConfigured(state, process.env)) {
     return res.status(409).json({ error: 'KREMLIN_WEBHOOK_URL не задан' });
   }
-  const result = await flushOutbox();
+  const result = await flushOutbox('now');
   res.json({ ok: true, sent: result.sent, failed: result.failed });
+});
+
+app.post('/api/delivery/retry', async (req, res) => {
+  if (!deliveryAuthorized(req)) return res.status(401).json({ error: 'Нужна авторизация' });
+  if (!delivery.anyConfigured(state, process.env)) {
+    return res.status(409).json({ error: 'KREMLIN_WEBHOOK_URL не задан' });
+  }
+  backfillMissingOutbox();
+  await store.flush();
+  const result = await flushOutbox('now');
+  res.json({ ok: true, sent: result.sent, failed: result.failed });
+});
+
+app.post('/api/orders/:id/retry', requireAppPassword, async (req, res) => {
+  const task = state.tasks.find((item) => item && item.id === req.params.id);
+  if (!task) return res.status(404).json({ error: 'Задача не найдена' });
+  if (retry.isStubText(task.text) || task.orderStatus === 'cancelled') {
+    return res.status(409).json({ error: 'Устаревшая задача не досылается' });
+  }
+  const done = (state.outbox || []).find((item) => item && item.taskId === task.id && item.status === 'delivered');
+  if (done || retry.deliveredCode(task)) return res.json({ ok: true, sent: 0, already: true });
+  let item = (state.outbox || []).find((entry) => entry && entry.taskId === task.id && entry.status !== 'delivered');
+  if (!item) {
+    if (!Array.isArray(state.outbox)) state.outbox = [];
+    const needId = task.needId || retry.inferNeedId(task, state.needs);
+    if (needId) task.needId = needId;
+    const notice = {
+      type: needId ? 'answer' : 'owner_task',
+      agentId: task.agentId || task.agent,
+      text: task.text || '',
+      at: task.createdAt,
+    };
+    if (needId) notice.needId = needId;
+    item = createOutboxItem(task, notice);
+    state.outbox.push(item);
+    store.noteOutbox(item);
+    if (needId) store.noteTask(task);
+  }
+  if (item.status === 'sending') return res.json({ ok: true, sent: 0, already: true });
+  const result = await sendOutboxItem(item, { force: true });
+  const kind = recordOutboxResult(item, result);
+  await store.flush();
+  if (result && result.skipped) return res.json({ ok: true, sent: 0, already: true });
+  res.json({ ok: true, sent: kind === 'sent' ? 1 : 0, failed: kind === 'failed' ? 1 : 0 });
 });
 
 app.get('/api/state', (req, res) => {
@@ -2367,7 +2497,7 @@ function queueRecipient(fromAgentId) {
 
 function openTask(task) {
   if (!task) return false;
-  if (task.orderStatus === 'done' || task.orderStatus === 'failed') return false;
+  if (task.orderStatus === 'done' || task.orderStatus === 'failed' || task.orderStatus === 'cancelled') return false;
   if (task.status === 'выполнена') return false;
   return true;
 }
@@ -2441,9 +2571,14 @@ function markDeliveredAgent(item, task) {
   store.noteAgent(agent);
 }
 
-async function sendOutboxItem(item) {
-  if (!item || item.status === 'delivered') return { sent: false, attempted: false, skipped: true };
-  if (outboxInflight.has(item.id)) return { sent: false, attempted: false, skipped: true };
+async function sendOutboxItem(item, options = {}) {
+  const force = !!(options && options.force);
+  if (!item || item.status === 'delivered' || item.status === 'sending') {
+    return { sent: false, attempted: false, skipped: true };
+  }
+  if (!retry.claimMemory(item, process.env, force)) {
+    return { sent: false, attempted: false, skipped: true };
+  }
   let dest = null;
   try {
     dest = delivery.resolveDestination(item.agentId, state, process.env);
@@ -2453,14 +2588,27 @@ async function sendOutboxItem(item) {
     logDeliveryAttempt(item, 'error=decrypt_error', 0);
     return { sent: false, attempted: true, status: 0, error: 'decrypt_error' };
   }
-  if (!dest || !dest.url) return { sent: false, attempted: false };
+  if (!dest || !dest.url) {
+    retry.releaseClaim(item);
+    return { sent: false, attempted: false };
+  }
+  let won = true;
+  try {
+    won = await store.claimOutbox(item.id);
+  } catch (_) {
+    won = true;
+  }
+  if (!won) {
+    retry.releaseClaim(item);
+    return { sent: false, attempted: false, skipped: true };
+  }
   outboxInflight.add(item.id);
   item.attempts = (Number(item.attempts) || 0) + 1;
   const started = Date.now();
   try {
     const headers = kremlinWebhookHeaders({
       KREMLIN_WEBHOOK_KEY: dest.key || '',
-      KREMLIN_WEBHOOK_HEADER: process.env.KREMLIN_WEBHOOK_HEADER,
+      KREMLIN_WEBHOOK_HEADER: dest.via === 'env' ? process.env.KREMLIN_WEBHOOK_HEADER : '',
     });
     headers['x-outbox-id'] = String(item.id);
     const response = await fetch(dest.url, {
@@ -2490,9 +2638,25 @@ async function sendOutboxItem(item) {
   }
 }
 
-async function drainOutbox() {
+function recordOutboxResult(item, result) {
+  if (!result || result.skipped || !result.attempted) return null;
+  applyOutboxResult(item, result);
+  const task = state.tasks.find((entry) => entry.id === item.taskId);
+  applyKremlinResult(task, result);
+  if (result.sent) markDeliveredAgent(item, task);
+  if (task) store.noteTask(task);
+  store.noteOutbox(item);
+  return result.sent ? 'sent' : 'failed';
+}
+
+async function drainOutbox(mode) {
+  const now = Date.now();
   const pending = (state.outbox || [])
-    .filter((item) => item && item.status === 'queued')
+    .filter((item) => {
+      if (!item || item.status !== 'queued') return false;
+      if (mode === 'timer') return retry.dueOnTimer(item, now);
+      return !retry.exhausted(item);
+    })
     .slice()
     .sort((a, b) => String(a.at).localeCompare(String(b.at)) || String(a.id).localeCompare(String(b.id)));
   let sent = 0;
@@ -2500,32 +2664,66 @@ async function drainOutbox() {
   for (const item of pending) {
     if (item.status !== 'queued') continue;
     const result = await sendOutboxItem(item);
-    if (!result || result.skipped || !result.attempted) continue;
-    applyOutboxResult(item, result);
-    const task = state.tasks.find((entry) => entry.id === item.taskId);
-    applyKremlinResult(task, result);
-    if (result.sent) markDeliveredAgent(item, task);
-    if (task) store.noteTask(task);
-    store.noteOutbox(item);
-    if (result.sent) sent += 1;
-    else failed += 1;
+    const kind = recordOutboxResult(item, result);
+    if (kind === 'sent') sent += 1;
+    else if (kind === 'failed') failed += 1;
   }
   await store.flush();
   return { sent, failed };
 }
 
-function flushOutbox() {
-  const run = outboxChain.then(() => drainOutbox());
+function flushOutbox(mode) {
+  const run = outboxChain.then(() => drainOutbox(mode === 'timer' ? 'timer' : 'now'));
   outboxChain = run.then(() => {}, () => {});
   return run;
+}
+
+function backfillMissingOutbox() {
+  if (!Array.isArray(state.outbox)) state.outbox = [];
+  const plan = retry.planBackfill(state.tasks, state.outbox, state.needs);
+  for (const task of plan.cancelled) store.noteTask(task);
+  for (const spec of plan.missing) {
+    const task = spec.task;
+    if (spec.needId) task.needId = spec.needId;
+    const notice = {
+      type: spec.needId ? 'answer' : 'owner_task',
+      agentId: task.agentId || task.agent,
+      text: task.text || '',
+      at: task.createdAt,
+    };
+    if (spec.needId) notice.needId = spec.needId;
+    const item = createOutboxItem(task, notice);
+    state.outbox.push(item);
+    store.noteOutbox(item);
+    if (spec.needId) store.noteTask(task);
+  }
+  return plan;
+}
+
+async function deliverPendingAfterRouteChange() {
+  backfillMissingOutbox();
+  await store.flush();
+  return flushOutbox('now');
 }
 
 function kickStartupFlush() {
   if (startupFlushStarted) return;
   startupFlushStarted = true;
-  store.ready.then(() => flushOutbox()).catch(() => {
+  store.ready.then(() => deliverPendingAfterRouteChange()).catch(() => {
     console.error('Очередь вебхука не отправлена');
   });
+}
+
+let retryTimer = null;
+
+function startRetryTimer() {
+  if (retryTimer) return;
+  const { baseMs } = retry.limits();
+  const period = baseMs >= 1000 ? 1000 : Math.max(50, Math.floor(baseMs / 2) || 50);
+  retryTimer = setInterval(() => {
+    store.releaseStaleOutbox(60).catch(() => {}).then(() => flushOutbox('timer')).catch(() => {});
+  }, period);
+  if (typeof retryTimer.unref === 'function') retryTimer.unref();
 }
 
 function lastDeliveryView() {
@@ -2584,6 +2782,7 @@ async function enqueueQueueTask({ agentId, text, fromAgentId, parentOrderId, att
     attachments: files,
     messageId: '',
   };
+  if (event && event.needId) task.needId = event.needId;
   task.messageId = `task:${task.id}`;
 
   addMessage({
@@ -2837,6 +3036,13 @@ app.post('/api/messages', requireAgentToken, maybeUpload, async (req, res) => {
         return res.status(400).json({ error: 'Пакет messages не сочетается с загрузкой файлов. Сначала POST /api/upload.' });
       }
       if (req.body.messages.length > 20) return res.status(400).json({ error: 'Слишком много сообщений за раз (максимум 20)' });
+      const agentsInBatch = new Set(req.body.messages.map((item) => (item && (item.agentId || item.agent)) || '').filter(Boolean));
+      for (const agentId of agentsInBatch) {
+        if (!allowAgentMessage(agentId)) {
+          res.set('Retry-After', '60');
+          return res.status(429).json({ error: 'Слишком часто' });
+        }
+      }
       const prepared = req.body.messages.map((item) => prepareRelayMessage(item, []));
       const results = prepared.map((item) => (item.duplicate ? item : addMessage(item.input)));
       const created = results.some((r) => !r.duplicate);
@@ -2845,6 +3051,12 @@ app.post('/api/messages', requireAgentToken, maybeUpload, async (req, res) => {
       return res.status(created ? 201 : 200).json({ ok: true, results });
     }
     const body = req.body || {};
+    const rateAgent = typeof body.agentId === 'string' ? body.agentId.trim() : (typeof body.agent === 'string' ? body.agent.trim() : '');
+    if (rateAgent && !allowAgentMessage(rateAgent)) {
+      discardUploads(req.files);
+      res.set('Retry-After', '60');
+      return res.status(429).json({ error: 'Слишком часто' });
+    }
     const earlyId = body.id != null && body.id !== '' ? cleanMessageId(body.id) : '';
     if (earlyId) {
       const existing = state.messages.find((m) => m.id === earlyId);
@@ -3203,6 +3415,7 @@ app.listen = function listenWithPoryadokSync(...args) {
   const start = () => {
     poryadokSync.onListening();
     kickStartupFlush();
+    startRetryTimer();
   };
   if (server && server.listening) start();
   else if (server && typeof server.once === 'function') {
@@ -3213,6 +3426,10 @@ app.listen = function listenWithPoryadokSync(...args) {
     const orig = server.close.bind(server);
     server.close = function closeAndDropStreams(callback) {
       try { hub.closeSockets(); } catch (_) { /* поток уже пуст */ }
+      if (retryTimer) {
+        clearInterval(retryTimer);
+        retryTimer = null;
+      }
       return orig(callback);
     };
     server.__liveClose = true;

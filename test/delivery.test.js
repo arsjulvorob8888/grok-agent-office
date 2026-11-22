@@ -429,7 +429,7 @@ test('задача идёт агенту, потом Путину, потом в
     headers: { 'x-app-password': 'pw-delivery' },
     body: JSON.stringify({ agent: 'army', text: 'fixture-task-agent' }),
   });
-  assert.equal(agentTask.body.deliveryLabel, 'Ошибка доставки 500');
+  assert.match(agentTask.body.deliveryLabel, /^Ошибка доставки, повтор в \d{2}:\d{2} МСК$/);
   const agentHit = hits.filter((hit) => hit.body && hit.body.taskId === agentTask.body.id).pop();
   assert.equal(agentHit.url, '/fail/agent-hook');
   assert.equal(agentHit.headers['x-webhook-key'], AGENT_KEY);
@@ -499,7 +499,7 @@ test('2xx через вебхук агента или Путина делает 
     headers: { 'x-app-password': 'pw-delivery' },
     body: JSON.stringify({ agent: 'devops', text: 'fixture-task-devops-live' }),
   });
-  assert.equal(failed.body.deliveryLabel, 'Ошибка доставки 500');
+  assert.match(failed.body.deliveryLabel, /^Ошибка доставки, повтор в \d{2}:\d{2} МСК$/);
   assert.notEqual(await activityOf('devops'), 'working');
 
   await call('/api/agents/routines/delivery', {
@@ -515,7 +515,7 @@ test('2xx через вебхук агента или Путина делает 
   assert.equal(viaAgent.body.deliveryLabel, 'Отправлена');
   assert.equal(viaAgent.body.forwardStatus >= 200 && viaAgent.body.forwardStatus < 300, true);
   assert.equal(await activityOf('routines'), 'working');
-  assert.equal(await activityOf('qa'), 'resting');
+  assert.equal(await activityOf('qa'), 'working');
 });
 
 test('без ключа шифра сохранение отказывает и не подменяет адрес', async () => {
@@ -545,7 +545,7 @@ test('без ключа шифра сохранение отказывает и 
     body: JSON.stringify({ agent: 'dev', text: 'fixture-task-locked' }),
   });
   assert.equal(broken.status, 201);
-  assert.equal(broken.body.deliveryLabel, 'Ошибка доставки 0');
+  assert.match(broken.body.deliveryLabel, /^Ошибка доставки, повтор в \d{2}:\d{2} МСК$/);
   assert.equal(hits.length, before);
   process.env.WEBHOOK_SECRETS_KEY = savedKey;
   process.env.KREMLIN_WEBHOOK_URL = '';
