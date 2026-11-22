@@ -328,6 +328,107 @@ test('инвариант: «Ответ получен» только при от
   }
 });
 
+test('инвариант: на экране только правда сейчас — старые «Доставлено» и «Выполнено» свёрнуты', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.parse('2026-11-22T16:00:00.000Z');
+  const agents = ['social', 'finance', 'qa', 'dev'];
+  const ages = [0, DAY - 1, DAY, DAY + 1, 5 * DAY];
+  for (const agentId of agents) {
+    for (const age of ages) {
+      const createdAt = new Date(now - age).toISOString();
+      const tasks = [
+        {
+          id: 'delivered',
+          agent: agentId,
+          agentId,
+          orderStatus: 'sent',
+          forwardStatus: 200,
+          outboxStatus: 'delivered',
+          deliveryLabel: 'Отправлена',
+          text: 'Ответ Арсения на «сводку»',
+          createdAt,
+        },
+        {
+          id: 'done',
+          agent: agentId,
+          agentId,
+          orderStatus: 'done',
+          status: 'выполнена',
+          text: 'Готово',
+          createdAt,
+        },
+        {
+          id: 'work',
+          agent: agentId,
+          agentId,
+          orderStatus: 'in_progress',
+          text: 'В работе',
+          createdAt: new Date(now - 5 * DAY).toISOString(),
+        },
+        {
+          id: 'wait',
+          agent: agentId,
+          agentId,
+          orderStatus: 'sent',
+          forwardStatus: null,
+          outboxStatus: 'queued',
+          text: 'Ждёт ответа',
+          createdAt: new Date(now - 5 * DAY).toISOString(),
+        },
+      ];
+      const before = tasks.map((task) => task.id).join(',');
+      const view = Feed.journalSplit(tasks, now);
+      const open = new Set((view.active || []).map((task) => task.id));
+      const stale = age > DAY;
+      assert.equal(open.has('delivered'), !stale, `${agentId} ${age} delivered`);
+      assert.equal(open.has('done'), !stale, `${agentId} ${age} done`);
+      assert.equal(open.has('work'), true, `${agentId} work`);
+      assert.equal(open.has('wait'), true, `${agentId} wait`);
+      assert.equal(view.badge, view.active.length, `${agentId} ${age}`);
+      assert.equal(tasks.map((task) => task.id).join(','), before, `${agentId} ${age}`);
+      if (stale) {
+        const folded = (view.delivered || []).map((task) => task.id).sort();
+        assert.deepEqual(folded, ['delivered', 'done'], `${agentId} ${age}`);
+      }
+    }
+  }
+  const quiet = Feed.journalSplit([
+    {
+      id: 't-3',
+      agentId: 'finance',
+      orderStatus: 'sent',
+      forwardStatus: 200,
+      outboxStatus: 'delivered',
+      deliveryLabel: 'Доставлено',
+      text: 'Ответ финансам',
+      createdAt: '2026-11-17T14:00:00.000Z',
+    },
+    {
+      id: 't-4',
+      agentId: 'social',
+      orderStatus: 'sent',
+      forwardStatus: 200,
+      outboxStatus: 'delivered',
+      text: 'Ответ соцсетям',
+      createdAt: '2026-11-17T14:00:00.000Z',
+    },
+    {
+      id: 't-2',
+      agentId: 'qa',
+      orderStatus: 'cancelled',
+      status: 'отменён',
+      text: 'тест',
+      createdAt: '2026-11-17T08:00:00.000Z',
+    },
+  ], now);
+  assert.equal(quiet.active.length, 0);
+  assert.equal(quiet.badge, 0);
+  assert.equal(quiet.badge, quiet.active.length);
+  assert.equal(quiet.empty, 'Активных заданий нет');
+  assert.equal(quiet.delivered.length, 2);
+  assert.equal(quiet.cancelled.length, 1);
+});
+
 test('инвариант: реплика Арсения подписана «Вы», маршрут приказа остаётся «Путин →»', () => {
   for (const id of ['owner', '', null]) {
     assert.equal(speakerLabel(id), 'Вы');

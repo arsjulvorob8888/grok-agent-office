@@ -466,7 +466,7 @@
         <p class="${agent.currentTask ? '' : 'dash-empty'}">${agent.currentTask ? esc(agent.currentTask) : 'Сейчас нет задачи'}</p>
       </div>
       <div class="dash-metrics">
-        <div class="dash-metric"><b>${metrics.total}</b><span>Задач всего</span></div>
+        <div class="dash-metric"><b>${metrics.total}</b><span>${esc(window.OfficeFeed && OfficeFeed.ruCount ? OfficeFeed.ruCount(metrics.total, 'задача', 'задачи', 'задач') : 'задач')}</span></div>
         <div class="dash-metric"><b>${metrics.done}</b><span>Выполнено</span></div>
         <div class="dash-metric"><b>${metrics.inProgress}</b><span>В работе</span></div>
       </div>
