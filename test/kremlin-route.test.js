@@ -116,7 +116,7 @@ test('ответы, закрытия, панель и приказы не зов
   });
   assert.equal(yes.status, 201);
   assert.equal(yes.body.answer, 'yes');
-  assert.equal(yes.body.closedBy, 'owner');
+  assert.equal(yes.body.closedBy, 'owner-answer');
   assert.equal(yes.body.answers[0].text, 'Да');
   const yesHit = hitFor(yesNo.body.id, 'answer');
   assert.ok(yesHit);

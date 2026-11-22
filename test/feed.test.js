@@ -56,11 +56,11 @@ test('сообщение видят отправитель и адресат, п
   assert.equal(Feed.seesMessage(messages[2], tasks, 'devops'), false);
 });
 
-test('пункт «нужно» видит автор, недавнее закрытое тоже, чужой и давнее — нет', () => {
+test('пункт «нужно» видит автор, закрытое и чужое — нет', () => {
   const { needs } = fixture();
   const ids = (agentId) => Feed.needsForAgent(needs, agentId, now).map((n) => n.id);
   assert.deepEqual(ids('finance'), ['need-finance']);
-  assert.deepEqual(ids('devops'), ['need-render-api']);
+  assert.deepEqual(ids('devops'), []);
   assert.deepEqual(ids('grok'), ['need-academy']);
   assert.deepEqual(ids('army'), []);
   assert.deepEqual(ids('poker'), []);
@@ -88,6 +88,30 @@ test('число в общем виде и в панели совпадает', 
       Feed.messagesForGeneral(state.messages).filter((message) => Feed.seesMessage(message, state.tasks, agentId)).length,
     );
   }
+});
+
+test('закрытый пункт с closedBy=owner не попадает в «Ждёт от вас»', () => {
+  const needs = [
+    { id: 'need-finance', fromAgentId: 'finance', what: 'открытый вопрос', closedAt: null },
+    {
+      id: 'need-finance-done',
+      fromAgentId: 'finance',
+      what: 'Ответить на шесть финансовых вопросов',
+      closedAt: '2026-11-17T11:30:00.000Z',
+      closedBy: 'owner',
+    },
+    {
+      id: 'need-old-owner',
+      fromAgentId: 'finance',
+      what: 'Давно закрыто',
+      closedAt: '2000-01-01T00:00:00.000Z',
+      closedBy: 'owner',
+    },
+  ];
+  const shown = Feed.needsForAgent(needs, 'finance', now);
+  assert.deepEqual(shown.map((n) => n.id), ['need-finance']);
+  assert.equal(shown.some((n) => n.closedAt || n.closedBy === 'owner'), false);
+  assert.deepEqual(Feed.openNeedsForAgent(needs, 'finance').map((n) => n.id), ['need-finance']);
 });
 
 test('просроченный пункт не красится как срочный, но остаётся в счётчике', () => {

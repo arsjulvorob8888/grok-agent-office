@@ -498,6 +498,8 @@ const state = {
   nextOutboxId: 1,
   migrations: { financeTextReopen: false },
   grokUsage: { latest: null, history: [] },
+  decisions: [],
+  nextDecisionId: 1,
 };
 
 const NEED_URGENCY = new Set(['low', 'normal', 'high']);
@@ -723,12 +725,7 @@ function migrateOwnerNeeds(list = state.needs) {
     item.kind = 'test';
     item.answerable = true;
     item.answerMode = 'yesno';
-    item.closedAt = null;
-    item.closedBy = null;
-    item.answer = null;
-    item.answeredAt = null;
-    item.answerStatus = null;
-    item.answers = [];
+    reopenSeededTestNeed(item);
   }
   for (const item of list) {
     if (!item || item.id !== QUESTION_NEED_ID) continue;
@@ -736,12 +733,7 @@ function migrateOwnerNeeds(list = state.needs) {
     item.kind = 'test';
     item.answerable = true;
     item.answerMode = 'text';
-    item.closedAt = null;
-    item.closedBy = null;
-    item.answer = null;
-    item.answeredAt = null;
-    item.answerStatus = null;
-    item.answers = [];
+    reopenSeededTestNeed(item);
   }
   for (const item of list) {
     if (!item || item.id !== FINANCE_NEED_ID) continue;
@@ -751,10 +743,52 @@ function migrateOwnerNeeds(list = state.needs) {
     if (!item || item.id !== RENDER_NEED_ID) continue;
     if (!item.closedAt) item.closedAt = now;
   }
+  const closedAnswered = closeAnsweredNeeds(list);
   const reopenedFinance = reopenFinanceTextNeed(list);
   if (list === state.needs) resolveNeedsByEnv();
-  if (reopenedFinance && list === state.needs) schedulePoryadok();
+  if ((reopenedFinance || closedAnswered) && list === state.needs) schedulePoryadok();
   return list;
+}
+
+function answeredEntries(item) {
+  const list = [];
+  const answers = Array.isArray(item && item.answers) ? item.answers : [];
+  for (const entry of answers) {
+    const text = entry && typeof entry.text === 'string' ? entry.text.trim() : '';
+    if (!text) continue;
+    list.push({
+      answer: text,
+      at: entry.at || item.answeredAt || item.updatedAt || item.createdAt || new Date().toISOString(),
+    });
+  }
+  if (!list.length && (item.answer === 'yes' || item.answer === 'no')) {
+    list.push({
+      answer: item.answer === 'no' ? 'Нет' : 'Да',
+      at: item.answeredAt || item.updatedAt || item.createdAt || new Date().toISOString(),
+    });
+  }
+  return list;
+}
+
+// Открытый пункт с уже записанным ответом закрывается так же, как новый ответ владельца.
+// Повторный запуск не меняет closedAt и не копирует строку журнала второй раз.
+function closeAnsweredNeeds(list) {
+  if (!Array.isArray(list)) return false;
+  let closed = false;
+  for (const item of list) {
+    if (!item || isTestNeedItem(item)) continue;
+    const entries = answeredEntries(item);
+    if (!entries.length) continue;
+    if (!item.closedAt) {
+      item.closedAt = entries[entries.length - 1].at;
+      item.closedBy = 'owner-answer';
+      item.answerStatus = 'answered';
+      closed = true;
+    }
+    if (list !== state.needs) continue;
+    for (const entry of entries) rememberAnsweredDecision(item, entry.answer, entry.at);
+  }
+  return closed;
 }
 
 const FINANCE_TEXT_NOTE = 'до текстового поля';
@@ -850,7 +884,25 @@ function migrateExternalNeedStore() {
   if (store.state && Array.isArray(store.state.needs)) migrateOwnerNeeds(store.state.needs);
 }
 
+function testNeedsAutoreopen() {
+  if (process.env.TEST_NEEDS_AUTOREOPEN === '1') return true;
+  if (process.env.NODE_ENV === 'production') return false;
+  if (process.env.RENDER === 'true') return false;
+  return true;
+}
+
+function reopenSeededTestNeed(item) {
+  if (!item || !testNeedsAutoreopen()) return;
+  item.closedAt = null;
+  item.closedBy = null;
+  item.answer = null;
+  item.answeredAt = null;
+  item.answerStatus = null;
+  item.answers = [];
+}
+
 function reopenTestNeeds(now = Date.now(), force = false) {
+  if (!testNeedsAutoreopen()) return 0;
   const opened = [];
   for (const item of state.needs) {
     if (!isTestNeedItem(item)) continue;
@@ -872,11 +924,14 @@ function reopenTestNeeds(now = Date.now(), force = false) {
 
 migrateOwnerNeeds();
 migrateExternalNeedStore();
-reopenTestNeeds(Date.now(), true);
-const testReopenTimer = setInterval(() => {
-  try { reopenTestNeeds(); } catch (err) { console.error(err); }
-}, 30 * 1000);
-if (typeof testReopenTimer.unref === 'function') testReopenTimer.unref();
+let testReopenTimer = null;
+if (testNeedsAutoreopen()) {
+  reopenTestNeeds(Date.now(), true);
+  testReopenTimer = setInterval(() => {
+    try { reopenTestNeeds(); } catch (err) { console.error(err); }
+  }, 30 * 1000);
+  if (typeof testReopenTimer.unref === 'function') testReopenTimer.unref();
+}
 const needsResolveTimer = setInterval(() => {
   try {
     if (resolveNeedsByEnv()) poryadokSync.schedule();
@@ -1259,6 +1314,123 @@ function kremlinWebhookHeaders(env = process.env) {
     headers[name] = parsed.authorization;
   }
   return headers;
+}
+
+function formatDecisionAt(iso) {
+  const date = new Date(iso);
+  const when = Number.isNaN(date.getTime()) ? new Date() : date;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Moscow',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(when);
+  const pick = (type) => {
+    const part = parts.find((p) => p.type === type);
+    return part ? part.value : '00';
+  };
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')} МСК`;
+}
+
+function configuredSecrets() {
+  const names = [
+    'APP_PASSWORD',
+    'AGENT_TOKEN',
+    'AGENT_STATUS_TOKEN',
+    'KREMLIN_WEBHOOK_KEY',
+    'GROK_WEBHOOK_KEY',
+    'KREMLIN_WEBHOOK_URL',
+    'GROK_WEBHOOK_URL',
+    'DATABASE_URL',
+    'WEBHOOK_SECRETS_KEY',
+    'PORYADOK_INGEST_TOKEN',
+  ];
+  const values = [];
+  for (const name of names) {
+    const value = typeof process.env[name] === 'string' ? process.env[name].trim() : '';
+    if (value.length >= 6) values.push(value);
+  }
+  values.sort((a, b) => b.length - a.length);
+  return values;
+}
+
+function redactSecrets(text) {
+  let out = String(text == null ? '' : text);
+  for (const secret of configuredSecrets()) {
+    if (!out.includes(secret)) continue;
+    out = out.split(secret).join('***');
+  }
+  return out;
+}
+
+function decisionField(value) {
+  return String(value == null ? '' : value).replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
+}
+
+function publicDecision(row) {
+  return {
+    id: row.id,
+    at: row.at,
+    atMsk: formatDecisionAt(row.at),
+    needId: row.needId,
+    what: row.what,
+    answer: row.answer,
+    fromAgentId: row.fromAgentId,
+    source: row.source || 'сайт',
+  };
+}
+
+function decisionMarkdown(rows) {
+  const lines = (rows || []).map((row) => {
+    const view = publicDecision(row);
+    return `- ${view.atMsk} | ${decisionField(view.source)} | ${decisionField(view.what)} | ${decisionField(view.answer)}`;
+  });
+  return lines.length ? `${lines.join('\n')}\n` : '';
+}
+
+function recordOwnerDecision(item, answerText, at) {
+  if (!item || isTestNeedItem(item) || item.kind === 'secret') return null;
+  if (!Array.isArray(state.decisions)) state.decisions = [];
+  const row = {
+    id: `dec-${state.nextDecisionId++}`,
+    at,
+    needId: String(item.id),
+    what: redactSecrets(item.what || ''),
+    answer: redactSecrets(answerText),
+    fromAgentId: typeof item.fromAgentId === 'string' ? item.fromAgentId : '',
+    source: 'сайт',
+  };
+  state.decisions.push(row);
+  store.noteDecision(row);
+  return row;
+}
+
+function hasDecision(needId, answer, at) {
+  const rows = Array.isArray(state.decisions) ? state.decisions : [];
+  return rows.some((row) => row && row.needId === String(needId) && row.answer === answer && row.at === at);
+}
+
+function rememberAnsweredDecision(item, answerText, at) {
+  if (!item || isTestNeedItem(item) || item.kind === 'secret') return null;
+  const answer = redactSecrets(answerText);
+  const when = at || new Date().toISOString();
+  if (!answer || hasDecision(item.id, answer, when)) return null;
+  return recordOwnerDecision(item, answerText, when);
+}
+
+function wantsTestNeeds(req) {
+  const raw = req.query ? req.query.includeTest : undefined;
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+  return value === '1';
+}
+
+function needsForList(req) {
+  const open = openNeeds();
+  if (wantsTestNeeds(req)) return open;
+  return open.filter((item) => !isTestNeedItem(item));
 }
 
 function formatAtMsk(iso) {
@@ -1937,6 +2109,16 @@ function deliveryAuthorized(req) {
   return false;
 }
 
+function sendDecisions(req, res, markdown) {
+  if (!deliveryAuthorized(req)) return res.status(401).json({ error: 'Нужна авторизация' });
+  const rows = Array.isArray(state.decisions) ? state.decisions : [];
+  if (markdown) {
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    return res.status(200).send(decisionMarkdown(rows));
+  }
+  return res.json({ decisions: rows.map(publicDecision) });
+}
+
 app.get('/api/health/delivery', (req, res) => {
   if (!deliveryAuthorized(req)) return res.status(401).json({ error: 'Нужна авторизация' });
   const list = state.outbox || [];
@@ -1980,10 +2162,18 @@ app.get('/api/state', (req, res) => {
   res.json(publicState({ includePrivate: hqPasswordOk(req) }));
 });
 
+app.get('/api/decisions.md', (req, res) => {
+  sendDecisions(req, res, true);
+});
+
+app.get('/api/decisions', (req, res) => {
+  sendDecisions(req, res, false);
+});
+
 app.get('/api/needs', (req, res) => {
   if (resolveNeedsByEnv()) poryadokSync.schedule();
   const opts = { includePrivate: hqPasswordOk(req) };
-  res.json({ needs: openNeeds().map((item) => publicNeed(item, Date.now(), opts)) });
+  res.json({ needs: needsForList(req).map((item) => publicNeed(item, Date.now(), opts)) });
 });
 
 app.get('/api/needs/:id', (req, res) => {
@@ -2507,7 +2697,7 @@ function settleNeedAnswer(item, nowIso, partial) {
   item.updatedAt = nowIso;
   if (!partial) {
     item.closedAt = nowIso;
-    item.closedBy = 'owner';
+    item.closedBy = 'owner-answer';
   }
   if (!isTestNeedItem(item)) poryadokSync.schedule();
 }
@@ -2546,6 +2736,7 @@ app.post('/api/needs/:id/answer', async (req, res) => {
       item.answeredAt = nowIso;
       pushNeedAnswer(item, { text: word, at: nowIso, by: 'owner' });
       settleNeedAnswer(item, nowIso, partial);
+      recordOwnerDecision(item, word, nowIso);
       store.noteNeed(item);
       await store.flush();
       return res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
@@ -2563,6 +2754,7 @@ app.post('/api/needs/:id/answer', async (req, res) => {
     if (item.closedAt) return res.status(409).json({ error: 'Пункт уже закрыт' });
     pushNeedAnswer(item, { text, at: nowIso, by: 'owner' });
     settleNeedAnswer(item, nowIso, partial);
+    recordOwnerDecision(item, text, nowIso);
     store.noteNeed(item);
     await store.flush();
     return res.status(201).json(publicNeed(item, Date.now(), { includePrivate: true }));
@@ -3061,6 +3253,8 @@ module.exports = {
   TEST_REOPEN_MS,
   ANSWERS_MAX,
   reopenTestNeeds,
+  testNeedsAutoreopen,
+  get testReopenTimer() { return testReopenTimer; },
   FINANCE_ACTION_URL,
   FINANCE_ACTION_HINT,
   SOCIAL_ACTION_URL,
