@@ -2430,7 +2430,7 @@ app.get('/api/health/delivery', (req, res) => {
   });
 });
 
-delivery.register(app, {
+const deliveryDeps = {
   state,
   store,
   requireAppPassword,
@@ -2446,6 +2446,10 @@ delivery.register(app, {
   onWebhookSaved() {
     return deliverPendingAfterRouteChange();
   },
+};
+delivery.register(app, deliveryDeps);
+store.ready.then(() => {
+  try { delivery.scheduleStartupPings(state, process.env, deliveryDeps); } catch (_) { /* проверка не должна ронять старт */ }
 });
 
 app.post('/api/outbox/retry', requireAppPassword, async (req, res) => {
@@ -3645,8 +3649,12 @@ live.register(app, {
     try { hub.publish(); } catch (_) { /* поток не обязателен для ответа */ }
     try { liveWatch.touch(); } catch (_) { /* будильник не обязателен для ответа */ }
   },
-  ackLinkPing(agent, taskId, at) {
-    return linkCheck.acknowledge(state, agent.id, taskId, at);
+  async ackLinkPing(agent, taskId, at) {
+    const ok = linkCheck.acknowledge(state, agent.id, taskId, at);
+    if (!ok) return false;
+    delivery.persistLink(state, store, agent.id);
+    await store.flush();
+    return true;
   },
 });
 streamHub.registerStream(app, hub);

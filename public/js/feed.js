@@ -744,10 +744,22 @@
     return `${parts.hour}:${parts.minute} МСК`;
   }
 
+  // «ready» — адрес есть, свежей проверки ещё нет. Это не сбой.
+  function directCardTone(agent) {
+    const phase = directLinkPhase(agent);
+    if (phase === 'ok') return 'ok';
+    if (phase === 'checking' || phase === 'ready') return 'pending';
+    return 'bad';
+  }
+
   function directCardSummary(agent) {
-    if (directLinkPhase(agent) !== 'ok') return DIRECT_WARN;
-    const clock = directLinkClock(agent);
-    return clock ? `Прямая связь: работает ✓ (${clock})` : 'Прямая связь: работает ✓';
+    const tone = directCardTone(agent);
+    if (tone === 'ok') {
+      const clock = directLinkClock(agent);
+      return clock ? `Прямая связь: работает ✓ (${clock})` : 'Прямая связь: работает ✓';
+    }
+    if (tone === 'pending') return 'Проверяю…';
+    return DIRECT_WARN;
   }
 
   function directLinkLine(agent) {
@@ -861,6 +873,7 @@
     directLinkLine,
     directLinkPhase,
     directLinkClock,
+    directCardTone,
     directCardSummary,
     isServicePing,
     serviceAgents,
