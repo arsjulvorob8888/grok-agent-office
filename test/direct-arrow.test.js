@@ -51,7 +51,7 @@ test('доставленное и отвеченное не открыто ни 
   assert.equal(Feed.journalSplit([viaPutin, viaAgent], NOW).badge, 0);
 });
 
-test('доставленное без ответа и недоставленное с ответом остаются открытыми', () => {
+test('доставленное без ответа сразу не открыто, недоставленное с ответом остаётся', () => {
   const waiting = task('wait', delivered({ sentRoute: 'putin', answeredAt: null }));
   const flying = task('fly', {
     sentRoute: 'agent',
@@ -59,7 +59,8 @@ test('доставленное без ответа и недоставленно
     outboxStatus: 'queued',
     answeredAt: new Date(NOW - 1000).toISOString(),
   });
-  assert.equal(Feed.isOpenOrder(waiting, NOW), true);
+  assert.equal(Feed.isOpenOrder(waiting, NOW), false);
+  assert.equal(Feed.journalSplit([waiting], NOW).delivered.some((item) => item.id === 'wait'), true);
   assert.equal(Feed.isOpenOrder(flying, NOW), true);
 });
 

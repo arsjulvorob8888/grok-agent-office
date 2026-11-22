@@ -100,11 +100,13 @@ test('инвариант: тестовые не в активном журнал
     { id: 'sent', orderStatus: 'sent', text: 'Письмо', forwardStatus: 200, outboxStatus: 'delivered', deliveryLabel: 'Отправлена' },
   ];
   const view = Feed.visibleJournal(tasks);
-  assert.deepEqual(view.active.map((task) => task.id), ['live', 'done', 'sent']);
+  assert.deepEqual(view.active.map((task) => task.id), ['live']);
+  assert.deepEqual(view.delivered.map((task) => task.id).sort(), ['done', 'sent']);
   assert.equal(view.total, view.active.length);
+  assert.equal(view.total, tasks.filter((task) => Feed.isOpenOrder(task) && !Rules.isSilentTask(task)).length);
   assert.equal(view.active.some((task) => Rules.isSilentTask(task)), false);
   assert.deepEqual(view.cancelled.map((task) => task.id), ['cancel']);
-  assert.equal(view.total === view.cancelled.length, false);
+  assert.equal(view.active.some((task) => task.orderStatus === 'cancelled'), false);
 
   const delivered = tasks.find((task) => task.id === 'sent');
   assert.equal(Feed.taskDeliveryLabel(delivered), 'Доставлено');

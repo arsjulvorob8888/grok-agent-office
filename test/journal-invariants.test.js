@@ -328,7 +328,7 @@ test('инвариант: «Ответ получен» только при от
   }
 });
 
-test('инвариант: на экране только правда сейчас — старые «Доставлено» и «Выполнено» свёрнуты', () => {
+test('инвариант: «Доставлено» и «Выполнено» сразу свёрнуты, возраст не держит их открытыми', () => {
   const DAY = 24 * 60 * 60 * 1000;
   const now = Date.parse('2026-11-22T16:00:00.000Z');
   const agents = ['social', 'finance', 'qa', 'dev'];
@@ -379,17 +379,15 @@ test('инвариант: на экране только правда сейча
       const before = tasks.map((task) => task.id).join(',');
       const view = Feed.journalSplit(tasks, now);
       const open = new Set((view.active || []).map((task) => task.id));
-      const stale = age > DAY;
-      assert.equal(open.has('delivered'), !stale, `${agentId} ${age} delivered`);
-      assert.equal(open.has('done'), !stale, `${agentId} ${age} done`);
+      assert.equal(open.has('delivered'), false, `${agentId} ${age} delivered`);
+      assert.equal(open.has('done'), false, `${agentId} ${age} done`);
       assert.equal(open.has('work'), true, `${agentId} work`);
       assert.equal(open.has('wait'), true, `${agentId} wait`);
       assert.equal(view.badge, view.active.length, `${agentId} ${age}`);
+      assert.equal(view.badge, tasks.filter((task) => Feed.isOpenOrder(task, now)).length, `${agentId} ${age}`);
       assert.equal(tasks.map((task) => task.id).join(','), before, `${agentId} ${age}`);
-      if (stale) {
-        const folded = (view.delivered || []).map((task) => task.id).sort();
-        assert.deepEqual(folded, ['delivered', 'done'], `${agentId} ${age}`);
-      }
+      const folded = (view.delivered || []).map((task) => task.id).sort();
+      assert.deepEqual(folded, ['delivered', 'done'], `${agentId} ${age}`);
     }
   }
   const quiet = Feed.journalSplit([
@@ -424,7 +422,7 @@ test('инвариант: на экране только правда сейча
   assert.equal(quiet.active.length, 0);
   assert.equal(quiet.badge, 0);
   assert.equal(quiet.badge, quiet.active.length);
-  assert.equal(quiet.empty, 'Активных заданий нет');
+  assert.equal(quiet.empty, 'Всё доставлено');
   assert.equal(quiet.delivered.length, 2);
   assert.equal(quiet.cancelled.length, 1);
 });

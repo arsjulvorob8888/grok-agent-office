@@ -214,8 +214,6 @@
     return (tasks || []).slice();
   }
 
-  const JOURNAL_SETTLED_MS = 24 * 60 * 60 * 1000;
-
   function journalSettled(task) {
     if (!task || task.orderStatus === 'cancelled') return false;
     const label = taskBadge(task)[1];
@@ -230,20 +228,20 @@
     return id.startsWith('ping-') || taskId.startsWith('ping-');
   }
 
-  // Доставлено и уже есть ответ — поручение закрыто на любом маршруте, в том числе прямом.
+  // Доставка уже случилась: ответ 2xx, строка outbox или подпись «Доставлено».
   function orderHandedOff(task) {
     if (!task) return false;
     if (task.outboxStatus === 'delivered' || task.deliveryLabel === 'Доставлено') return true;
     return orderDelivered(task);
   }
 
+  // Один предикат для журнала, стрелок и счётчика. «Доставлено» и «Выполнена»
+  // сразу не открыты, без суток. Ответ на уже доставленное тоже закрывает.
   function isOpenOrder(task, now = Date.now()) {
+    void now;
     if (!task || isServicePing(task) || task.orderStatus === 'cancelled') return false;
+    if (journalSettled(task)) return false;
     if (task.answeredAt && orderHandedOff(task)) return false;
-    const clock = Number.isFinite(now) ? now : Date.now();
-    const created = Date.parse(task.createdAt);
-    const age = Number.isFinite(created) ? clock - created : 0;
-    if (journalSettled(task) && age > JOURNAL_SETTLED_MS) return false;
     return true;
   }
 
@@ -273,7 +271,7 @@
       delivered,
       cancelled,
       badge: active.length,
-      empty: active.length ? '' : 'Активных заданий нет',
+      empty: active.length ? '' : 'Всё доставлено',
     };
   }
 
@@ -288,7 +286,7 @@
       delivered,
       cancelled: split.cancelled,
       total: active.length,
-      empty: active.length ? '' : (split.empty || 'Активных заданий нет'),
+      empty: active.length ? '' : (split.empty || 'Всё доставлено'),
     };
   }
 
@@ -373,16 +371,19 @@
     return /отметился\s*:/i.test(String(message.text || ''));
   }
 
-  // Плашка «Приказ: … → …» в переписке. У задачи из окна агента отправитель — владелец:
-  // его реплика уже подписана «Вы», отдельная плашка с «Путин →» была бы неправдой.
+  // Плашка «Приказ: … → …» в переписке. У задачи владельца реплика уже
+  // подписана «Вы», отдельная плашка с «Путин →» была бы неправдой.
   // Настоящий приказ Путина (fromAgentId не owner) плашку сохраняет.
+  // Подпись маршрута «Вы →» — только isDirectOwnerMessage, здесь её не дублируем.
   function ownerDirectPlaque(message, tasks) {
     if (!message || message.role !== 'system') return false;
     if (!String(message.text || '').startsWith('Приказ:')) return false;
     const id = message.taskId;
     if (!id) return false;
     const task = (tasks || []).find((item) => item && item.id === id);
-    return !!(task && task.fromAgentId === 'owner');
+    if (!task) return false;
+    const from = task.fromAgentId;
+    return !from || from === 'owner';
   }
 
   // Переписка: разговор с владельцем и ответы агента. Отметки статуса и тихие задачи — нет.

@@ -40,8 +40,9 @@ function chromePath() {
   ].find((item) => item && fs.existsSync(item));
 }
 
+let hookStatus = 204;
 const hook = http.createServer((_req, res) => {
-  res.writeHead(204);
+  res.writeHead(hookStatus);
   res.end();
 });
 
@@ -154,7 +155,7 @@ test('API: прямая доставка не подписывается Пут�
   const Feed = require('../public/js/feed');
   assert.equal(Feed.isOpenOrder(directDone), false);
   assert.equal(Feed.isOpenOrder(putinDone), false);
-  assert.equal(Feed.isOpenOrder(directOpen), true);
+  assert.equal(Feed.isOpenOrder(directOpen), false);
   assert.equal(Feed.isDirectOwnerMessage(directOpen), true);
   assert.equal(Feed.isDirectOwnerMessage(putinDone), false);
 });
@@ -233,16 +234,21 @@ test('стрелка пропадает при живом обновлении �
     const text = `ЖИВАЯ-СТРЕЛКА-${viewport.width}`;
     try {
       await page.evaluate(() => { window.__stay = 1; });
+      hookStatus = 500;
       const created = await sendTask('routines', text);
+      hookStatus = 204;
       assert.equal(created.sentRoute, 'putin');
       assert.match(created.routeLabel, /^Путин → /);
+      assert.notEqual(created.deliveryLabel, 'Доставлено');
       await page.waitForFunction((id) => {
         const node = document.querySelector(`#delegations [data-order-id="${id}"]`);
         return !!(node && /^Путин\s*→/.test(node.dataset.tip || ''));
       }, { timeout: 15000 }, created.id);
       const before = await page.evaluate(() => window.__stay);
       assert.equal(before, 1);
-      await reply('routines', created.id, `Ответ на ${text}`);
+      const delivered = await call(`/api/orders/${created.id}/retry`, { method: 'POST', headers: auth() });
+      assert.equal(delivered.status, 200, JSON.stringify(delivered.body));
+      assert.equal(delivered.body.sent, 1, JSON.stringify(delivered.body));
       await page.waitForFunction((id) => !document.querySelector(`#delegations [data-order-id="${id}"]`), { timeout: 15000 }, created.id);
       const after = await page.evaluate(() => ({
         stay: window.__stay,

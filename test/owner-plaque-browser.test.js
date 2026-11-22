@@ -145,9 +145,12 @@ test('плашка владельца без Путина, приказ Пути
       assert.equal(orderPlaques.length, 1, `${viewport.width} ${orderPlaques.join(' | ')}`);
       assert.match(orderPlaques[0], /Путин\s*→\s*Тестировщик/);
       assert.equal(/\bПутин\b/.test(reply.text), false, reply.text);
-      const expand = await page.$('#panel.open .dash-expand');
-      assert.ok(expand, 'нет кнопки развернуть');
-      await expand.click();
+      await page.waitForSelector('#panel.open .dash-expand', { timeout: 8000 });
+      await page.evaluate(() => {
+        const button = document.querySelector('#panel.open .dash-expand');
+        if (!button) throw new Error('нет кнопки развернуть');
+        button.click();
+      });
       await page.waitForSelector('#agentDash.open', { timeout: 8000 });
       await page.click('#dashTab-chat');
       await page.waitForSelector('#dashChatLog', { timeout: 8000 });

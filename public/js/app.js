@@ -1647,7 +1647,7 @@
     const roomFold = (items, cls, title) => (items && items.length
       ? `<details class="${cls}"><summary>${title} (${items.length})</summary>${items.slice(0, 60).map(roomQuest).join('')}</details>`
       : '');
-    const roomIdle = journal.active.length ? '' : `<div class="empty"><b>${esc(journal.empty || 'Активных заданий нет')}</b></div>`;
+    const roomIdle = journal.active.length ? '' : `<div class="empty"><b>${esc(journal.empty || 'Всё доставлено')}</b></div>`;
     const taskBlock = `<div class="sec" data-anchor="tasks"><h4>Журнал заданий</h4><div class="quest-list" style="padding:0">${shown.map(roomQuest).join('')}${roomIdle}${roomFold(journal.delivered, 'j-delivered', 'Доставленные')}${roomFold(journal.cancelled, 'j-cancelled', 'Отменённые')}</div></div>`;
     panel.innerHTML = `
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
@@ -2130,7 +2130,7 @@
     const fold = (items, cls, title) => (items && items.length
       ? `<details class="${cls}"><summary>${title} (${items.length})</summary>${items.slice(0, 60).map(quest).join('')}</details>`
       : '');
-    const idle = view.active.length ? '' : `<div class="empty"><b>${esc(view.empty || 'Активных заданий нет')}</b></div>`;
+    const idle = view.active.length ? '' : `<div class="empty"><b>${esc(view.empty || 'Всё доставлено')}</b></div>`;
     list.innerHTML = idle + view.active.slice(0, 60).map(quest).join('') + fold(view.delivered, 'j-delivered', 'Доставленные') + fold(view.cancelled, 'j-cancelled', 'Отменённые');
     list.scrollTop = top;
     list.querySelectorAll('[data-scroll-key]').forEach((el) => {

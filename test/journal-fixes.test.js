@@ -53,9 +53,10 @@ test('отменённые «тест» остаются в данных, но �
     { id: 'done', orderStatus: 'done', text: 'Готово' },
   ];
   const view = Feed.journalSplit(tasks);
-  assert.deepEqual(view.active.map((task) => task.id), ['live', 'done']);
+  assert.deepEqual(view.active.map((task) => task.id), ['live']);
+  assert.deepEqual(view.delivered.map((task) => task.id), ['done']);
   assert.deepEqual(view.cancelled.map((task) => task.id), ['stub-1', 'stub-2']);
-  assert.equal(view.badge, 2);
+  assert.equal(view.badge, 1);
   assert.equal(tasks.length, 4);
   assert.equal(Feed.sentRoutePhrase('agent'), 'Куда ушёл приказ: Свой вебхук агента');
   assert.equal(Feed.sentRoutePhrase('putin'), 'Куда ушёл приказ: Через Путина');
