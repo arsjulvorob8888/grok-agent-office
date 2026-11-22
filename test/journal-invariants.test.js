@@ -7,7 +7,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const Feed = require('../public/js/feed');
-const { STATUS_HOLD_MS } = require('../lib/activity');
+const { columnOf, isDone, buildDashboard } = require('../lib/agent-dashboard');
+const { senderName, speakerLabel } = require('../public/js/sender-label');
+const { STATUS_HOLD_MS, orderRoute } = require('../lib/activity');
 
 const NOW = Date.parse('2026-11-22T15:00:00.000Z');
 const HOLD = STATUS_HOLD_MS;
@@ -219,4 +221,124 @@ test('инвариант: доставленный приказ везде по�
   assert.equal(Feed.taskDeliveryLabel(queued), 'Отправлена');
   assert.equal(Feed.taskBadge(queued)[1], 'Отправлена');
   assert.equal(Feed.historyCaption(queued, queued.history[0]), 'Отправлена');
+});
+
+test('инвариант: счётчик задач считает только активные', () => {
+  const statuses = ['sent', 'accepted', 'in_progress', 'done', 'cancelled', 'failed'];
+  const codes = [null, 200, 500];
+  const tasks = [];
+  for (const orderStatus of statuses) {
+    for (const forwardStatus of codes) {
+      for (const outboxStatus of [null, 'delivered', 'queued']) {
+        tasks.push({
+          id: `${orderStatus}-${forwardStatus}-${outboxStatus}`,
+          agent: 'finance',
+          agentId: 'finance',
+          orderStatus,
+          forwardStatus,
+          outboxStatus,
+          status: orderStatus === 'cancelled' ? 'отменён' : '',
+          text: 'задача',
+        });
+      }
+    }
+  }
+  const active = tasks.filter((task) => Feed.countsAsActiveTask(task));
+  for (const task of tasks) {
+    const code = Number(task.forwardStatus);
+    const deliveredOnly = (task.orderStatus || 'sent') === 'sent'
+      && (task.outboxStatus === 'delivered' || (Number.isInteger(code) && code >= 200 && code < 300));
+    if (task.orderStatus === 'cancelled' || task.orderStatus === 'done' || task.orderStatus === 'failed' || deliveredOnly) {
+      assert.equal(active.includes(task), false, task.id);
+    }
+  }
+  assert.equal(active.some((task) => task.orderStatus === 'accepted'), true);
+  const finance = active.filter((task) => (task.agentId || task.agent) === 'finance');
+  assert.equal(finance.length, active.length);
+  assert.equal(finance.some((task) => task.orderStatus === 'cancelled'), false);
+});
+
+test('инвариант: отменённые не в «Готово» и не в числе выполненных', () => {
+  const tasks = [];
+  for (const status of ['отменён', 'выполнена', 'в очереди агента', '']) {
+    for (const forwardStatus of [null, 200, 500]) {
+      tasks.push({
+        id: `c-${status}-${forwardStatus}`,
+        agentId: 'social',
+        orderStatus: 'cancelled',
+        status,
+        forwardStatus,
+        text: 'тест',
+      });
+    }
+  }
+  const doneTasks = tasks.filter((task) => task.orderStatus === 'done');
+  const view = buildDashboard({
+    agent: { id: 'social', completed: 0 },
+    tasks: tasks.concat([{ id: 'ok', agentId: 'social', orderStatus: 'done', status: 'выполнена', text: 'готово' }]),
+    messages: [],
+    activity: {},
+    now: NOW,
+  });
+  for (const task of tasks) {
+    assert.notEqual(columnOf(task), 'done', task.id);
+    assert.equal(isDone(task), false, task.id);
+    assert.equal(view.tasks.find((row) => row.id === task.id).column === 'done', false, task.id);
+  }
+  assert.equal(view.metrics.done, 1);
+  assert.equal(view.tasks.filter((row) => row.column === 'done').length, 1);
+  assert.equal(doneTasks.length, 0);
+});
+
+test('инвариант: «Ответ получен» только при ответе и доставке 2xx', () => {
+  const answers = [null, '', 'Цифры готовы'];
+  const statuses = ['queued', 'delivered', 'cancelled'];
+  const codes = [null, 199, 200, 204, 500];
+  const types = ['answer', 'close', 'owner_task'];
+  for (const answer of answers) {
+    for (const status of statuses) {
+      for (const code of codes) {
+        for (const type of types) {
+          const need = { id: 'need-finance', what: 'Сводка', answer, answers: answer ? [{ text: answer }] : [] };
+          const task = {
+            id: 't-answer',
+            needId: 'need-finance',
+            text: `Ответ Арсения на «Сводка»: ${answer || ''}`,
+            forwardStatus: code,
+            orderStatus: 'sent',
+          };
+          const outbox = [{
+            id: 'ob-1',
+            status,
+            lastStatus: code,
+            taskId: 't-answer',
+            payload: { needId: 'need-finance', type },
+          }];
+          const label = Feed.answerDeliveryCaption(need, [task], outbox);
+          if (label === 'Ответ получен агентом') {
+            assert.equal(Boolean(answer && String(answer).trim()), true);
+            const delivered = status === 'delivered' && type === 'answer' && Number.isInteger(code) && code >= 200 && code < 300
+              || (Number.isInteger(code) && code >= 200 && code < 300);
+            assert.equal(delivered, true, JSON.stringify({ answer, status, code, type }));
+          }
+          if (!answer) assert.notEqual(label, 'Ответ получен агентом');
+        }
+      }
+    }
+  }
+});
+
+test('инвариант: реплика Арсения подписана «Вы», маршрут приказа остаётся «Путин →»', () => {
+  for (const id of ['owner', '', null]) {
+    assert.equal(speakerLabel(id), 'Вы');
+    assert.equal(senderName(id), 'Путин');
+  }
+  const route = orderRoute({ fromAgentId: 'owner', agentId: 'finance', agent: 'finance' }, () => 'Финансы');
+  assert.match(route, /^Путин → /);
+  assert.equal(route.includes('Вы →'), false);
+  const roles = ['owner', 'agent', 'system'];
+  for (const role of roles) {
+    const who = role === 'owner' ? speakerLabel('owner') : role;
+    if (role === 'owner') assert.equal(who, 'Вы');
+  }
 });

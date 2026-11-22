@@ -14,6 +14,12 @@
     return '';
   }
 
+  // Реплика самого Арсения. Маршрут приказа по-прежнему «Путин →».
+  function speakerLabel(id) {
+    if (!id || id === 'owner') return 'Вы';
+    return '';
+  }
+
   function displayOrderSender(text) {
     const raw = String(text ?? '');
     const legacy = 'Приказ: Владелец →';
@@ -22,5 +28,5 @@
     return raw.split(legacy).join(next);
   }
 
-  return { OWNER_SENDER_NAME, senderName, displayOrderSender };
+  return { OWNER_SENDER_NAME, senderName, speakerLabel, displayOrderSender };
 });

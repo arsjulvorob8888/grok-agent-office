@@ -368,16 +368,53 @@
     return (messages || []).some((message) => message && message.role === 'agent' && message.taskId === task.id);
   }
 
+  function needAnswerBody(need) {
+    if (!need) return '';
+    if (typeof need.answer === 'string' && need.answer.trim()) return need.answer.trim();
+    const list = Array.isArray(need.answers) ? need.answers : [];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const text = list[i] && typeof list[i].text === 'string' ? list[i].text.trim() : '';
+      if (text) return text;
+    }
+    return '';
+  }
+
+  function answerDeliveryCaption(need, tasks, outbox) {
+    if (!needAnswerBody(need)) return null;
+    const id = need.id;
+    const deliveredTask = (task) => !!(task && (orderDelivered(task) || task.outboxStatus === 'delivered'));
+    for (const entry of outbox || []) {
+      if (!entry || !entry.payload || entry.payload.needId !== id) continue;
+      if (entry.payload.type && entry.payload.type !== 'answer') continue;
+      if (entry.status !== 'delivered') continue;
+      const code = Number(entry.lastStatus);
+      if (Number.isInteger(code) && code >= 200 && code < 300) return 'Ответ получен агентом';
+      const task = (tasks || []).find((row) => row && row.id === entry.taskId);
+      if (deliveredTask(task)) return 'Ответ получен агентом';
+    }
+    for (const task of tasks || []) {
+      if (!task) continue;
+      const linked = task.needId === id
+        || (need.what && String(task.text || '').startsWith(`Ответ Арсения на «${need.what}»`));
+      if (linked && deliveredTask(task)) return 'Ответ получен агентом';
+    }
+    return 'Сохранён, ещё не доставлен';
+  }
+
   // Спокойная подпись, не реплика агента. Пустая строка — ждать нечего.
   function replyWaitCaption(tasks, messages, agentId) {
     const open = (tasks || []).filter((task) => {
-      if (!task || !OPEN_ORDER.has(task.orderStatus || 'sent')) return false;
+      if (!task) return false;
+      const status = task.orderStatus || 'sent';
+      if (status === 'done' || status === 'cancelled' || status === 'failed') return false;
+      if (task.status === 'выполнена' || task.status === 'отменён') return false;
+      if (agentAnswered(task, messages)) return false;
       return (task.agentId || task.agent) === agentId;
     });
     if (!open.length) return '';
-    if (open.some((task) => !orderDelivered(task))) return 'Агенту ещё не доставлено';
-    if (open.some((task) => !agentAnswered(task, messages))) return 'Ответ придёт сюда, когда агент его пришлёт';
-    return '';
+    const delivered = (task) => orderDelivered(task) || task.outboxStatus === 'delivered';
+    if (open.some((task) => !delivered(task))) return 'Агенту ещё не доставлено';
+    return 'Доставлено агенту, ответа пока нет';
   }
 
   const PROCESS_HOUR_MS = 60 * 60 * 1000;
@@ -487,6 +524,12 @@
     return delivered && status !== 'accepted' && status !== 'in_progress';
   }
 
+  function countsAsActiveTask(task) {
+    if (!task || isFinalRecord(task, [])) return false;
+    const status = task.orderStatus || 'sent';
+    return status === 'sent' || status === 'accepted' || status === 'in_progress';
+  }
+
   function processPanel(tasks, routines, now = Date.now(), extras) {
     const buckets = processBuckets(tasks, routines, now, extras);
     const entries = buckets.live.concat(buckets.pulses);
@@ -576,6 +619,9 @@
     formatDateTimeMsk,
     formatProcessStamp,
     replyWaitCaption,
+    needAnswerBody,
+    answerDeliveryCaption,
+    countsAsActiveTask,
     PROCESS_HOLD_MS,
     journalSplit,
     isLiveProcess,

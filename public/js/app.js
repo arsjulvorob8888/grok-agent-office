@@ -1503,7 +1503,7 @@
         return `<div class="msg-row system"><div class="msg-sys">${linkify(Sender.displayOrderSender(m.text))}</div></div>`;
       }
       const speaker = S.byId.get(m.agentId) || agent;
-      const who = m.role === 'owner' ? 'Вы' : titled(speaker);
+      const who = m.role === 'owner' ? Sender.speakerLabel('owner') : titled(speaker);
       return `<div class="msg-row ${m.role === 'owner' ? 'owner' : 'agent'}">
         <div class="msg-bubble">
           <div class="msg-meta"><b>${esc(who)}</b><span>${fmtTime(m.timestamp || m.createdAt)}</span></div>
@@ -1989,7 +1989,7 @@
     return 'задач';
   }
   function openTaskCount(id) {
-    return S.tasks.filter((t) => t.agent === id && t.status !== 'выполнена' && t.orderStatus !== 'cancelled' && t.orderStatus !== 'done' && t.orderStatus !== 'failed').length;
+    return S.tasks.filter((t) => (t.agentId || t.agent) === id && Feed.countsAsActiveTask(t)).length;
   }
   function treeChildren(a) {
     const explicit = S.agents.filter((x) => x.parentId === a.id);

@@ -41,7 +41,7 @@
   }
 
   function ownerName() {
-    return window.OfficeSender.senderName('owner');
+    return window.OfficeSender.speakerLabel('owner');
   }
 
   function visibleText(text) {

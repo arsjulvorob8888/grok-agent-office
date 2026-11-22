@@ -7,7 +7,7 @@ const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
 const { activityFor, activeWindowMs, orderRoute } = require('./lib/activity');
-const { deliveryCaption } = require('./public/js/feed');
+const { deliveryCaption, answerDeliveryCaption } = require('./public/js/feed');
 const retry = require('./lib/outbox-retry');
 const { buildDashboard } = require('./lib/agent-dashboard');
 const { registerHeartbeat } = require('./lib/heartbeat');
@@ -1640,21 +1640,7 @@ function taskDelivered2xx(task) {
 }
 
 function answerDeliveryLabel(item) {
-  if (!item || item.answerStatus !== 'answered') return null;
-  const linked = [];
-  for (const task of state.tasks || []) {
-    if (!task) continue;
-    if (task.needId === item.id) linked.push(task);
-    else if (item.what && String(task.text || '').startsWith(`Ответ Арсения на «${item.what}»`)) linked.push(task);
-  }
-  for (const entry of state.outbox || []) {
-    if (!entry || !entry.payload || entry.payload.needId !== item.id) continue;
-    if (entry.status === 'delivered') return 'Ответ получен агентом';
-    const task = (state.tasks || []).find((row) => row && row.id === entry.taskId);
-    if (task && !linked.includes(task)) linked.push(task);
-  }
-  if (linked.some((task) => taskDelivered2xx(task))) return 'Ответ получен агентом';
-  return 'Сохранён, ещё не доставлен';
+  return answerDeliveryCaption(item, state.tasks, state.outbox);
 }
 
 function publicOutbox(item) {
