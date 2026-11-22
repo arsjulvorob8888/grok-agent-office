@@ -216,7 +216,7 @@ test('flush при старте один раз шлёт зависшие queued
     assert.equal(item.attempts, 1);
     assert.equal(item.lastError, null);
     const task = state.body.tasks.find((entry) => entry.id === item.taskId);
-    assert.equal(task.deliveryLabel, 'Отправлена');
+    assert.equal(task.deliveryLabel, 'Доставлено');
   }
   const again = await call('/api/delivery/retry', {
     method: 'POST',
@@ -237,7 +237,7 @@ test('приказ finance уходит на grok, putin важнее, без м
     body: JSON.stringify({ agent: 'finance', text: 'Только строка grok' }),
   });
   assert.equal(viaGrok.status, 201);
-  assert.equal(viaGrok.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaGrok.body.deliveryLabel, 'Доставлено');
   const grokHit = hits.slice(before).find((hit) => hit.body && hit.body.taskId === viaGrok.body.id);
   assert.ok(grokHit);
   assert.equal(grokHit.url, '/grok-hook');
@@ -267,7 +267,7 @@ test('приказ finance уходит на grok, putin важнее, без м
     body: JSON.stringify({ agent: 'finance', text: 'putin важнее grok' }),
   });
   assert.equal(viaPutin.status, 201);
-  assert.equal(viaPutin.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaPutin.body.deliveryLabel, 'Доставлено');
   const putinHit = hits.slice(marked).find((hit) => hit.body && hit.body.taskId === viaPutin.body.id);
   assert.ok(putinHit);
   assert.equal(putinHit.url, '/putin-hook');
@@ -329,5 +329,5 @@ test('приказ finance уходит на grok, putin важнее, без м
   assert.equal(wake.length, 1);
   assert.equal(wake[0].url, '/grok-hook');
   const task = (await call('/api/state')).body.tasks.find((entry) => entry.id === quiet.body.id);
-  assert.equal(task.deliveryLabel, 'Отправлена');
+  assert.equal(task.deliveryLabel, 'Доставлено');
 });

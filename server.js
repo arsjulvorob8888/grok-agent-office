@@ -1583,10 +1583,13 @@ function publicTask(t) {
     history: (t.history || []).map(publicHistoryEntry),
     attachments: (t.attachments || []).map(publicAttachment),
   };
+  const item = outboxForTask(t.id);
   const view = withStoredFields(base, t);
+  view.outboxStatus = item && item.status ? item.status : null;
   view.deliveryLabel = deliveryLabelFor(t);
   view.routeLabel = orderRoute(t, routeName);
   view.deliveryRoute = delivery.publicRoute(t.agentId || t.agent, state, process.env);
+  view.sentRoute = publicSentRoute(t, item);
   return view;
 }
 
@@ -1609,6 +1612,18 @@ function outboxForTask(taskId) {
 
 const NO_ROUTE_ERROR = 'нет маршрута доставки';
 
+function publicSentRoute(task, item) {
+  const raw = (item && item.route) || (task && task.sentRoute);
+  if (raw === 'agent' || raw === 'putin' || raw === 'env') return raw;
+  return null;
+}
+
+function rememberSentRoute(task, item) {
+  const via = item && item.route;
+  if (!task || (via !== 'agent' && via !== 'putin' && via !== 'env' && via !== 'none')) return;
+  task.sentRoute = via;
+}
+
 function deliveryLabelFor(task) {
   if (!task) return null;
   if ((task.orderStatus || 'sent') !== 'sent') return null;
@@ -1617,7 +1632,7 @@ function deliveryLabelFor(task) {
   const item = outboxForTask(task.id);
   if (item && item.status !== 'delivered' && item.lastError === NO_ROUTE_ERROR) return NO_ROUTE_ERROR;
   const next = item && item.status !== 'delivered' ? retry.nextRetryAt(item) : null;
-  return deliveryCaption(task.forwardStatus, { route, nextRetryAt: next });
+  return deliveryCaption(task.forwardStatus, { route, nextRetryAt: next, outboxStatus: item && item.status });
 }
 
 function taskDelivered2xx(task) {
@@ -2774,6 +2789,8 @@ async function sendOutboxItem(item, options = {}) {
     logDeliveryAttempt(item, 'error=decrypt_error', 0);
     return { sent: false, attempted: true, status: 0, error: 'decrypt_error' };
   }
+  if (dest && (dest.via === 'agent' || dest.via === 'putin' || dest.via === 'env')) item.route = dest.via;
+  else if (!dest || !dest.url) item.route = 'none';
   if (!dest || !dest.url) {
     retry.releaseClaim(item);
     if (item.lastError !== NO_ROUTE_ERROR) {
@@ -2833,6 +2850,7 @@ function recordOutboxResult(item, result) {
   if (!result || result.skipped || !result.attempted) return null;
   applyOutboxResult(item, result);
   const task = state.tasks.find((entry) => entry.id === item.taskId);
+  rememberSentRoute(task, item);
   applyKremlinResult(task, result);
   if (result.sent) markDeliveredAgent(item, task);
   if (task) store.noteTask(task);
@@ -3021,6 +3039,7 @@ async function enqueueQueueTask({ agentId, text, fromAgentId, parentOrderId, att
   state.outbox.push(item);
   store.noteOutbox(item);
   const result = await sendOutboxItem(item);
+  rememberSentRoute(task, item);
   applyOutboxResult(item, result);
   applyKremlinResult(task, result);
   if (result && result.sent) {

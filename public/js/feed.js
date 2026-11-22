@@ -90,6 +90,27 @@
     return `Куда уйдёт приказ: ${routeLabel(kind)}`;
   }
 
+  function sentRoutePhrase(kind) {
+    if (kind !== 'agent' && kind !== 'putin' && kind !== 'env') return '';
+    return `Куда ушёл приказ: ${routeLabel(kind)}`;
+  }
+
+  // Журнал и история берут одну подпись. Доставленный outbox и 2xx — «Доставлено».
+  function taskDeliveryLabel(task, extra) {
+    const source = task || {};
+    const more = extra || {};
+    const outboxStatus = more.outboxStatus != null ? more.outboxStatus : source.outboxStatus;
+    const forwardStatus = Object.prototype.hasOwnProperty.call(more, 'forwardStatus') ? more.forwardStatus : source.forwardStatus;
+    const code = Number(forwardStatus);
+    if (outboxStatus === 'delivered' && Number.isInteger(code) && code >= 200 && code < 300) return 'Доставлено';
+    if (typeof source.deliveryLabel === 'string' && source.deliveryLabel) return source.deliveryLabel;
+    const route = more.route != null ? more.route : source.deliveryRoute;
+    const nextRetryAt = more.nextRetryAt != null ? more.nextRetryAt : source.nextRetryAt;
+    if (outboxStatus) return deliveryCaption(forwardStatus, { route, nextRetryAt, outboxStatus });
+    const known = route != null || nextRetryAt != null;
+    return deliveryCaption(forwardStatus, known ? { route, nextRetryAt } : undefined);
+  }
+
   function routeSummary(kinds) {
     const list = (Array.isArray(kinds) ? kinds : []).map((kind) => (ROUTE_LABEL[kind] ? kind : 'none'));
     if (!list.length) return routePhrase('none');
@@ -106,7 +127,9 @@
   // extra.route: agent | putin | env | none. Без extra поведение прежнее: пустой код = не подключена.
   function deliveryCaption(forwardStatus, extra) {
     const code = Number(forwardStatus);
-    if (Number.isInteger(code) && code >= 200 && code < 300) return 'Отправлена';
+    if (Number.isInteger(code) && code >= 200 && code < 300) {
+      return extra && extra.outboxStatus === 'delivered' ? 'Доставлено' : 'Отправлена';
+    }
     const routeKnown = !!(extra && Object.prototype.hasOwnProperty.call(extra, 'route'));
     const offline = !routeKnown || extra.route == null || extra.route === '' || extra.route === 'none';
     const empty = forwardStatus == null || forwardStatus === '';
@@ -189,6 +212,17 @@
 
   function ordersForGeneral(tasks) {
     return (tasks || []).slice();
+  }
+
+  function journalSplit(tasks) {
+    const active = [];
+    const cancelled = [];
+    for (const task of tasks || []) {
+      if (!task) continue;
+      if (task.orderStatus === 'cancelled') cancelled.push(task);
+      else active.push(task);
+    }
+    return { active, cancelled, badge: active.length };
   }
 
   function ordersForAgent(tasks, agentId) {
@@ -347,25 +381,122 @@
   }
 
   const PROCESS_HOUR_MS = 60 * 60 * 1000;
+  // То же окно, что STATUS_HOLD_MS в lib/activity.js. Ровно 15 минут уже не свежо.
+  const PROCESS_HOLD_MS = 15 * 60 * 1000;
 
-  function processBuckets(tasks, routines, now = Date.now()) {
+  function pickedUp(task) {
+    const status = task && (task.orderStatus || 'sent');
+    return status === 'accepted' || status === 'in_progress';
+  }
+
+  function latestMs(values) {
+    let best = NaN;
+    for (const value of values) {
+      const t = typeof value === 'number' ? value : Date.parse(value || '');
+      if (!Number.isFinite(t)) continue;
+      if (!Number.isFinite(best) || t > best) best = t;
+    }
+    return best;
+  }
+
+  function freshAge(ms, now, holdMs) {
+    if (!Number.isFinite(ms)) return false;
+    const age = now - ms;
+    if (age < 0) return true;
+    return age < holdMs;
+  }
+
+  function agentById(agents, id) {
+    if (!id) return null;
+    return (agents || []).find((agent) => agent && agent.id === id) || null;
+  }
+
+  function assigneeFresh(agent, now, holdMs) {
+    if (!agent) return false;
+    const live = agent.live;
+    if (live && live.status === 'working') {
+      const until = Date.parse(live.until || '');
+      if (Number.isFinite(until) && now < until) return true;
+    }
+    return freshAge(latestMs([agent.lastSeenAt, agent.doingSince, agent.lastStatusAt, agent.lastDashboardAt]), now, holdMs);
+  }
+
+  function orderTouchMs(task) {
+    const hist = Array.isArray(task && task.history) ? task.history : [];
+    const marks = [];
+    for (const entry of hist) {
+      if (!entry || (entry.status !== 'accepted' && entry.status !== 'in_progress')) continue;
+      marks.push(entry.at);
+    }
+    const fromHistory = latestMs(marks);
+    if (Number.isFinite(fromHistory)) return fromHistory;
+    if (!pickedUp(task)) return NaN;
+    return Date.parse((task && task.createdAt) || '');
+  }
+
+  function isLiveProcess(task, agents, now, holdMs) {
+    const windowMs = Number.isFinite(holdMs) ? holdMs : PROCESS_HOLD_MS;
+    const at = Number.isFinite(now) ? now : Date.now();
+    if (!task || !pickedUp(task)) return false;
+    if (freshAge(orderTouchMs(task), at, windowMs)) return true;
+    return assigneeFresh(agentById(agents, task.agentId || task.agent), at, windowMs);
+  }
+
+  function routineShown(routine, agents, now, holdMs) {
+    if (!routine || !routine.active || routine.finishedAt) return false;
+    const windowMs = Number.isFinite(holdMs) ? holdMs : PROCESS_HOLD_MS;
+    const at = Number.isFinite(now) ? now : Date.now();
+    const started = Date.parse(routine.startedAt || '');
+    if (freshAge(started, at, windowMs)) return true;
+    return assigneeFresh(agentById(agents, routine.agentId), at, windowMs);
+  }
+
+  function processBuckets(tasks, routines, now = Date.now(), extras) {
+    const ctx = extras && typeof extras === 'object' ? extras : {};
+    const agents = ctx.agents || [];
+    const messages = ctx.messages || [];
+    const holdMs = Number.isFinite(ctx.holdMs) ? ctx.holdMs : PROCESS_HOLD_MS;
+    const at = Number.isFinite(now) ? now : Date.now();
     const live = [];
     const undelivered = [];
     for (const task of tasks || []) {
-      if (!task) continue;
+      if (!task || isFinalRecord(task, messages)) continue;
       const status = task.orderStatus || 'sent';
-      if (status === 'cancelled' || status === 'done' || status === 'failed') continue;
       if (status !== 'sent' && status !== 'accepted' && status !== 'in_progress') continue;
-      if (status === 'accepted' || status === 'in_progress' || orderDelivered(task)) {
+      if (isLiveProcess(task, agents, at, holdMs)) {
         live.push(task);
         continue;
       }
+      if (status !== 'sent' || orderDelivered(task)) continue;
       const created = Date.parse(task.createdAt || '');
       const age = Number.isFinite(created) ? now - created : Infinity;
       if (age > PROCESS_HOUR_MS) undelivered.push(task);
     }
-    const pulses = (routines || []).filter((item) => item && item.active && !item.finishedAt);
+    const pulses = (routines || []).filter((item) => routineShown(item, agents, at, holdMs));
     return { live, undelivered, pulses };
+  }
+
+  function isFinalRecord(task, messages) {
+    if (!task) return true;
+    const status = task.orderStatus || 'sent';
+    if (status === 'done' || status === 'cancelled' || status === 'failed') return true;
+    if (task.status === 'выполнена' || task.status === 'отменён') return true;
+    if (task.answered === true || task.answerStatus === 'answered') return true;
+    if (agentAnswered(task, messages)) return true;
+    const delivered = orderDelivered(task) || task.outboxStatus === 'delivered';
+    return delivered && status !== 'accepted' && status !== 'in_progress';
+  }
+
+  function processPanel(tasks, routines, now = Date.now(), extras) {
+    const buckets = processBuckets(tasks, routines, now, extras);
+    const entries = buckets.live.concat(buckets.pulses);
+    return {
+      entries,
+      total: entries.length,
+      live: buckets.live,
+      undelivered: buckets.undelivered,
+      pulses: buckets.pulses,
+    };
   }
 
   function countsAsQueued(task) {
@@ -378,7 +509,7 @@
   function taskBadge(task, ctx) {
     const t = task || {};
     const context = ctx || {};
-    const captionOf = (item) => item.deliveryLabel || deliveryCaption(item.forwardStatus);
+    const captionOf = (item) => taskDeliveryLabel(item);
     if (t.orderStatus === 'cancelled') return ['cancel', 'Отменено'];
     if (t.orderStatus === 'failed') return ['fail', 'Не выполнен'];
     if (t.orderStatus === 'done' || t.status === 'выполнена') return ['done', 'Выполнена'];
@@ -407,7 +538,7 @@
   function historyCaption(task, entry) {
     const status = entry && entry.status;
     if (task && task.orderStatus === 'cancelled' && (status === 'sent' || status === 'cancelled' || !status)) return 'Отменено';
-    if (status === 'sent') return (task && task.deliveryLabel) || deliveryCaption(task && task.forwardStatus);
+    if (status === 'sent') return taskDeliveryLabel(task);
     const words = {
       accepted: 'принял',
       in_progress: 'в работе',
@@ -435,15 +566,21 @@
     RECENT_CLOSED_MS,
     taskExecutor,
     deliveryCaption,
+    taskDeliveryLabel,
     routeLabel,
     routePhrase,
+    sentRoutePhrase,
     routeSummary,
     moscowClock,
     formatClockMsk,
     formatDateTimeMsk,
     formatProcessStamp,
     replyWaitCaption,
+    PROCESS_HOLD_MS,
+    journalSplit,
+    isLiveProcess,
     processBuckets,
+    processPanel,
     countsAsQueued,
     taskBadge,
     historyCaption,

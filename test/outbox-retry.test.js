@@ -263,7 +263,7 @@ test('появление общего вебхука досылает очере
     assert.equal(hook.hits.length, 1);
     const state = await officeJson(office.base, '/api/state');
     const task = state.body.tasks.find((item) => item.id === created.body.id);
-    assert.equal(task.deliveryLabel, 'Отправлена');
+    assert.equal(task.deliveryLabel, 'Доставлено');
     const social = state.body.agents.find((agent) => agent.id === 'social');
     assert.equal(social.activity, 'working');
     assert.equal(office.text().includes(key), false);
@@ -313,7 +313,7 @@ test('общий вебхук Путина доставляет обычные �
         body: JSON.stringify({ agent, text: `Приказ ${agent}` }),
       });
       assert.equal(created.status, 201, agent);
-      assert.equal(created.body.deliveryLabel, 'Отправлена');
+      assert.equal(created.body.deliveryLabel, 'Доставлено');
     }
     const orders = hook.hits.filter((hit) => hit.body && hit.body.type === 'owner_task');
     assert.deepEqual(orders.map((hit) => hit.body.agentId).sort(), ['advisor', 'finance', 'qa', 'social']);
@@ -357,7 +357,7 @@ test('таймер повторяет после 500 и замолкает по�
     assert.equal(hook.hits.length, 2);
     const state = await officeJson(office.base, '/api/state');
     const task = state.body.tasks.find((item) => item.id === created.body.id);
-    assert.equal(task.deliveryLabel, 'Отправлена');
+    assert.equal(task.deliveryLabel, 'Доставлено');
   } finally {
     await stopOffice(office);
     await hook.close();

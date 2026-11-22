@@ -475,7 +475,7 @@ test('старая запись без forwardStatus не называется �
     assert.equal(labels.held.process, 'В очереди, ждёт отправки');
     assert.equal(labels.held.feed, 'В очереди, ждёт отправки');
     assert.equal(labels.held.history, 'В очереди, ждёт отправки');
-    assert.equal(labels.sent.process, 'Доставлено');
+    assert.equal(labels.sent.process, '');
     assert.equal(labels.sent.feed, 'Отправлена');
     assert.equal(labels.sent.history, 'Отправлена');
     assert.equal(labels.failed.process, 'Ошибка доставки 502');

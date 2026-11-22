@@ -7,6 +7,7 @@
   let tasks = [];
   let agents = [];
   let routines = [];
+  let messages = [];
   let lastEvent = 0;
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -175,13 +176,13 @@
     if (!list) return;
     const visibleTasks = tasks.filter((task) => task && !archivedParty(task.agentId || task.agent) && !archivedParty(task.fromAgentId));
     const visibleRuns = routines.filter((item) => item && !archivedParty(item.agentId));
-    const buckets = window.OfficeFeed
-      ? OfficeFeed.processBuckets(visibleTasks, visibleRuns, Date.now())
-      : { live: active(), undelivered: [], pulses: activeRoutines() };
-    const rows = buckets.live;
-    const held = buckets.undelivered;
-    const runs = buckets.pulses;
-    const total = rows.length + runs.length;
+    const panel = window.OfficeFeed && OfficeFeed.processPanel
+      ? OfficeFeed.processPanel(visibleTasks, visibleRuns, Date.now(), { agents, messages })
+      : { live: active(), undelivered: [], pulses: activeRoutines(), total: active().length + activeRoutines().length, entries: active().concat(activeRoutines()) };
+    const rows = panel.live;
+    const held = panel.undelivered;
+    const runs = panel.pulses;
+    const total = panel.total;
     if (count) count.textContent = String(total);
     if (badge) {
       badge.textContent = String(total);
@@ -195,7 +196,7 @@
     list.dataset.sig = sig;
     const map = byId();
     if (!rows.length && !runs.length && !held.length) {
-      list.innerHTML = '<div class="proc-empty"><b>Сейчас тихо</b>Нет доставленных приказов и живых пульсов.</div>';
+      list.innerHTML = '<div class="proc-empty"><b>Сейчас тихо</b>Нет задач, которые агент сейчас выполняет.</div>';
       list.scrollTop = 0;
       return;
     }
@@ -243,6 +244,7 @@
     tasks = (data && data.tasks) || [];
     agents = (data && data.agents) || [];
     routines = (data && data.routines) || [];
+    messages = (data && data.messages) || [];
     render();
   }
 
@@ -251,7 +253,9 @@
     const close = document.getElementById('procClose');
     if (btn) btn.onclick = () => setOpen(!document.getElementById('processes').classList.contains('open'));
     if (close) close.onclick = () => setOpen(false);
-    setInterval(tick, 1000);
+    setInterval(() => {
+      render();
+    }, 1000);
   }
 
   document.addEventListener('officestate', (e) => {

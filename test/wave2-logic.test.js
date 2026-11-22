@@ -131,9 +131,9 @@ test('корзины процессов: живые, недоставленны�
     { id: 'r-2', active: false, finishedAt: new Date(now).toISOString(), name: 'Старая' },
   ];
   const buckets = Feed.processBuckets(tasks, routines, now);
-  assert.deepEqual(buckets.live.map((task) => task.id), ['live-sent', 'live-acc', 'live-work']);
+  assert.deepEqual(buckets.live.map((task) => task.id), ['live-work']);
   assert.deepEqual(buckets.undelivered.map((task) => task.id), ['stuck']);
-  assert.deepEqual(buckets.pulses.map((item) => item.id), ['r-1']);
+  assert.deepEqual(buckets.pulses.map((item) => item.id), []);
   const ids = [...buckets.live, ...buckets.undelivered].map((task) => task.id);
   assert.equal(ids.includes('t-1'), false);
   assert.equal(ids.includes('young'), false);

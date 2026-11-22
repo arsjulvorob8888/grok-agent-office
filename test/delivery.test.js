@@ -399,7 +399,7 @@ test('задача идёт агенту, потом Путину, потом в
     body: JSON.stringify({ agent: 'army', text: 'fixture-task-env' }),
   });
   assert.equal(envTask.status, 201);
-  assert.equal(envTask.body.deliveryLabel, 'Отправлена');
+  assert.equal(envTask.body.deliveryLabel, 'Доставлено');
   const envHit = hits.filter((hit) => hit.body && hit.body.taskId === envTask.body.id).pop();
   assert.equal(envHit.url, '/env-hook');
   assert.equal(envHit.headers['x-webhook-key'], ENV_KEY);
@@ -414,7 +414,7 @@ test('задача идёт агенту, потом Путину, потом в
     headers: { 'x-app-password': 'pw-delivery' },
     body: JSON.stringify({ agent: 'army', text: 'fixture-task-putin' }),
   });
-  assert.equal(putinTask.body.deliveryLabel, 'Отправлена');
+  assert.equal(putinTask.body.deliveryLabel, 'Доставлено');
   const putinHit = hits.filter((hit) => hit.body && hit.body.taskId === putinTask.body.id).pop();
   assert.equal(putinHit.url, '/putin-hook');
   assert.equal(putinHit.headers['x-webhook-key'], PUTIN_KEY);
@@ -485,7 +485,7 @@ test('2xx через вебхук агента или Путина делает 
     headers: { 'x-app-password': 'pw-delivery' },
     body: JSON.stringify({ agent: 'temshik', text: 'fixture-task-putin-live' }),
   });
-  assert.equal(viaPutin.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaPutin.body.deliveryLabel, 'Доставлено');
   assert.equal(viaPutin.body.forwardStatus >= 200 && viaPutin.body.forwardStatus < 300, true);
   assert.equal(await activityOf('temshik'), 'working');
 
@@ -512,7 +512,7 @@ test('2xx через вебхук агента или Путина делает 
     headers: { 'x-app-password': 'pw-delivery' },
     body: JSON.stringify({ agent: 'routines', text: 'fixture-task-routines-live' }),
   });
-  assert.equal(viaAgent.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaAgent.body.deliveryLabel, 'Доставлено');
   assert.equal(viaAgent.body.forwardStatus >= 200 && viaAgent.body.forwardStatus < 300, true);
   assert.equal(await activityOf('routines'), 'working');
   assert.equal(await activityOf('qa'), 'working');
