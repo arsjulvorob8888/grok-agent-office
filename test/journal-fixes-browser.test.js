@@ -198,6 +198,7 @@ if (!CHROME || !puppeteer) {
           return {
             vw: window.innerWidth,
             badge: document.querySelector('#jCount').textContent,
+            open: document.querySelector('#jList').querySelectorAll(':scope > .quest').length,
             label: quest.querySelector('.badge').textContent,
             detail: quest.textContent,
             history: [...quest.querySelectorAll('.order-hist b')].map((node) => node.textContent).join('|'),
@@ -213,6 +214,17 @@ if (!CHROME || !puppeteer) {
         });
         assert.equal(info.vw, viewport.width);
         assert.equal(info.badge, String(active));
+        assert.equal(info.badge, String(info.open));
+        const fit = await page.evaluate(() => {
+          const journal = document.querySelector('#journal');
+          const list = document.querySelector('#jList');
+          return {
+            journal: journal.scrollWidth <= journal.clientWidth + 1,
+            list: list.scrollWidth <= list.clientWidth + 1,
+          };
+        });
+        assert.equal(fit.journal, true, `журнал шире окна ${viewport.width}`);
+        assert.equal(fit.list, true, `список шире окна ${viewport.width}`);
         assert.equal(info.label, 'Доставлено');
         assert.equal(info.history.includes('Доставлено'), true);
         assert.match(info.detail, /Куда ушёл приказ: Адрес из окружения/);

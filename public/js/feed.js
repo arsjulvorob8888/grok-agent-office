@@ -214,15 +214,37 @@
     return (tasks || []).slice();
   }
 
-  function journalSplit(tasks) {
+  const JOURNAL_SETTLED_MS = 24 * 60 * 60 * 1000;
+
+  function journalSettled(task) {
+    if (!task || task.orderStatus === 'cancelled') return false;
+    const label = taskBadge(task)[1];
+    return label === 'Доставлено' || label === 'Выполнена';
+  }
+
+  function journalSplit(tasks, now = Date.now()) {
     const active = [];
+    const delivered = [];
     const cancelled = [];
+    const clock = Number.isFinite(now) ? now : Date.now();
     for (const task of tasks || []) {
       if (!task) continue;
-      if (task.orderStatus === 'cancelled') cancelled.push(task);
+      if (task.orderStatus === 'cancelled') {
+        cancelled.push(task);
+        continue;
+      }
+      const created = Date.parse(task.createdAt);
+      const age = Number.isFinite(created) ? clock - created : 0;
+      if (journalSettled(task) && age > JOURNAL_SETTLED_MS) delivered.push(task);
       else active.push(task);
     }
-    return { active, cancelled, badge: active.length };
+    return {
+      active,
+      delivered,
+      cancelled,
+      badge: active.length,
+      empty: active.length ? '' : 'Активных заданий нет',
+    };
   }
 
   function ordersForAgent(tasks, agentId) {
