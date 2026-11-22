@@ -225,6 +225,18 @@
     return { active, cancelled, badge: active.length };
   }
 
+  // Журнал слева: бейдж и карточки — один набор. Тестовый текст не в активных.
+  // Отменённые остаются в свёрнутом блоке, в бейдж не входят.
+  function visibleJournal(tasks) {
+    const split = journalSplit(tasks);
+    const active = split.active.filter((task) => !silentTask(task));
+    return {
+      active,
+      cancelled: split.cancelled,
+      total: active.length,
+    };
+  }
+
   function ordersForAgent(tasks, agentId) {
     const byId = indexTasks(tasks);
     const children = childrenOf(byId);
@@ -338,6 +350,20 @@
 
   function needsForAgent(needs, agentId) {
     return (needs || []).filter((need) => need && !isTestNeed(need) && needAudience(need).has(agentId) && isOpenNeed(need));
+  }
+
+  // Один список для значка и для блока «Ждёт от вас»: чужие id не удваивают пункт.
+  function needsForIds(needs, ids) {
+    const seen = new Set();
+    const list = [];
+    for (const id of ids || []) {
+      for (const need of needsForAgent(needs, id)) {
+        if (!need || seen.has(need.id)) continue;
+        seen.add(need.id);
+        list.push(need);
+      }
+    }
+    return list;
   }
 
   function openNeedsForAgent(needs, agentId) {
@@ -535,7 +561,7 @@
   }
 
   function countsAsActiveTask(task) {
-    if (!task || isFinalRecord(task, [])) return false;
+    if (!task || silentTask(task) || isFinalRecord(task, [])) return false;
     const status = task.orderStatus || 'sent';
     return status === 'sent' || status === 'accepted' || status === 'in_progress';
   }
@@ -634,6 +660,7 @@
     countsAsActiveTask,
     PROCESS_HOLD_MS,
     journalSplit,
+    visibleJournal,
     isLiveProcess,
     processBuckets,
     processPanel,
@@ -656,6 +683,7 @@
     needAudience,
     needsForGeneral,
     needsForAgent,
+    needsForIds,
     openNeedsForAgent,
     openNeedCount,
     needUrgencyView,
