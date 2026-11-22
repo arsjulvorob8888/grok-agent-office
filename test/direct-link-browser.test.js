@@ -164,8 +164,9 @@ test('в карточке одна строка маршрута и вход в 
     const dev = await openPage({ width: 1280, height: 800 }, 'dev');
     try {
       await dev.waitForFunction(() => {
-        const summary = document.querySelector('#panel.open[data-agent="dev"] [data-direct-summary]');
-        return summary && /Прямая связь не работает/.test(summary.textContent);
+        const card = document.querySelector('#panel.open[data-agent="dev"] [data-direct-card]');
+        const summary = card && card.querySelector('[data-direct-summary]');
+        return summary && summary.textContent.trim() === 'Проверяю…' && card.dataset.phase === 'checking' && !card.classList.contains('direct-warn');
       }, { timeout: 8000 });
       const quiet = await dev.evaluate(() => {
         const form = document.querySelector('#taskForm');

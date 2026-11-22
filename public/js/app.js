@@ -1798,9 +1798,16 @@
   }
   function directStatusHTML(agent) {
     const phase = Feed.directLinkPhase(agent);
+    const tone = typeof Feed.directCardTone === 'function' ? Feed.directCardTone(agent) : (phase === 'ok' ? 'ok' : 'bad');
     const text = Feed.directCardSummary(agent);
-    if (phase === 'ok') {
+    if (tone === 'ok') {
       return `<p class="direct-status" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="ok"><i class="direct-lamp" aria-hidden="true"></i><span data-direct-summary>${esc(text)}</span></p>`;
+    }
+    if (tone === 'pending') {
+      return `<div class="direct-pending" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="checking" role="status">
+      <p data-direct-summary>${esc(text)}</p>
+      <button type="button" class="btn gold" data-open-key>Ключ</button>
+    </div>`;
     }
     return `<div class="direct-warn" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="${esc(phase)}" role="status">
       <p data-direct-summary>${esc(text)}</p>
@@ -1813,7 +1820,9 @@
     btn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (window.DirectLink && typeof DirectLink.openFor === 'function') DirectLink.openFor(agent.id);
+      const id = agent.id;
+      select(null);
+      if (window.DirectLink && typeof DirectLink.openFor === 'function') DirectLink.openFor(id);
     });
   }
   function paintTaskRoute() {
