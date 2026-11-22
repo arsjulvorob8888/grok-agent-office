@@ -89,7 +89,10 @@
     const status = window.OfficeFeed && typeof OfficeFeed.taskBadge === 'function'
       ? OfficeFeed.taskBadge(task)[1]
       : (task.orderStatus || '');
-    const text = String(task.text || 'задание').trim() || 'задание';
+    const raw = String(task.text || 'задание').trim() || 'задание';
+    const text = window.OfficeFeed && typeof OfficeFeed.maskServiceIds === 'function'
+      ? (OfficeFeed.maskServiceIds(raw) || 'задание')
+      : raw;
     return `${from} → ${name}: задание ${text}, статус ${status}`;
   }
 

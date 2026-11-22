@@ -6,7 +6,8 @@
 @keyframes actPulse{0%,100%{opacity:.2;stroke-width:2}50%{opacity:.45;stroke-width:3}}
 .agent.sleep .beacon{opacity:0;animation:none}
 .agent .bld,.agent .fig-wrap,.agent .fig-body{transition:opacity .3s ease,filter .3s ease}
-.agent.act-idle .bld,.agent.act-idle .fig-wrap,.agent.act-idle .fig-body{opacity:.55;filter:grayscale(.4)}
+.agent.act-idle .fig-wrap,.agent.act-idle .fig-body{opacity:.55;filter:grayscale(.4)}
+.agent.act-idle .bld{opacity:1;filter:grayscale(.45) brightness(.9)}
 .agent.act-coordinating .bld,.agent.act-coordinating .fig-wrap,.agent.act-coordinating .fig-body,
 .agent.act-waiting .bld,.agent.act-waiting .fig-wrap,.agent.act-waiting .fig-body,
 .agent.act-working .bld,.agent.act-working .fig-wrap,.agent.act-working .fig-body,

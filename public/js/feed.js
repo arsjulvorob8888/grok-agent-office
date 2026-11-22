@@ -358,6 +358,18 @@
     return /отметился\s*:/i.test(String(message.text || ''));
   }
 
+  // Плашка «Приказ: … → …» в переписке. У задачи из окна агента отправитель — владелец:
+  // его реплика уже подписана «Вы», отдельная плашка с «Путин →» была бы неправдой.
+  // Настоящий приказ Путина (fromAgentId не owner) плашку сохраняет.
+  function ownerDirectPlaque(message, tasks) {
+    if (!message || message.role !== 'system') return false;
+    if (!String(message.text || '').startsWith('Приказ:')) return false;
+    const id = message.taskId;
+    if (!id) return false;
+    const task = (tasks || []).find((item) => item && item.id === id);
+    return !!(task && task.fromAgentId === 'owner');
+  }
+
   // Переписка: разговор с владельцем и ответы агента. Отметки статуса и тихие задачи — нет.
   function correspondenceMessages(messages, tasks, agentId) {
     const byId = indexTasks(tasks);
@@ -722,6 +734,22 @@
     return 'via';
   }
 
+  const DIRECT_WARN = 'Прямая связь не работает — проверьте адрес и ключ';
+
+  function directLinkClock(agent) {
+    const iso = agent && agent.linkCheck && agent.linkCheck.answeredAt;
+    if (!iso) return '';
+    const parts = moscowParts(iso);
+    if (!parts) return '';
+    return `${parts.hour}:${parts.minute} МСК`;
+  }
+
+  function directCardSummary(agent) {
+    if (directLinkPhase(agent) !== 'ok') return DIRECT_WARN;
+    const clock = directLinkClock(agent);
+    return clock ? `Прямая связь: работает ✓ (${clock})` : 'Прямая связь: работает ✓';
+  }
+
   function directLinkLine(agent) {
     const check = agent && agent.linkCheck;
     if (check && check.phase === 'ok') {
@@ -755,6 +783,59 @@
     return list;
   }
 
+  const SERVICE_TITLE_LIMIT = 80;
+  let rememberedTasks = [];
+  let rememberedNeeds = [];
+
+  function clipServiceTitle(text) {
+    const raw = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return '';
+    if (raw.length <= SERVICE_TITLE_LIMIT) return raw;
+    return `${raw.slice(0, SERVICE_TITLE_LIMIT - 1).trimEnd()}…`;
+  }
+
+  function rememberServiceLabels(tasks, needs) {
+    if (Array.isArray(tasks)) rememberedTasks = tasks;
+    if (Array.isArray(needs)) rememberedNeeds = needs;
+  }
+
+  function titleWithoutId(source, id) {
+    const raw = String(source || '');
+    const cleaned = id ? raw.split(id).join(' ') : raw;
+    return clipServiceTitle(cleaned);
+  }
+
+  // На экране вместо t-N и need-… название. В базе и в атрибутах номер остаётся.
+  function maskServiceIds(text, tasks, needs) {
+    const taskList = Array.isArray(tasks) ? tasks : rememberedTasks;
+    const needList = Array.isArray(needs) ? needs : rememberedNeeds;
+    let out = String(text ?? '');
+    if (!out) return out;
+    const orderedNeeds = needList.filter((item) => item && item.id).slice()
+      .sort((a, b) => String(b.id).length - String(a.id).length);
+    for (const need of orderedNeeds) {
+      const id = String(need.id);
+      if (!out.includes(id)) continue;
+      const title = titleWithoutId(need.what || need.title || '', id) || 'Пункт';
+      const re = new RegExp(`(?<![A-Za-z0-9-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`, 'g');
+      out = out.replace(re, title);
+    }
+    out = out.replace(/\bt-\d+\b/g, (id) => {
+      const task = taskList.find((item) => item && item.id === id);
+      if (!task) return id;
+      const named = typeof task.title === 'string' ? task.title.trim() : '';
+      return titleWithoutId(named || task.text || '', id) || 'Задача';
+    });
+    return out;
+  }
+
+  function taskDisplayTitle(task, tasks, needs) {
+    if (!task) return '';
+    const named = typeof task.title === 'string' ? task.title.trim() : '';
+    const masked = maskServiceIds(named || task.text || '', tasks, needs);
+    return clipServiceTitle(masked) || 'Задача';
+  }
+
   function countsMatch(state, agentId, now) {
     const tasks = state.tasks || [];
     const messages = state.messages || [];
@@ -779,6 +860,8 @@
     routeSummary,
     directLinkLine,
     directLinkPhase,
+    directLinkClock,
+    directCardSummary,
     isServicePing,
     serviceAgents,
     moscowClock,
@@ -809,6 +892,7 @@
     seesMessage,
     messagesForGeneral,
     messagesForAgent,
+    ownerDirectPlaque,
     correspondenceMessages,
     isStatusMark,
     isTestNeed,
@@ -823,5 +907,9 @@
     openNeedCount,
     needUrgencyView,
     countsMatch,
+    rememberServiceLabels,
+    maskServiceIds,
+    taskDisplayTitle,
+    clipServiceTitle,
   };
 });

@@ -11,6 +11,11 @@
 .delivery-msg{margin:0;font-size:12px;min-height:1em}
 .delivery-msg.ok{color:#86efac}
 .delivery-msg.err{color:#fca5a5}
+.direct-status{display:flex;align-items:center;gap:8px;margin:0;font:800 13px/1.35 var(--font);color:#86efac}
+.direct-status .direct-lamp{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:#86efac}
+.direct-warn{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0;padding:10px 12px;border-radius:12px;border:1px solid rgba(252,165,165,.75);background:rgba(127,29,29,.45)}
+.direct-warn p{margin:0;flex:1 1 180px;font:800 13px/1.4 var(--font);color:#fecaca}
+.direct-row-focus{outline:2px solid var(--gold);border-radius:10px}
 .direct-link,.direct-note[data-phase]{margin:0;font-size:13px;font-weight:800;line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
 .direct-link[data-phase="ok"],.direct-note[data-phase="ok"]{color:#86efac}
 .direct-link[data-phase="checking"],.direct-note[data-phase="checking"]{color:#f5c451}

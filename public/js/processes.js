@@ -152,7 +152,10 @@
 
   function orderRow(task, map, now, withActions) {
     const route = routeText(task, map);
-    const what = task.text || 'Задача';
+    const raw = task.text || 'Задача';
+    const what = window.OfficeFeed && typeof OfficeFeed.maskServiceIds === 'function'
+      ? OfficeFeed.maskServiceIds(raw)
+      : raw;
     const status = task.orderStatus || 'sent';
     const label = rowStatus(task);
     const actions = withActions && ownerReady()

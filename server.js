@@ -1508,6 +1508,33 @@ function needsForList(req) {
   return open.filter((item) => !isTestNeedItem(item));
 }
 
+function formatClockMsk(iso) {
+  const date = new Date(iso);
+  const when = Number.isNaN(date.getTime()) ? new Date() : date;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Moscow',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(when);
+  const pick = (type) => {
+    const part = parts.find((p) => p.type === type);
+    return part ? part.value : '00';
+  };
+  let hour = pick('hour');
+  if (hour === '24') hour = '00';
+  return `${hour}:${pick('minute')}`;
+}
+
+function taskTitleText(task, fallback) {
+  const named = task && typeof task.title === 'string' ? task.title.trim() : '';
+  const source = named || (task && typeof task.text === 'string' ? task.text : '') || fallback || '';
+  const raw = String(source).replace(/\s+/g, ' ').trim();
+  if (!raw) return 'Задача';
+  if (raw.length <= 80) return raw;
+  return `${raw.slice(0, 79).trimEnd()}…`;
+}
+
 function formatAtMsk(iso) {
   const date = new Date(iso);
   const when = Number.isNaN(date.getTime()) ? new Date() : date;
@@ -2461,7 +2488,7 @@ app.post('/api/orders/:id/cancel', requireAppPassword, async (req, res) => {
 app.post('/api/orders/:id/retry', requireAppPassword, async (req, res) => {
   const task = state.tasks.find((item) => item && item.id === req.params.id);
   if (!task) return res.status(404).json({ error: 'Задача не найдена' });
-  if (retry.isStubText(task.text) || task.orderStatus === 'cancelled') {
+  if (task.orderStatus === 'cancelled') {
     return res.status(409).json({ error: 'Устаревшая задача не досылается' });
   }
   const done = (state.outbox || []).find((item) => item && item.taskId === task.id && item.status === 'delivered');
@@ -2764,6 +2791,9 @@ function createOutboxItem(task, notice) {
     at,
     atMsk: formatAtMsk(at),
     appUrl: PUBLIC_URL,
+    ownerText: notice && notice.text != null ? String(notice.text) : String((task && task.text) || ''),
+    sentAtMsk: formatClockMsk(at),
+    taskTitle: taskTitleText(task, notice && notice.text != null ? notice.text : (task && task.text)),
   };
   if (notice && notice.needId) payload.needId = notice.needId;
   else payload.taskId = task.id;

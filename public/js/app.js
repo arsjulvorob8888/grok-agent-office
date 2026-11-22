@@ -90,6 +90,7 @@
     peekId: null,
     roomId: null,
     roomSig: '',
+    journalOpen: new Set(),
   };
   const drafts = new Map();
   const MAX_FILES = 5;
@@ -167,6 +168,14 @@
     return String(a.number).includes('.') ? String(a.number) : `${a.number}.`;
   };
   const titled = (a) => (a && a.number ? `${numLabel(a)} ${plainName(a)}` : plainName(a));
+  // Зам сидит в помещении родителя: в шапке панели район родителя, не свой.
+  function panelDistrict(a) {
+    if (a && a.parentId) {
+      const parent = S.byId.get(a.parentId);
+      if (parent) return parent.district || '';
+    }
+    return (a && a.district) || '';
+  }
   const cmpNum = (a, b) => {
     const pa = String(a.number || '').split('.').map((n) => parseInt(n, 10) || 0);
     const pb = String(b.number || '').split('.').map((n) => parseInt(n, 10) || 0);
@@ -338,7 +347,7 @@
       e.bubbleOn = !!(e.bubble && show && peek);
       const thinking = a.live && a.live.status === 'working';
       const bubbleText = window.AgentStatus ? AgentStatus.ownDoing(a) : '';
-      if (e.bubble) e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(bubbleText);
+      if (e.bubble) e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(showText(bubbleText));
       if (e.link) {
         const hot = activityMode(a) === 'working';
         e.link.setAttribute('class', `link${tier === 'sub' ? ' sub' : ''}${hot ? ' hot' : ''}${S.selected === a.id ? ' sel' : ''}`);
@@ -1006,8 +1015,12 @@
   // Опрос /api/state каждые 4 с перерисовывал панель через innerHTML и сбрасывал
   // scrollTop и у .p-body, и у внутренних .qr. Пока данные те же — панель не трогаем.
   // Когда данные меняются, возвращаем якорь и scrollTop каждого вложенного блока.
+  function showText(text) {
+    if (Feed && typeof Feed.maskServiceIds === 'function') return Feed.maskServiceIds(text);
+    return text == null ? '' : String(text);
+  }
   function linkify(text) {
-    const s = String(text ?? '');
+    const s = showText(text);
     const re = /(https?:\/\/[^\s<]+)/g;
     let out = '', last = 0, m;
     while ((m = re.exec(s))) {
@@ -1427,7 +1440,7 @@
     return 'idle';
   }
   function statusNowHTML(a) {
-    const what = window.AgentStatus && AgentStatus.chipCaption ? AgentStatus.chipCaption(a) : '';
+    const what = showText(window.AgentStatus && AgentStatus.chipCaption ? AgentStatus.chipCaption(a) : '');
     if (!what) return '<span class="now"></span>';
     const age = agoText(a.doingSince || a.lastSeenAt);
     return `<span class="now"><span class="k">чем занят</span> ${esc(what)}</span>${age ? `<span class="ago">уже ${esc(age)}</span>` : ''}`;
@@ -1466,7 +1479,7 @@
   function questHTML(t, showAgent, viewerId) {
     const a = S.byId.get(t.agent) || { name: t.agent, color: '#64748b' };
     const [cls, label] = taskBadge(t);
-    const title = t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение');
+    const title = showText(t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение'));
     const dir = viewerId ? Feed.orderDirection(t, viewerId, S.tasks) : '';
     const via = Feed.sentRoutePhrase ? Feed.sentRoutePhrase(t.sentRoute) : '';
     return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}"${dir ? ` data-dir="${dir}"` : ''} style="--c:${esc(a.color)}">
@@ -1525,8 +1538,11 @@
     return `<ol class="order-hist">${list.map((h) => {
       const bits = [];
       if (h.status === 'in_progress' && h.progress != null) bits.push(`${h.progress}%`);
-      if (h.note) bits.push(h.note);
-      if (h.status === 'done' && h.result) bits.push(h.result.length > 140 ? `${h.result.slice(0, 140)}…` : h.result);
+      if (h.note) bits.push(showText(h.note));
+      if (h.status === 'done' && h.result) {
+        const result = showText(h.result);
+        bits.push(result.length > 140 ? `${result.slice(0, 140)}…` : result);
+      }
       const word = Feed.historyCaption ? Feed.historyCaption(t, h) : (ORDER_WORD[h.status] || h.status || '');
       return `<li><time datetime="${esc(h.at || '')}">${fmtTime(h.at)}</time><b>${esc(word)}</b>${bits.length ? `<span>${esc(bits.join(' · '))}</span>` : ''}</li>`;
     }).join('')}</ol>`;
@@ -1546,12 +1562,13 @@
     const msgs = source.slice().sort((a, b) =>
       String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
     const wait = Feed.replyWaitCaption ? Feed.replyWaitCaption(S.tasks, S.messages, agent.id) : '';
-    const note = wait ? `<p class="reply-wait">${esc(wait)}</p>` : '';
+    const note = wait ? `<p class="reply-wait">${esc(showText(wait))}</p>` : '';
     const activity = activityCaption(agent);
     const activityRow = activity ? `<p class="msg-activity">${esc(activity)}</p>` : '';
     if (!msgs.length && !note && !activityRow) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
     return note + activityRow + msgs.map((m) => {
       if (m.role === 'system') {
+        if (Feed.ownerDirectPlaque && Feed.ownerDirectPlaque(m, S.tasks)) return '';
         return `<div class="msg-row system"><div class="msg-sys">${linkify(Sender.displayOrderSender(m.text))}</div></div>`;
       }
       const speaker = S.byId.get(m.agentId) || agent;
@@ -1576,13 +1593,14 @@
     const needKey = Feed.needsForIds(S.needs, awaitAgentIds(a.id)).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, n.answerDeliveryLabel, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}:${d.deliveryRoute || ''}`).join(',');
     const link = a.linkCheck || {};
-    return [a.id, a.deliveryRoute || '', link.phase || '', link.answeredAt || '', a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
+    return [a.id, a.deliveryRoute || '', link.phase || '', link.answeredAt || '', a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), panelDistrict(a), L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
 
   function renderPanel(opts = {}) {
     const a = S.byId.get(S.selected);
     if (!a) return;
     const tier = tierOf(a);
+    const place = panelDistrict(a);
     const tasks = Feed.ordersForAgent(S.tasks, a.id).filter((t) => !(window.TaskRules && TaskRules.isSilentTask(t)));
     const pin = S.pinnedOrder && tasks.find((t) => t.id === S.pinnedOrder);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
@@ -1611,7 +1629,6 @@
             ${depts.map((d) => `<option value="${esc(d.id)}">${esc(titled(d))}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <p class="task-route" id="taskRoute" data-route="none"></p>
-        <p class="direct-link" id="directLink" data-direct-link></p>
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
         <textarea id="taskText" maxlength="4000" placeholder="${tier === 'main' ? 'Например: собери итоги недели по всем направлениям' : 'Опиши, что нужно сделать…'}"></textarea>
         <div class="attach-row">
@@ -1636,7 +1653,7 @@
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
         <div class="p-portrait">${portrait(a, '-34 -104 68 76')}</div>
-        <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · Путин' : (a.district || '') + (tier === 'extra' ? ' · союзник' : ''))}</div>
+        <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · Путин' : place + (tier === 'extra' ? ' · союзник' : ''))}</div>
           <h2>${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</h2><div class="role">${esc(a.role || '')}</div>${parent ? `<button type="button" class="parent-link" data-parent="${esc(parent.id)}">Помощник · ${esc(titled(parent))}</button>` : ''}</div>
       </div>
       <div class="p-body">
@@ -1644,6 +1661,7 @@
         ${a.vacant ? '' : `<div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}" data-status="${esc(activityLabel(a))}">${esc(activityLabel(a))}</span>${statusNowHTML(a)}</div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
+        ${a.vacant ? '' : `<div class="sec" data-anchor="link">${directStatusHTML(a)}</div>`}
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
         ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
         ${a.vacant ? '' : taskBlock}
@@ -1666,6 +1684,7 @@
       }
       renderDrafts();
       paintTaskRoute();
+      bindDirectStatus(a);
       const targetSel = $('#taskTarget');
       if (targetSel) targetSel.addEventListener('change', paintTaskRoute);
       f.onsubmit = (e) => { e.preventDefault(); submitTask(); };
@@ -1777,13 +1796,28 @@
     const kind = agent && agent.deliveryRoute;
     return kind === 'agent' || kind === 'putin' || kind === 'env' || kind === 'none' ? kind : 'none';
   }
-  function paintTaskRoute() {
-    const line = $('#directLink');
-    if (line && window.OfficeFeed && typeof OfficeFeed.directLinkLine === 'function') {
-      const agent = S.byId.get(S.selected);
-      line.textContent = OfficeFeed.directLinkLine(agent);
-      line.dataset.phase = typeof OfficeFeed.directLinkPhase === 'function' ? OfficeFeed.directLinkPhase(agent) : '';
+  function directStatusHTML(agent) {
+    const phase = Feed.directLinkPhase(agent);
+    const text = Feed.directCardSummary(agent);
+    if (phase === 'ok') {
+      return `<p class="direct-status" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="ok"><i class="direct-lamp" aria-hidden="true"></i><span data-direct-summary>${esc(text)}</span></p>`;
     }
+    return `<div class="direct-warn" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="${esc(phase)}" role="status">
+      <p data-direct-summary>${esc(text)}</p>
+      <button type="button" class="btn gold" data-open-key>Ключ</button>
+    </div>`;
+  }
+  function bindDirectStatus(agent) {
+    const btn = $('#directCard [data-open-key]');
+    if (!btn) return;
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (window.DirectLink && typeof DirectLink.openFor === 'function') DirectLink.openFor(agent.id);
+    });
+  }
+  function paintTaskRoute() {
+    const agent = S.byId.get(S.selected);
     const el = $('#taskRoute');
     if (!el || !window.OfficeFeed || typeof OfficeFeed.routeSummary !== 'function') return;
     const sel = $('#taskTarget');
@@ -2080,7 +2114,10 @@
     syncJournalChrome(badge);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
-    const quest = (t) => questHTML(t, true);
+    const quest = (t) => {
+      const html = questHTML(t, true);
+      return S.journalOpen.has(t.id) ? html.replace('class="quest"', 'class="quest open"') : html;
+    };
     const fold = (items, cls, title) => (items && items.length
       ? `<details class="${cls}"><summary>${title} (${items.length})</summary>${items.slice(0, 60).map(quest).join('')}</details>`
       : '');
@@ -2090,10 +2127,17 @@
     list.querySelectorAll('[data-scroll-key]').forEach((el) => {
       if (typeof saved[el.dataset.scrollKey] === 'number') el.scrollTop = saved[el.dataset.scrollKey];
     });
-    list.querySelectorAll('.quest').forEach((q) => (q.onclick = (e) => {
-      if (e.target.closest('a,button,.qr')) return;
-      select(q.dataset.agent);
-    }));
+    list.querySelectorAll('.quest').forEach((q) => {
+      const id = (q.dataset.anchor || '').slice(2);
+      q.setAttribute('aria-expanded', q.classList.contains('open') ? 'true' : 'false');
+      q.onclick = (e) => {
+        if (e.target.closest('a,button,.qr')) return;
+        if (S.journalOpen.has(id)) S.journalOpen.delete(id);
+        else S.journalOpen.add(id);
+        q.classList.toggle('open', S.journalOpen.has(id));
+        q.setAttribute('aria-expanded', S.journalOpen.has(id) ? 'true' : 'false');
+      };
+    });
     list.querySelectorAll('.thumb').forEach((btn) => {
       btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(btn.dataset.full, btn.dataset.name); };
     });
@@ -2355,7 +2399,7 @@
       : '';
     return `<article class="need-item urg-${view}${n.closedAt ? ' is-closed' : ''}${view === 'stale' ? ' is-stale' : ''}${test ? ' is-test' : ''}" data-id="${esc(n.id)}">
       ${close}
-      <div class="need-what">${test ? '<span class="test-mark">тест</span>' : ''}${esc(n.what)}</div>
+      <div class="need-what">${test ? '<span class="test-mark">тест</span>' : ''}${esc(showText(n.what))}</div>
       <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span><span class="need-updated">${esc(moscowStamp(n.updatedAt || n.createdAt))}</span>${n.answerDeliveryLabel ? `<span class="need-answered">${esc(n.answerDeliveryLabel)}</span>` : ''}</div>
       ${needActionHTML(n)}
     </article>`;
@@ -2507,6 +2551,7 @@
     S.byId = new Map(agents.map((a) => [a.id, a]));
     for (const deputy of S.deputies) S.byId.set(deputy.id, deputy);
     syncNeeds(data.needs);
+    if (Feed && typeof Feed.rememberServiceLabels === 'function') Feed.rememberServiceLabels(S.tasks, S.needs);
     const sig = agentSig(agents);
     if (sig !== S.sig) { S.sig = sig; buildAgents(); }
     noteFreshOrders();
@@ -2517,7 +2562,7 @@
       if (S.loaded && t.status === 'выполнена' && prevStatus.get(t.id) && prevStatus.get(t.id) !== 'выполнена' && !(window.TaskRules && TaskRules.isSilentTask(t))) {
         const a = S.byId.get(t.agent);
         if (a) {
-          toast(`${plainName(a)}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${t.result ? t.result.slice(0, 90) : t.text.slice(0, 90)}`, 'check');
+          toast(`${plainName(a)}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${showText(t.result || t.text).slice(0, 90)}`, 'check');
           xpPop(a, CONFIG.xpPerTask); chime();
         }
       }

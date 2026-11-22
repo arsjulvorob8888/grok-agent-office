@@ -132,8 +132,9 @@ async function check(width, height) {
       const bld = document.querySelector('#agents .agent[data-id="army"] .bld');
       const dot = document.querySelector('#overlay .tag[data-id="army"] .dot');
       if (!fig || !bld || !dot || dot.classList.contains('working')) return false;
-      const dim = (el) => parseFloat(getComputedStyle(el).opacity) < 0.8 && /grayscale/.test(getComputedStyle(el).filter);
-      return dim(fig) && dim(bld);
+      const figDim = (el) => parseFloat(getComputedStyle(el).opacity) < 0.8 && /grayscale/.test(getComputedStyle(el).filter);
+      const bldSolid = (el) => parseFloat(getComputedStyle(el).opacity) >= 0.9 && /grayscale/.test(getComputedStyle(el).filter);
+      return figDim(fig) && bldSolid(bld);
     }, { timeout: 5000 });
     assert.ok(Date.now() - idleAt < 5000, `${width}: погасло за ${Date.now() - idleAt} мс`);
 

@@ -133,57 +133,59 @@ async function visibleBlob(page) {
   });
 }
 
-test('в карточке одна строка, без блока «Доставка» и без пароля', { timeout: 60000 }, async () => {
+test('в карточке одна строка маршрута и вход в прямую связь на месте', { timeout: 60000 }, async () => {
   const page = await openPage({ width: 1280, height: 800 }, 'army');
   try {
     await page.waitForFunction(() => {
-      const line = document.querySelector('#panel.open[data-agent="army"] [data-direct-link]');
-      return line && line.textContent === 'Сообщение уйдёт через Путина';
+      const card = document.querySelector('#panel.open[data-agent="army"] [data-direct-card]');
+      return card && /Прямая связь не работает/.test(card.textContent) && card.querySelector('[data-open-key]');
     }, { timeout: 8000 });
     const card = await page.evaluate(() => {
       const panel = document.querySelector('#panel');
-      const line = panel.querySelector('[data-direct-link]');
+      const form = panel.querySelector('#taskForm');
+      const routes = form ? [...form.querySelectorAll('#taskRoute, [data-direct-link]')] : [];
       return {
-        line: line ? line.textContent : '',
-        count: panel.querySelectorAll('[data-direct-link]').length,
-        inForm: !!panel.querySelector('#taskForm [data-direct-link]'),
+        routes: routes.map((el) => el.textContent.replace(/\s+/g, ' ').trim()),
         delivery: panel.querySelectorAll('[data-delivery-root], [data-delivery-kind]').length,
         password: panel.innerText.includes('Нужен пароль персонала'),
         heading: [...panel.querySelectorAll('h4')].some((el) => el.textContent.trim() === 'Доставка'),
+        inputs: panel.querySelectorAll('[data-anchor="link"] input').length,
       };
     });
-    assert.equal(card.line, 'Сообщение уйдёт через Путина');
-    assert.equal(card.count, 1);
-    assert.equal(card.inForm, true);
+    assert.equal(card.routes.length, 1);
+    assert.match(card.routes[0], /Куда уйдёт приказ/);
+    assert.equal(card.routes[0].includes('Сообщение уйдёт через Путина'), false);
     assert.equal(card.delivery, 0);
     assert.equal(card.password, false);
     assert.equal(card.heading, false);
+    assert.equal(card.inputs, 0);
     fs.mkdirSync(artifacts, { recursive: true });
     await page.screenshot({ path: path.join(artifacts, 'direct-link-card-1280.png') });
     const dev = await openPage({ width: 1280, height: 800 }, 'dev');
     try {
       await dev.waitForFunction(() => {
-        const line = document.querySelector('#panel.open[data-agent="dev"] [data-direct-link]');
-        return line && line.textContent === 'Проверяю…';
+        const summary = document.querySelector('#panel.open[data-agent="dev"] [data-direct-summary]');
+        return summary && /Прямая связь не работает/.test(summary.textContent);
       }, { timeout: 8000 });
-      const quiet = await dev.evaluate(() => document.querySelector('#panel').innerText.includes('Сообщение уйдёт через Путина'));
+      const quiet = await dev.evaluate(() => {
+        const form = document.querySelector('#taskForm');
+        return form ? form.innerText.includes('Сообщение уйдёт через Путина') : false;
+      });
       assert.equal(quiet, false);
     } finally {
       await dev.close();
     }
     await page.goto(`${base}/?agent=grok`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => {
-      const line = document.querySelector('#panel.open[data-agent="grok"] [data-direct-link]');
-      return line && line.textContent === 'Прямая связь: не подключена';
+      const card = document.querySelector('#panel.open[data-agent="grok"] [data-direct-card]');
+      return card && /Прямая связь не работает/.test(card.textContent) && card.querySelectorAll('input').length === 0;
     }, { timeout: 8000 });
     const putin = await page.evaluate(() => ({
-      line: document.querySelector('#panel [data-direct-link]').textContent,
-      text: document.querySelector('#panel').innerText,
+      form: document.querySelector('#taskForm') ? document.querySelector('#taskForm').innerText : '',
       delivery: document.querySelectorAll('#panel [data-delivery-root]').length,
       password: document.querySelector('#panel').innerText.includes('Нужен пароль персонала'),
     }));
-    assert.equal(putin.line, 'Прямая связь: не подключена');
-    assert.equal(putin.text.includes('Сообщение уйдёт через Путина'), false);
+    assert.equal(putin.form.includes('Сообщение уйдёт через Путина'), false);
     assert.equal(putin.delivery, 0);
     assert.equal(putin.password, false);
     assert.deepEqual(page.__errors, []);
@@ -315,26 +317,31 @@ test('на 390 строка и поля не вылезают за окно', { 
   const page = await openPage({ width: 390, height: 844, password: 'pw-link' }, 'army');
   try {
     await page.waitForFunction(() => {
-      const line = document.querySelector('#panel.open[data-agent="army"] [data-direct-link]');
-      return line && line.textContent === 'Сообщение уйдёт через Путина';
+      const card = document.querySelector('#panel.open[data-agent="army"] [data-direct-card]');
+      return card && /Прямая связь не работает/.test(card.textContent) && card.querySelector('[data-open-key]');
     }, { timeout: 8000 });
     const card = await page.evaluate(() => {
-      const line = document.querySelector('#panel [data-direct-link]');
-      line.scrollIntoView({ block: 'center' });
-      const box = line.getBoundingClientRect();
+      const warn = document.querySelector('#panel [data-direct-card]');
+      warn.scrollIntoView({ block: 'center' });
+      const box = warn.getBoundingClientRect();
       const panel = document.querySelector('#panel').getBoundingClientRect();
+      const form = document.querySelector('#taskForm');
+      const routes = form ? [...form.querySelectorAll('#taskRoute, [data-direct-link]')] : [];
       return {
-        text: line.textContent,
+        routes: routes.map((el) => el.textContent),
         left: box.left,
         right: box.right,
         panelLeft: panel.left,
         panelRight: panel.right,
         delivery: document.querySelectorAll('#panel [data-delivery-root]').length,
         password: document.querySelector('#panel').innerText.includes('Нужен пароль персонала'),
+        inputs: document.querySelectorAll('#panel [data-anchor="link"] input').length,
         vw: window.innerWidth,
       };
     });
-    assert.equal(card.text, 'Сообщение уйдёт через Путина');
+    assert.equal(card.inputs, 0);
+    assert.equal(card.routes.length, 1);
+    assert.match(card.routes[0], /Куда уйдёт приказ/);
     assert.equal(card.delivery, 0);
     assert.equal(card.password, false);
     assert.ok(card.left >= card.panelLeft - 1 && card.right <= card.panelRight + 1, JSON.stringify(card));
