@@ -15,11 +15,20 @@
     resting: 'Спит',
   };
 
-  function activityMode(agent) {
-    if (agent && agent.activity === 'working') return 'working';
-    if (agent && agent.activity === 'coordinating') return 'coordinating';
-    if (agent && agent.activity === 'waiting') return 'waiting';
+  // Итог один. Если сервер прислал activity, он важнее сырого status.
+  // status=working и activity=resting — это отдых, не зелёная точка.
+  function finalStatus(agent) {
+    const activity = agent && agent.activity;
+    if (activity === 'working' || activity === 'coordinating' || activity === 'waiting' || activity === 'resting') {
+      return activity;
+    }
+    if (agent && agent.status === 'working') return 'working';
+    if (agent && agent.status === 'waiting') return 'waiting';
     return 'resting';
+  }
+
+  function activityMode(agent) {
+    return finalStatus(agent);
   }
 
   function activityLabel(agent) {
@@ -63,5 +72,5 @@
     };
   }
 
-  return { activityMode, activityLabel, statusTone, viewStatus, presence };
+  return { finalStatus, activityMode, activityLabel, statusTone, viewStatus, presence };
 });

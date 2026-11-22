@@ -299,6 +299,19 @@
       overlay.appendChild(awaitBadge);
       S.els.set(a.id, { g, tag, bubble, badge, awaitBadge, link, packets, w: 0 });
     }
+    for (const a of S.agents) {
+      if (a.id !== 'advisor' || a.archived || a.vacant) continue;
+      const tag = document.createElement('div');
+      tag.className = `tag ${tierOf(a)} guest`;
+      tag.style.setProperty('--c', a.color);
+      tag.dataset.id = a.id;
+      tag.onclick = (e) => {
+        e.stopPropagation();
+        select(a.id, { opener: tag });
+      };
+      overlay.appendChild(tag);
+      S.els.set(a.id, { g: null, tag, bubble: null, badge: null, awaitBadge: null, link: null, packets: null, w: 0 });
+    }
     buildRoster();
     buildMiniDots();
   }
@@ -310,16 +323,21 @@
       const tier = tierOf(a);
       const act = activityClass(a);
       const tone = statusTone(a);
-      e.g.setAttribute('class', `agent tier-${tier} st-${tone}${act}${S.selected === a.id ? ' sel' : ''}`);
-      e.tag.className = `tag ${tier}${a.id === 'health' ? ' fit' : ''}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
-      e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${tone}"></span>`;
+      if (e.g) e.g.setAttribute('class', `agent tier-${tier} st-${tone}${act}${S.selected === a.id ? ' sel' : ''}`);
+      if (!e.g) {
+        e.tag.className = `tag guest${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
+        e.tag.innerHTML = `<span class="dot ${tone}"></span>`;
+      } else {
+        e.tag.className = `tag ${tier}${a.id === 'health' ? ' fit' : ''}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
+        e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${tone}"></span>`;
+      }
       e.w = 0;
       const show = showsStatusBubble(a);
       const peek = S.peekId === a.id || S.selected === a.id;
-      e.bubble.className = `bubble ${tone}${show && peek ? '' : ' hide'}`;
-      e.bubbleOn = !!(show && peek);
+      if (e.bubble) e.bubble.className = `bubble ${tone}${show && peek ? '' : ' hide'}`;
+      e.bubbleOn = !!(e.bubble && show && peek);
       const thinking = a.live && a.live.status === 'working';
-      e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(a.now || '');
+      if (e.bubble) e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(a.now || '');
       if (e.link) {
         const hot = activityMode(a) === 'working';
         e.link.setAttribute('class', `link${tier === 'sub' ? ' sub' : ''}${hot ? ' hot' : ''}${S.selected === a.id ? ' sel' : ''}`);
@@ -665,9 +683,9 @@
       if (!e) continue;
       const show = showsStatusBubble(a);
       const peek = S.peekId === a.id || S.selected === a.id;
-      e.bubble.className = `bubble ${statusTone(a)}${show && peek ? '' : ' hide'}`;
-      e.bubbleOn = !!(show && peek);
-      e.g.classList.toggle('peek', S.peekId === a.id);
+      if (e.bubble) e.bubble.className = `bubble ${statusTone(a)}${show && peek ? '' : ' hide'}`;
+      e.bubbleOn = !!(e.bubble && show && peek);
+      if (e.g) e.g.classList.toggle('peek', S.peekId === a.id);
     }
   }
   function showTip(e, text) {
@@ -696,7 +714,9 @@
       if (!e) continue;
       e.tag.classList.toggle('compact', compact);
       e.w = e.tag.offsetWidth; e.h = e.tag.offsetHeight;
-      const sx = a.x * k + tx, sy = (a.y + (tierOf(a) === 'main' ? 84 : 50)) * k + ty;
+      const gx = a.x + (e.tag.classList.contains('guest') ? 70 : 0);
+      const gy = a.y + (e.tag.classList.contains('guest') ? 90 : 0);
+      const sx = gx * k + tx, sy = (gy + (tierOf(a) === 'main' ? 84 : 50)) * k + ty;
       const r = { x: sx - e.w / 2, y: sy, w: e.w, h: e.h };
       const off = sx - e.w / 2 < 2 || sx + e.w / 2 > innerWidth - 2 || sy < 2 || sy + e.h > innerHeight - 2;
       const hidden = off || hit(r);
@@ -708,7 +728,7 @@
       const e = S.els.get(a.id);
       if (!e) continue;
       const sx = a.x * k + tx, sy = (a.y + figTop(a) - 8) * k + ty;
-      if (!e.bubbleOn || k < 0.42) { e.bubble.classList.add('hide'); continue; }
+      if (!e.bubble || !e.bubbleOn || k < 0.42) { if (e.bubble) e.bubble.classList.add('hide'); continue; }
       const bw = e.bubble.offsetWidth || 150, bh = e.bubble.offsetHeight || 30;
       const r = { x: sx - bw / 2, y: sy - bh, w: bw, h: bh };
       const hidden = hit(r) && S.selected !== a.id;

@@ -61,7 +61,8 @@ test('ручная отметка гаснет ровно через 15 мину
 test('зелёная точка и яркость фигурки берутся из одного статуса', () => {
   const modes = ['working', 'coordinating', 'waiting', 'resting'];
   for (const mode of modes) {
-    const look = Status.presence({ activity: mode, id: mode === 'working' ? 'health' : 'social' });
+    const look = Status.presence({ activity: mode, status: 'working', id: mode === 'working' ? 'health' : 'social' });
+    if (mode === 'resting') assert.equal(Status.finalStatus({ status: 'working', activity: 'resting' }), 'resting');
     assert.equal(look.mode, mode);
     assert.equal(look.dot, look.tone);
     if (mode === 'resting') {

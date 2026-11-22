@@ -161,6 +161,7 @@ body.hier-on .link.sub{opacity:1;stroke-dasharray:none;stroke-width:3.2}
 .tag.sub .nm{font-size:11.5px}
 .tag.sub .lvl{min-width:18px;height:18px;font-size:9px}
 .tag .dot{width:7px;height:7px;border-radius:50%;background:#8b93a3;flex:none}
+.tag.guest{width:14px;height:14px;min-width:0;padding:0;border:0;background:transparent;box-shadow:none;pointer-events:none}
 .tag .dot.working{background:var(--ok)}
 .tag .dot.waiting{background:var(--warn)}
 @keyframes dot{50%{box-shadow:0 0 0 6px rgba(255,255,255,0)}}

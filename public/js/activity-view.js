@@ -97,6 +97,9 @@
       if (!a) return;
       const mode = modeOf(a);
       const working = mode === 'working';
+      const dot = window.AgentStatus && AgentStatus.presence ? AgentStatus.presence(a).dot : (working ? 'working' : mode === 'waiting' ? 'waiting' : 'idle');
+      const st = chip.querySelector('.st');
+      if (st) st.className = `st ${dot}`;
       chip.classList.toggle('pulse', working);
       chip.classList.toggle('coord', mode === 'coordinating');
       chip.classList.toggle('wait', mode === 'waiting');
