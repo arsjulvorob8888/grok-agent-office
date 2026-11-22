@@ -1296,6 +1296,7 @@
     return 'resting';
   }
   function statusTone(a) {
+    if (window.AgentStatus && AgentStatus.presence) return AgentStatus.presence(a).dot;
     if (window.AgentStatus) return AgentStatus.statusTone(a);
     const mode = activityMode(a);
     if (mode === 'working') return 'working';

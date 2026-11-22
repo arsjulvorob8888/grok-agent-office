@@ -4,20 +4,22 @@
 .agent.pulse .pulse-ring{opacity:0;animation:none}
 .agent.pulse.peek .pulse-ring,.agent.pulse:hover .pulse-ring,.agent.pulse.sel .pulse-ring{opacity:.4;animation:actPulse 1.35s ease-in-out infinite}
 @keyframes actPulse{0%,100%{opacity:.2;stroke-width:2}50%{opacity:.45;stroke-width:3}}
-.agent.sleep .bld,.agent.sleep .fig-wrap{filter:saturate(.85) brightness(.95)}
-.agent.sleep.st-working .fig-body,.agent.sleep.st-working .beacon,.agent.sleep .beacon{animation:none;opacity:0}
-.agent.sleep .beacon{opacity:0}
-.agent .bld,.agent .fig-wrap{transition:opacity .3s ease,filter .3s ease}
-.agent.act-idle .bld,.agent.act-idle .fig-wrap{opacity:.55;filter:grayscale(.4)}
-.agent.act-coordinating .bld,.agent.act-coordinating .fig-wrap{opacity:.8;filter:grayscale(.15)}
-.agent.act-working .bld,.agent.act-working .fig-wrap{opacity:1;filter:none}
+.agent.sleep .beacon{opacity:0;animation:none}
+.agent .bld,.agent .fig-wrap,.agent .fig-body{transition:opacity .3s ease,filter .3s ease}
+.agent.act-idle .bld,.agent.act-idle .fig-wrap,.agent.act-idle .fig-body{opacity:.55;filter:grayscale(.4)}
+.agent.act-coordinating .bld,.agent.act-coordinating .fig-wrap,.agent.act-coordinating .fig-body,
+.agent.act-waiting .bld,.agent.act-waiting .fig-wrap,.agent.act-waiting .fig-body,
+.agent.act-working .bld,.agent.act-working .fig-wrap,.agent.act-working .fig-body,
+.agent.st-working .bld,.agent.st-working .fig-wrap,.agent.st-working .fig-body{opacity:1;filter:none}
 .tag.act-idle{color:#c5ccd8}
 .tag.act-coordinating{color:#e4e9f1}
 .tag.act-working{color:#f4f7fb}
 .chip .av{transition:opacity .3s ease,filter .3s ease}
 .chip.act-idle .av{opacity:.55;filter:grayscale(.4)}
-.chip.act-coordinating .av{opacity:.8;filter:grayscale(.15)}
-.chip.act-working .av{opacity:1;filter:none}
+.chip.act-coordinating .av,
+.chip.act-waiting .av,
+.chip.act-working .av,
+.chip:has(.st.working) .av{opacity:1;filter:none}
 .chip.act-idle .cn{color:#c5ccd8}
 .chip.act-coordinating .cn{color:#e4e9f1}
 
@@ -33,7 +35,6 @@
 .chip.pulse .av{box-shadow:0 0 0 2px rgba(34,197,94,.85),0 0 12px rgba(34,197,94,.55);animation:chipPulse 1.35s ease-in-out infinite}
 .chip.pulse .st{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.35);animation:dot 1.2s infinite}
 @keyframes chipPulse{50%{box-shadow:0 0 0 5px rgba(34,197,94,.25),0 0 16px rgba(34,197,94,.45)}}
-.chip.sleep .av{filter:none}
 .chip.sleep.act-idle .av{opacity:.55;filter:grayscale(.4)}
 .chip.sleep .st{background:#64748b;box-shadow:none;animation:none}
 .chip-zzz{display:none;font-size:12px;line-height:1}

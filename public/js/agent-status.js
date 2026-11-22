@@ -48,5 +48,20 @@
     };
   }
 
-  return { activityMode, activityLabel, statusTone, viewStatus };
+  // Точка и яркость фигурки — одно решение. Тусклый вид только у неактивного.
+  function presence(agent) {
+    const mode = activityMode(agent);
+    const tone = statusTone(agent);
+    const inactive = mode === 'resting';
+    return {
+      mode,
+      tone,
+      dot: tone,
+      opacity: inactive ? 0.55 : 1,
+      filter: inactive ? 'grayscale(0.4)' : 'none',
+      bright: !inactive,
+    };
+  }
+
+  return { activityMode, activityLabel, statusTone, viewStatus, presence };
 });

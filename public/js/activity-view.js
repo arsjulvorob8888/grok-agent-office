@@ -65,6 +65,7 @@
   }
 
   function modeOf(agent) {
+    if (window.AgentStatus && AgentStatus.presence) return AgentStatus.presence(agent).mode;
     if (window.AgentStatus) return AgentStatus.activityMode(agent);
     if (agent && agent.activity === 'working') return 'working';
     if (agent && agent.activity === 'coordinating') return 'coordinating';

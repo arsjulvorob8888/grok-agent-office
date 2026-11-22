@@ -421,7 +421,8 @@ test('классы яркости: idle, working и coordinating на здани
     }, { timeout: 5000 });
     await page.waitForFunction(() => {
       const el = document.querySelector('#agents .agent[data-id="grok"] .fig-wrap');
-      return el && Math.abs(parseFloat(getComputedStyle(el).opacity) - 0.8) < 0.05;
+      const style = el ? getComputedStyle(el) : null;
+      return style && Math.abs(parseFloat(style.opacity) - 1) < 0.05 && !/grayscale/.test(style.filter);
     }, { timeout: 2000 });
     const clickable = await page.$eval('#agents .agent[data-id="poker"]', (el) => getComputedStyle(el).pointerEvents);
     assert.notEqual(clickable, 'none');
@@ -460,5 +461,71 @@ test('неактивный спящий чип серый, а reduced-motion г�
     assert.match(String(motion.filter), /grayscale\(0?\.4\)/, JSON.stringify(motion));
   } finally {
     await quiet.close();
+  }
+});
+
+test('зелёная точка совпадает с яркостью фигурки, здания и полосы', { timeout: 30000 }, async () => {
+  for (const id of ['health', 'social']) {
+    const posted = await api('/api/agent-status', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer status-aui' },
+      body: JSON.stringify({ agentId: id, status: 'working', doing: 'На линии' }),
+    });
+    assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  }
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForFunction(() => {
+      const health = document.querySelector('#agents .agent[data-id="health"]');
+      const poker = document.querySelector('#agents .agent[data-id="poker"]');
+      return health && health.classList.contains('st-working') && poker && poker.classList.contains('act-idle');
+    }, { timeout: 8000 });
+    const look = await page.evaluate(() => {
+      const green = (color) => {
+        const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color || '');
+        if (!match) return false;
+        const g = Number(match[2]);
+        return g > 140 && g > Number(match[1]) + 40 && g > Number(match[3]) + 40;
+      };
+      const read = (id) => {
+        const agent = document.querySelector(`#agents .agent[data-id="${id}"]`);
+        const bld = agent.querySelector('.bld');
+        const fig = agent.querySelector('.fig-wrap');
+        const body = agent.querySelector('.fig-body');
+        const dot = document.querySelector(`#overlay .tag[data-id="${id}"] .dot`);
+        const chip = document.querySelector(`#roster .chip[data-id="${id}"]`);
+        const av = chip.querySelector('.av');
+        const st = chip.querySelector('.st');
+        const part = (el) => {
+          const style = getComputedStyle(el);
+          return { opacity: style.opacity, filter: style.filter };
+        };
+        return {
+          dot: green(getComputedStyle(dot).backgroundColor),
+          chipDot: green(getComputedStyle(st).backgroundColor),
+          bld: part(bld),
+          fig: part(fig),
+          body: body ? part(body) : null,
+          av: part(av),
+        };
+      };
+      return { health: read('health'), social: read('social'), poker: read('poker') };
+    });
+    for (const id of ['health', 'social']) {
+      const row = look[id];
+      assert.equal(row.dot, true, `${id} точка на карте`);
+      assert.equal(row.chipDot, true, `${id} точка в полосе`);
+      for (const part of ['bld', 'fig', 'body', 'av']) {
+        assert.ok(Math.abs(Number(row[part].opacity) - 1) < 0.05, `${id} ${part} ${JSON.stringify(row[part])}`);
+        assert.equal(/grayscale/.test(row[part].filter), false, `${id} ${part} ${row[part].filter}`);
+      }
+    }
+    assert.equal(look.poker.dot, false);
+    assert.equal(look.poker.chipDot, false);
+    assert.ok(Math.abs(Number(look.poker.fig.opacity) - 0.55) < 0.05, JSON.stringify(look.poker.fig));
+    assert.match(look.poker.bld.filter, /grayscale/);
+    await page.screenshot({ path: '/tmp/wave2-map-opacity.png' });
+  } finally {
+    await page.close();
   }
 });

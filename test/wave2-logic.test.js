@@ -58,6 +58,24 @@ test('ручная отметка гаснет ровно через 15 мину
   assert.equal(beat.currentTask, 'на линии');
 });
 
+test('зелёная точка и яркость фигурки берутся из одного статуса', () => {
+  const modes = ['working', 'coordinating', 'waiting', 'resting'];
+  for (const mode of modes) {
+    const look = Status.presence({ activity: mode, id: mode === 'working' ? 'health' : 'social' });
+    assert.equal(look.mode, mode);
+    assert.equal(look.dot, look.tone);
+    if (mode === 'resting') {
+      assert.notEqual(look.dot, 'working');
+      assert.ok(look.opacity < 1, mode);
+      assert.match(look.filter, /grayscale/);
+    } else {
+      assert.equal(look.opacity, 1, mode);
+      assert.equal(look.filter, 'none', mode);
+    }
+    if (mode === 'working') assert.equal(look.dot, 'working');
+  }
+});
+
 test('карта, сайдбар, окно и дашборд берут один статус', () => {
   const asleep = Status.viewStatus({
     activity: 'resting',
