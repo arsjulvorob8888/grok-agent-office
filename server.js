@@ -1553,12 +1553,15 @@ function outboxForTask(taskId) {
   return rows[0] || null;
 }
 
+const NO_ROUTE_ERROR = 'нет маршрута доставки';
+
 function deliveryLabelFor(task) {
   if (!task) return null;
   if ((task.orderStatus || 'sent') !== 'sent') return null;
   const agentId = task.agentId || task.agent;
   const route = delivery.routeFor(agentId, state, process.env);
   const item = outboxForTask(task.id);
+  if (item && item.status !== 'delivered' && item.lastError === NO_ROUTE_ERROR) return NO_ROUTE_ERROR;
   const next = item && item.status !== 'delivered' ? retry.nextRetryAt(item) : null;
   return deliveryCaption(task.forwardStatus, { route, nextRetryAt: next });
 }
@@ -2691,8 +2694,13 @@ async function sendOutboxItem(item, options = {}) {
   }
   if (!dest || !dest.url) {
     retry.releaseClaim(item);
+    if (item.lastError !== NO_ROUTE_ERROR) {
+      item.lastError = NO_ROUTE_ERROR;
+      store.noteOutbox(item);
+    }
     return { sent: false, attempted: false };
   }
+  if (item.lastError === NO_ROUTE_ERROR) item.lastError = null;
   let won = true;
   try {
     won = await store.claimOutbox(item.id);

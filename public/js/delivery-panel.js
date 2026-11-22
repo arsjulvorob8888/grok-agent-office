@@ -13,10 +13,19 @@
     return `${agentId}:${kind}`;
   }
 
-  function routeText(kind, route) {
+  function routeText(kind, data, agentId) {
+    const route = data && typeof data === 'object' ? data.route : data;
+    const hasUrl = !!(data && typeof data === 'object' && String(data.url || '').trim());
     if (kind === 'putin') {
-      if (route === 'putin') return 'Общий вебхук задан. Агенты без своего адреса идут сюда.';
+      if (hasUrl) return 'Общий вебхук задан. Агенты без своего адреса идут сюда.';
+      if (route === 'putin') return 'В этом поле пусто. Общий адрес задан в «Доставке» Путина.';
       if (route === 'env') return 'Общий вебхук не задан. События идут на запасной адрес из окружения.';
+      return 'Общий вебхук не задан.';
+    }
+    if (agentId === 'grok') {
+      if (hasUrl) return 'Это общий вебхук для агентов без своего адреса.';
+      if (route === 'putin') return 'В этом поле пусто. События идут на общий вебхук выше.';
+      if (route === 'env') return 'Своего вебхука нет. События идут на запасной адрес из окружения.';
       return 'Общий вебхук не задан.';
     }
     if (route === 'agent') return 'События этого агента идут на его вебхук.';
@@ -69,7 +78,7 @@
 
   function apply(root, kind, data) {
     const route = root.querySelector(`[data-delivery-route="${kind}"]`);
-    if (route) route.textContent = routeText(kind, data && data.route);
+    if (route) route.textContent = routeText(kind, data, root.dataset.agent);
     const hint = root.querySelector(`[data-delivery-hint="${kind}"]`);
     if (hint) hint.textContent = keyHint(data);
     const clearWrap = root.querySelector(`[data-delivery-clear-wrap="${kind}"]`);
@@ -183,7 +192,16 @@
     const root = document.createElement('div');
     root.className = 'delivery-root';
     if (agentId === 'grok') root.append(field('putin', 'Общий вебхук'));
-    root.append(field('agent', 'Доставка'));
+    const agentField = field('agent', 'Доставка');
+    if (agentId === 'grok') {
+      const note = document.createElement('p');
+      note.className = 'delivery-note';
+      note.dataset.deliverySharedNote = '1';
+      note.textContent = 'Доставка Путина — это общий вебхук для агентов без своего адреса. Если заполнен «Общий вебхук», события идут туда.';
+      const heading = agentField.querySelector('h4');
+      heading.insertAdjacentElement('afterend', note);
+    }
+    root.append(agentField);
     const noteField = (event) => {
       const target = event.target;
       const kind = target && target.dataset && (target.dataset.deliveryUrl || target.dataset.deliveryKey || target.dataset.deliveryClear);

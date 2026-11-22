@@ -337,7 +337,7 @@ test('проверка нового URL без ключа не уносит со
 
 test('здоровье доставки считает вебхуки и не отдаёт адреса', async () => {
   assert.equal((await call('/api/health/delivery')).status, 401);
-  const agentsBefore = Object.keys(office.state.webhookTargets).filter((id) => id !== 'putin').length;
+  const agentsBefore = Object.keys(office.state.webhookTargets).filter((id) => id !== 'putin' && id !== 'grok').length;
   const socialUrl = `${hookOrigin}/social-hook`;
   const socialKey = 'fixture-social-key-SSSS';
   const putinUrl = `${hookOrigin}/putin-health-hook`;
@@ -472,7 +472,7 @@ test('2xx через вебхук агента или Путина делает 
   });
   assert.equal(quiet.status, 201);
   assert.equal(quiet.body.forwardStatus, null);
-  assert.equal(quiet.body.deliveryLabel, 'В очереди, доставка не подключена');
+  assert.equal(quiet.body.deliveryLabel, 'нет маршрута доставки');
   assert.equal(await activityOf('qa'), 'resting');
 
   await call('/api/delivery/putin', {

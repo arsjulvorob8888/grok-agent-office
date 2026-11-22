@@ -18,7 +18,7 @@ const savedDatabaseUrl = process.env.DATABASE_URL || '';
 const KEY = 'kremlin-key-SHOULD-NOT-LOG';
 const PATH_TOKEN = 'hook-SHOULD-NOT-LOG';
 const BODY_TOKEN = 'TEXT-SENTINEL-should-not-log';
-const OFFLINE = 'В очереди, доставка не подключена';
+const OFFLINE = 'нет маршрута доставки';
 const FAILED = 'Ошибка доставки 500';
 
 delete process.env.DATABASE_URL;
@@ -192,7 +192,7 @@ test('пустой URL кладёт задачу в очередь и пишет
   assert.ok(item);
   assert.equal(item.status, 'queued');
   assert.equal(item.agentId, 'blog');
-  assert.equal(item.lastError, null);
+  assert.equal(item.lastError, OFFLINE);
   assert.equal(item.payload.text, 'Сообщение Советнику не теряется');
   assert.equal(item.payload.id, item.id);
   const blog = state.body.agents.find((agent) => agent.id === 'blog');

@@ -113,7 +113,7 @@ test('дашборд раскрывается по кнопке, живёт в �
     await page.waitForSelector('.dash-card', { timeout: 4000 });
     const cardText = await page.$eval('.dash-card', (el) => el.textContent);
     assert.match(cardText, /Карточка для канбана/);
-    assert.match(cardText, /В очереди, доставка не подключена/);
+    assert.match(cardText, /нет маршрута доставки/);
     await page.click('.dash-card [data-status="accepted"]');
     await page.waitForFunction(() => {
       const card = document.querySelector('.dash-col-work .dash-card');
