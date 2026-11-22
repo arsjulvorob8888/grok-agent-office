@@ -824,14 +824,24 @@
     }
     return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid slice">${Figures.render(a.kind, a.color)}</svg>`;
   }
+  function rosterRank(a) {
+    if (activityMode(a) === 'working') return 0;
+    if (activityMode(a) === 'waiting' || needsOnBadge(a.id, true).length > 0) return 1;
+    return 2;
+  }
   function rosterAgents() {
-    return S.agents.filter((a) => (window.AgentStatus && AgentStatus.inBottomRoster
+    const list = S.agents.filter((a) => (window.AgentStatus && AgentStatus.inBottomRoster
       ? AgentStatus.inBottomRoster(a, ROOM_OF)
       : onMap(a))).sort(cmpNum);
+    return list
+      .map((agent, index) => ({ agent, index }))
+      .sort((a, b) => rosterRank(a.agent) - rosterRank(b.agent) || a.index - b.index)
+      .map((item) => item.agent);
   }
   function buildRoster() {
     const r = $('#roster');
     const list = rosterAgents();
+    r.dataset.order = list.map((a) => a.id).join(',');
     let html = '', lastGroup = null;
     for (const a of list) {
       const t = tierOf(a);
@@ -840,7 +850,7 @@
       lastGroup = group;
       html += `<button class="chip ${t}${a.vacant ? ' vacant' : ''}" data-id="${esc(a.id)}" style="--c:${esc(a.color)}" title="${esc(titled(a))}">
         <span class="await-you is-off" data-id="${esc(a.id)}" hidden aria-hidden="true"></span>
-        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="lv"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>
+        <span class="av">${portrait(a, '-27 -100 54 56')}</span><span class="st"></span><span class="cn">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>
         <span class="chip-events" hidden></span></button>`;
     }
     r.innerHTML = html;
@@ -877,6 +887,13 @@
     }, { passive: false });
   }
   function updateRoster() {
+    const r = $('#roster');
+    const wanted = rosterAgents().map((a) => a.id).join(',');
+    if (r && r.dataset.order !== wanted) {
+      const left = r.scrollLeft;
+      buildRoster();
+      r.scrollLeft = left;
+    }
     document.querySelectorAll('#roster .chip').forEach((c) => {
       const a = S.byId.get(c.dataset.id);
       if (!a) return;
@@ -893,11 +910,19 @@
       c.dataset.status = label;
       c.querySelector('.st').className = `st ${statusTone(a)}`;
       c.querySelector('.st').dataset.status = label;
-      c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
       paintAwaitBadge(c.querySelector('.await-you'), a.id, true);
       paintGuestEvents(c, a);
     });
     paintAgentBar();
+    syncBarClearance();
+  }
+  function syncBarClearance() {
+    const bar = $('#agentBar');
+    if (!bar) return;
+    const rect = bar.getBoundingClientRect();
+    if (rect.height < 1) return;
+    const clear = Math.max(96, Math.ceil(innerHeight - rect.top + 28));
+    document.documentElement.style.setProperty('--bar-clear', `${clear}px`);
   }
   function setAgentBar(collapsed, persist) {
     const bar = $('#agentBar');
@@ -914,6 +939,7 @@
     toggle.setAttribute('aria-label', collapsed ? 'Развернуть панель агентов' : 'Свернуть панель агентов');
     if (persist) localStorage.setItem('agentBar', collapsed ? 'collapsed' : 'open');
     paintAgentBar();
+    syncBarClearance();
     if (!S.loaded) return;
     placeOverlay();
     if (!S.userMoved && !S.selected) goHome(false);
@@ -1420,21 +1446,24 @@
     } catch (_) { return ''; }
   };
 
+  function questWhoText(t) {
+    const names = orderChain(t);
+    if (t.routeLabel && names.length <= 2) return t.routeLabel;
+    if (names.length >= 2) return names.join(' → ');
+    const a = S.byId.get(t.agentId || t.agent) || { name: t.agent };
+    return titled(a);
+  }
   function questHTML(t, showAgent, viewerId) {
     const a = S.byId.get(t.agent) || { name: t.agent, color: '#64748b' };
     const [cls, label] = taskBadge(t);
     const title = t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение');
     const dir = viewerId ? Feed.orderDirection(t, viewerId, S.tasks) : '';
-    const mark = dir === 'out' ? '→' : dir === 'in' ? '←' : dir === 'both' ? '↔' : '';
-    const dirLabel = dir === 'out' ? 'отдал' : dir === 'in' ? 'получил' : dir === 'both' ? 'себе' : '';
     const via = Feed.sentRoutePhrase ? Feed.sentRoutePhrase(t.sentRoute) : '';
     return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}"${dir ? ` data-dir="${dir}"` : ''} style="--c:${esc(a.color)}">
       <span class="qi">${ico(cls === 'done' ? 'check' : cls === 'fail' ? 'x' : 'send')}</span>
       <span class="qt">${esc(title)}</span>
-      <span class="qm">${mark ? `<span class="qdir" aria-label="${dirLabel}">${mark}</span>` : ''}<span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
-      ${chainHTML(t)}
+      <span class="qm"><span class="q-who">${esc(questWhoText(t))}</span><span class="q-when">${esc(fmtTime(t.createdAt))}</span><span class="badge ${cls}">${label}</span></span>
       ${via ? `<div class="quest-via">${esc(via)}</div>` : ''}
-      ${historyHTML(t)}
       ${attachmentsHTML(t.attachments)}
       ${t.result ? `<div class="qr" data-scroll-key="result:${esc(t.id)}">${linkify(t.result)}</div>` : ''}
     </div>`;
@@ -1530,7 +1559,7 @@
   function renderPanel(opts = {}) {
     const a = S.byId.get(S.selected);
     if (!a) return;
-    const tier = tierOf(a), L = levelInfo(a);
+    const tier = tierOf(a);
     const tasks = Feed.ordersForAgent(S.tasks, a.id);
     const pin = S.pinnedOrder && tasks.find((t) => t.id === S.pinnedOrder);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
@@ -1588,9 +1617,7 @@
       </div>
       <div class="p-body">
         ${panelNeedsHTML(a)}
-        ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
-          <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${L.completed != null ? L.completed : (a.completed || 0)}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}" data-status="${esc(activityLabel(a))}">${esc(activityLabel(a))}</span>${statusNowHTML(a)}</div>
+        ${a.vacant ? '' : `<div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}" data-status="${esc(activityLabel(a))}">${esc(activityLabel(a))}</span>${statusNowHTML(a)}</div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
@@ -1958,6 +1985,43 @@
   }
 
   // ── Журнал и HUD ─────────────────────────────────────────────────────────
+  function paintJournalChrome() {
+    const j = $('#journal');
+    if (!j) return;
+    const narrow = innerWidth <= 900;
+    const open = narrow ? j.classList.contains('mobile-open') : !j.classList.contains('collapsed');
+    if (open) {
+      j.classList.remove('map-off');
+      if (j.getAttribute('aria-hidden') === 'true') j.removeAttribute('aria-hidden');
+    } else if (!narrow && j.classList.contains('quiet')) {
+      j.classList.add('collapsed', 'map-off');
+      j.setAttribute('aria-hidden', 'true');
+      releaseFocus(j, $('#btnJournal'));
+    }
+    const btn = $('#btnJournal');
+    if (btn) btn.classList.toggle('on', open);
+  }
+  function syncJournalChrome(openCount) {
+    const j = $('#journal');
+    if (!j) return;
+    const quiet = openCount === 0;
+    j.classList.toggle('quiet', quiet);
+    if (j.dataset.userToggle === '1') {
+      paintJournalChrome();
+      return;
+    }
+    if (innerWidth <= 900) return;
+    if (quiet) {
+      j.classList.add('collapsed', 'map-off');
+      j.setAttribute('aria-hidden', 'true');
+      releaseFocus(j, $('#btnJournal'));
+      return;
+    }
+    j.classList.remove('map-off');
+    if (j.getAttribute('aria-hidden') === 'true') j.removeAttribute('aria-hidden');
+    if (localStorage.getItem('journal') === 'collapsed') j.classList.add('collapsed');
+    else j.classList.remove('collapsed');
+  }
   function renderJournal() {
     const list = $('#jList');
     const top = list.scrollTop;
@@ -1965,7 +2029,9 @@
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
     const split = Feed.journalSplit ? Feed.journalSplit(Feed.ordersForGeneral(S.tasks), Date.now()) : { active: Feed.ordersForGeneral(S.tasks), delivered: [], cancelled: [], badge: S.tasks.length, empty: '' };
     const sig = split.active.concat(split.delivered || [], split.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
-    $('#jCount').textContent = String(split.badge != null ? split.badge : split.active.length);
+    const openCount = split.badge != null ? split.badge : split.active.length;
+    $('#jCount').textContent = String(openCount);
+    syncJournalChrome(openCount);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
     const quest = (t) => questHTML(t, true);
@@ -2109,13 +2175,22 @@
   function initJournal() {
     const j = $('#journal');
     if (innerWidth > 900 && localStorage.getItem('journal') === 'collapsed') j.classList.add('collapsed');
+    const noteToggle = () => {
+      j.dataset.userToggle = '1';
+      if (innerWidth > 900) {
+        localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
+      }
+      paintJournalChrome();
+    };
     $('#jClose').onclick = () => {
       if (innerWidth <= 900) {
         releaseFocus(j, $('#btnJournal'));
         j.classList.remove('mobile-open');
+        noteToggle();
         return;
       }
-      j.classList.toggle('collapsed'); localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
+      j.classList.toggle('collapsed');
+      noteToggle();
     };
     $('#btnJournal').onclick = () => {
       if (window.Processes) Processes.setOpen(false);
@@ -2128,12 +2203,10 @@
         j.classList.remove('collapsed');
       } else if (fromHier) {
         j.classList.remove('collapsed');
-        localStorage.setItem('journal', 'open');
       } else {
         j.classList.toggle('collapsed');
-        localStorage.setItem('journal', j.classList.contains('collapsed') ? 'collapsed' : 'open');
       }
-      $('#btnJournal').classList.toggle('on', innerWidth <= 900 ? j.classList.contains('mobile-open') : !j.classList.contains('collapsed'));
+      noteToggle();
     };
     $('#btnHome').onclick = () => { blip(520); select(null); goHome(); };
     $('#btnHier').onclick = () => { blip(640); setHierarchy(!$('#hier').classList.contains('open')); };
@@ -2730,6 +2803,9 @@
       $('#panel').classList.remove('open');
     }
     if (!S.userMoved && !S.selected) goHome(false); else { clampCam(); applyCam(); }
+    syncBarClearance();
+    const journal = $('#journal');
+    if (journal && S.loaded) syncJournalChrome(Number($('#jCount') && $('#jCount').textContent) || 0);
   });
   if (window.LiveStream) LiveStream.start(() => { loadState().catch(() => {}); });
   // Кварталы строятся после первой загрузки, чтобы не застраивать участки агентов.

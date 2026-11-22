@@ -369,6 +369,7 @@ body.hier-on #journal{display:none}
 #journal{position:absolute;left:12px;top:calc(var(--hud-h) + 24px);width:320px;max-height:calc(100% - var(--hud-h) - 140px);display:flex;flex-direction:column;z-index:4;overflow:hidden;transition:transform .35s cubic-bezier(.2,.8,.2,1),opacity .3s}
 #journal.collapsed{max-height:56px}
 #journal.collapsed #jClose svg{transform:rotate(180deg)}
+#journal.map-off:not(.mobile-open){display:none}
 .card-head{display:flex;align-items:center;gap:8px;padding:13px 12px 11px 16px;border-bottom:1px solid var(--line)}
 .card-head h3{margin:0;font:700 13px var(--display);letter-spacing:.03em;flex:1}
 .pill{font:700 11px var(--display);padding:3px 8px;border-radius:999px;background:rgba(245,196,81,.15);color:var(--gold)}
@@ -584,7 +585,8 @@ body.agent-bar-collapsed #panel{bottom:72px}
 }
 @media (max-width:900px){
   #journal{display:none;left:8px;right:8px;width:auto;top:auto;bottom:96px;max-height:52vh}
-  #journal.mobile-open{display:flex}
+  #journal.mobile-open{display:flex;z-index:6;bottom:var(--bar-clear, 120px);max-height:calc(100% - var(--hud-h) - var(--bar-clear, 120px) - 8px)}
+  body:has(#journal.mobile-open) #minimap{visibility:hidden;pointer-events:none}
   #hier{left:8px;right:8px;width:auto;top:auto;bottom:96px;max-height:62vh;border-radius:22px 22px 0 0}
   /* Панель агента тоже прижата к низу. Иерархия выше, чтобы лист не оказывался под ней. */
   #hier.open{z-index:8}
