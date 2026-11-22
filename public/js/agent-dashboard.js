@@ -448,10 +448,10 @@
     const level = agent.level || { lvl: 1, xp: 0, into: 0, need: 150 };
     const pct = level.need ? Math.max(0, Math.min(100, Math.round((level.into / level.need) * 100))) : 0;
     const mode = window.AgentStatus ? AgentStatus.activityMode(agent) : (agent.activity || 'resting');
-    const activity = window.AgentStatus ? AgentStatus.activityLabel(agent) : (ACTIVITY[mode] || STATUS[agent.status] || 'Спит');
-    const live = agent.live
-      ? `<span class="dash-pill ${esc(agent.live.status)}">Живой ход: ${esc(LIVE[agent.live.status] || agent.live.status)}${agent.live.doing ? ` · ${esc(agent.live.doing)}` : ''}</span>`
-      : '';
+    const activity = window.AgentStatus && AgentStatus.statusLabel
+      ? AgentStatus.statusLabel(agent)
+      : (window.AgentStatus ? AgentStatus.activityLabel(agent) : (ACTIVITY[mode] || 'Спит'));
+    const doing = window.AgentStatus && AgentStatus.ownDoing ? AgentStatus.ownDoing(agent) : '';
     const log = (data.activityLog || []).map((line) => {
       const when = line.at ? `<time datetime="${esc(line.at)}">${esc(fmtTime(line.at))}</time>` : '<time>без времени</time>';
       return `<li>${when}${esc(line.text)}</li>`;
@@ -459,8 +459,7 @@
     return `
       <div class="dash-status">
         <span class="dash-pill ${esc(mode)}">${esc(activity)}</span>
-        ${agent.now && mode !== 'resting' && agent.currentTask ? `<span class="dash-now">${esc(agent.now)}</span>` : ''}
-        ${live}
+        ${doing ? `<span class="dash-now">${esc(doing)}</span>` : ''}
       </div>
       <div class="dash-block">
         <h3>Текущая задача</h3>

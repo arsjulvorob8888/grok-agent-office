@@ -57,6 +57,45 @@
     };
   }
 
+  const VIEW_NAMES = ['hierarchy', 'room', 'dashboard', 'card', 'roster', 'map'];
+
+  // Подпись статуса только из activity (живой ход и окно 15 минут уже на сервере).
+  function statusLabel(agent) {
+    return LABEL[finalStatus(agent)] || LABEL.resting;
+  }
+
+  function viewLabels(agent) {
+    const label = statusLabel(agent);
+    const labels = {};
+    for (const name of VIEW_NAMES) labels[name] = label;
+    return labels;
+  }
+
+  function ownDoing(agent) {
+    if (!agent || typeof agent.doing !== 'string') return '';
+    return agent.doing.trim();
+  }
+
+  // Свой doing. Если его нет — свой currentTask. Чужой ход приходит как «Имя: текст».
+  function chipCaption(agent) {
+    const own = ownDoing(agent);
+    if (own) return own;
+    if (!agent || agent.activity === 'coordinating') return '';
+    const task = typeof agent.currentTask === 'string' ? agent.currentTask.trim() : '';
+    if (!task) return '';
+    if (task.includes(': ')) return '';
+    return task;
+  }
+
+  // Советник сидит в Кремле, но остаётся в нижней панели. Замы и архив — нет.
+  function inBottomRoster(agent, roomOf) {
+    if (!agent || agent.archived || agent.vacant) return false;
+    if (agent.parentId) return false;
+    if (agent.id === 'advisor') return true;
+    const host = roomOf && roomOf[agent.id];
+    return !host;
+  }
+
   // Точка и яркость фигурки — одно решение. Тусклый вид только у неактивного.
   function presence(agent) {
     const mode = activityMode(agent);
@@ -72,5 +111,17 @@
     };
   }
 
-  return { finalStatus, activityMode, activityLabel, statusTone, viewStatus, presence };
+  return {
+    finalStatus,
+    activityMode,
+    activityLabel,
+    statusLabel,
+    viewLabels,
+    statusTone,
+    viewStatus,
+    presence,
+    ownDoing,
+    chipCaption,
+    inBottomRoster,
+  };
 });

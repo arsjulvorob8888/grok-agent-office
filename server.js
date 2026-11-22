@@ -18,6 +18,7 @@ const usage = require('./lib/usage');
 const streamHub = require('./lib/stream');
 const delivery = require('./lib/delivery');
 const agentTokens = require('./lib/agent-tokens');
+const { isSilentTask } = require('./public/js/task-rules');
 const { PROFILE_ALIASES } = require('./lib/agent-aliases');
 
 // Поток «состояние изменилось». Живой TTL агента в этот хаб не кладёт секретов.
@@ -757,7 +758,6 @@ function migrateOwnerNeeds(list = state.needs) {
     item.kind = 'test';
     item.answerable = true;
     item.answerMode = 'yesno';
-    reopenSeededTestNeed(item);
   }
   for (const item of list) {
     if (!item || item.id !== QUESTION_NEED_ID) continue;
@@ -765,8 +765,8 @@ function migrateOwnerNeeds(list = state.needs) {
     item.kind = 'test';
     item.answerable = true;
     item.answerMode = 'text';
-    reopenSeededTestNeed(item);
   }
+  closeFixtureTestNeeds(list, now);
   for (const item of list) {
     if (!item || item.id !== FINANCE_NEED_ID) continue;
     item.where = FINANCE_WHERE;
@@ -923,21 +923,26 @@ function testNeedsAutoreopen() {
   return true;
 }
 
-function reopenSeededTestNeed(item) {
-  if (!item || !testNeedsAutoreopen()) return;
-  item.closedAt = null;
-  item.closedBy = null;
-  item.answer = null;
-  item.answeredAt = null;
-  item.answerStatus = null;
-  item.answers = [];
+// Тестовые пункты витрины закрываются один раз и остаются в списке.
+// Повторный запуск не сдвигает closedAt и не стирает ответы.
+function closeFixtureTestNeeds(list, now) {
+  for (const id of [TEST_NEED_ID, QUESTION_NEED_ID]) {
+    const item = (list || []).find((entry) => entry && entry.id === id);
+    if (!item) continue;
+    if (!item.closedAt) {
+      item.closedAt = now;
+      item.closedBy = 'migration';
+    }
+    if (item.answerStatus !== 'answered') item.answerStatus = 'resolved';
+    item.status = 'closed';
+  }
 }
 
 function reopenTestNeeds(now = Date.now(), force = false) {
   if (!testNeedsAutoreopen()) return 0;
   const opened = [];
   for (const item of state.needs) {
-    if (!isTestNeedItem(item)) continue;
+    if (!isTestNeedItem(item) || isFixtureTestNeed(item)) continue;
     if (!item.closedAt) continue;
     const closed = Date.parse(item.closedAt);
     if (!force && Number.isFinite(closed) && now - closed < TEST_REOPEN_MS) continue;
@@ -1150,7 +1155,8 @@ function publicNeed(item, now = Date.now(), opts = {}) {
     yesNo: answerModeOf(item) === 'yesno',
     answer: item.answer || null,
     answeredAt: item.answeredAt || null,
-    answerStatus: item.answerStatus === 'answered' ? 'answered' : null,
+    answerStatus: item.answerStatus === 'answered' || item.answerStatus === 'resolved' ? item.answerStatus : null,
+    status: item.status === 'closed' || item.status === 'resolved' ? item.status : (item.closedAt ? 'closed' : 'open'),
     answerDeliveryLabel: answerDeliveryLabel(item),
   };
   if (opts.includePrivate || isFixtureTestNeed(item)) {
@@ -1756,7 +1762,7 @@ function applyOrderUpdate(task, input, opts = {}) {
     const firstDone = task.status !== 'выполнена';
     task.result = result;
     task.status = 'выполнена';
-    if (firstDone) {
+    if (firstDone && !isSilentTask(task)) {
       const owner = findAgent(task.agent) || opts.creditAgent || null;
       if (owner) {
         owner.completed = (owner.completed || 0) + 1;

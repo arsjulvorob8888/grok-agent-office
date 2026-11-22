@@ -709,8 +709,13 @@ test('пункты «нужно от вас»: посев, токен, созд�
   assert.equal(open.body.needs.some((n) => n.kind === 'test'), false);
   assert.equal((await json('/api/needs?includeTest=true')).body.needs.some((n) => n.kind === 'test'), false);
   const flagged = await json('/api/needs?includeTest=1');
-  const qa = flagged.body.needs.find((n) => n.id === 'need-test-qa');
-  assert.ok(qa);
+  assert.equal(flagged.body.needs.find((n) => n.id === 'need-test-qa'), undefined);
+  const qaRes = await json('/api/needs/need-test-qa');
+  const qa = qaRes.body;
+  assert.equal(qaRes.status, 200);
+  assert.ok(qa.closedAt);
+  assert.equal(qa.status, 'closed');
+  assert.equal(qa.answerStatus, 'resolved');
   const directQa = await json('/api/needs/need-test-qa');
   assert.equal(directQa.status, 200);
   assert.equal(directQa.body.id, 'need-test-qa');
@@ -733,8 +738,12 @@ test('пункты «нужно от вас»: посев, токен, созд�
   assert.equal(qa.yesNo, true);
   assert.match(qa.what, /^ТЕСТ:/);
   assert.equal(qa.actionUrl, '/needs/need-test-qa');
-  const question = flagged.body.needs.find((n) => n.id === 'need-test-question');
-  assert.ok(question);
+  const questionRes = await json('/api/needs/need-test-question');
+  const question = questionRes.body;
+  assert.equal(questionRes.status, 200);
+  assert.ok(question.closedAt);
+  assert.equal(question.status, 'closed');
+  assert.equal(question.answerStatus, 'resolved');
   assert.equal(question.kind, 'test');
   assert.equal(question.answerMode, 'text');
   assert.equal(question.yesNo, false);
@@ -870,7 +879,10 @@ test('пункты «нужно от вас»: посев, токен, созд�
   const after = await json('/api/needs');
   assert.ok(after.body.needs.some((n) => n.id === 'need-social'));
   assert.equal(after.body.needs.some((n) => n.id === 'need-test-qa'), false);
-  assert.ok((await json('/api/needs?includeTest=1')).body.needs.some((n) => n.id === 'need-test-qa'));
+  const keptQa = await json('/api/needs/need-test-qa');
+  assert.equal(keptQa.status, 200);
+  assert.ok(keptQa.body.closedAt);
+  assert.equal(keptQa.body.status, 'closed');
   assert.ok(!after.body.needs.some((n) => n.id === created.body.id));
   assert.equal((await json('/api/needs/no-such/close', { method: 'POST', headers: h, body: '{}' })).status, 404);
 
@@ -1612,6 +1624,10 @@ test('answerMode, частичный ответ и тестовый вопрос
   assert.equal(noKept.body.answer, 'no');
 
   const tasksBefore = (await json('/api/state')).body.tasks.length;
+  const questionOpen = office.state.needs.find((n) => n.id === 'need-test-question');
+  questionOpen.closedAt = null;
+  questionOpen.closedBy = null;
+  questionOpen.answerStatus = null;
   const draft = await json('/api/needs/need-test-question/answer', {
     method: 'POST', body: JSON.stringify({ text: 'пробный ответ', partial: true }),
   });
@@ -1644,10 +1660,11 @@ test('answerMode, частичный ответ и тестовый вопрос
   const soon = Date.now();
   assert.equal(office.reopenTestNeeds(soon), 0);
   assert.ok(question.closedAt);
-  question.closedAt = new Date(soon - office.TEST_REOPEN_MS - 1000).toISOString();
-  assert.ok(office.reopenTestNeeds(soon) >= 1);
-  assert.equal(question.closedAt, null);
-  assert.equal(question.answers.length, 0);
+  const aged = new Date(soon - office.TEST_REOPEN_MS - 1000).toISOString();
+  question.closedAt = aged;
+  assert.equal(office.reopenTestNeeds(soon), 0);
+  assert.equal(question.closedAt, aged);
+  assert.ok(question.answers.length > 0);
 
   const limit = await json('/api/needs', {
     method: 'POST', headers: h,
@@ -1901,6 +1918,6 @@ test('в production закрытый тестовый пункт остаётс�
     assert.equal(row.answers, 1, row.id);
   }
   const opened = await run({ TEST_NEEDS_AUTOREOPEN: '1' });
-  assert.ok(opened.forced >= 1);
-  assert.equal(opened.rows.every((row) => row.closedAt == null && row.answers === 0), true);
+  assert.equal(opened.forced, 0);
+  assert.equal(opened.rows.every((row) => row.closedAt === '2020-01-01T00:00:00.000Z' && row.answers === 1), true);
 });

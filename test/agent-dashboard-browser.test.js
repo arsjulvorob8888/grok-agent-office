@@ -298,7 +298,7 @@ test('обзор не показывает устаревший now, когда 
     await busy.waitForFunction(() => {
       const now = document.querySelector('.dash-now');
       const text = document.getElementById('dashMain') ? document.getElementById('dashMain').textContent : '';
-      return now && now.textContent.includes('Свежий ход') && text.includes('Гоняю регрессию');
+      return now && now.textContent.includes('Гоняю регрессию') && !text.includes('Свежий ход');
     }, { timeout: 8000 });
   } finally {
     await busy.close();
