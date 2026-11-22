@@ -230,13 +230,28 @@
     return id.startsWith('ping-') || taskId.startsWith('ping-');
   }
 
+  // Доставлено и уже есть ответ — поручение закрыто на любом маршруте, в том числе прямом.
+  function orderHandedOff(task) {
+    if (!task) return false;
+    if (task.outboxStatus === 'delivered' || task.deliveryLabel === 'Доставлено') return true;
+    return orderDelivered(task);
+  }
+
   function isOpenOrder(task, now = Date.now()) {
     if (!task || isServicePing(task) || task.orderStatus === 'cancelled') return false;
+    if (task.answeredAt && orderHandedOff(task)) return false;
     const clock = Number.isFinite(now) ? now : Date.now();
     const created = Date.parse(task.createdAt);
     const age = Number.isFinite(created) ? clock - created : 0;
     if (journalSettled(task) && age > JOURNAL_SETTLED_MS) return false;
     return true;
+  }
+
+  // Сообщение владельца в свой вебхук агента. Это не приказ Путина.
+  function isDirectOwnerMessage(task) {
+    if (!task || task.sentRoute !== 'agent') return false;
+    const from = task.fromAgentId;
+    return !from || from === 'owner';
   }
 
   function journalSplit(tasks, now = Date.now()) {
@@ -874,6 +889,7 @@
     ruCount,
     countsAsActiveTask,
     isOpenOrder,
+    isDirectOwnerMessage,
     PROCESS_HOLD_MS,
     journalSplit,
     visibleJournal,
