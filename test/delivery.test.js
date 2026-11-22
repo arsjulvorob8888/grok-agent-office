@@ -292,9 +292,9 @@ test('проверка вебхука бьёт в локальный серве�
   });
   assert.equal(other.status, 200);
   const bare = hits[hits.length - 1];
-  assert.equal(bare.url, '/other-hook');
-  assert.equal(bare.headers.authorization, undefined);
-  assert.equal(bare.headers['x-webhook-key'], undefined);
+  assert.equal(bare.url, '/dev-hook');
+  assert.equal(hits.some((item) => item.url === '/other-hook'), false);
+  assert.equal(bare.headers['x-webhook-key'], FIXTURE_KEY);
 });
 
 test('проверка нового URL без ключа не уносит сохранённый ключ', async () => {
@@ -319,10 +319,10 @@ test('проверка нового URL без ключа не уносит со
   assert.equal(JSON.stringify(foreign.body).includes(savedKey), false);
   const hit = hits[hits.length - 1];
   assert.equal(hits.length, before + 1);
-  assert.equal(hit.url, '/foreign-hook');
-  assert.equal(hit.headers.authorization, undefined);
-  assert.equal(hit.headers['x-webhook-key'], undefined);
-  assert.equal(JSON.stringify(hit.headers).includes(savedKey), false);
+  assert.equal(hit.url, '/own-hook');
+  assert.equal(hits.some((item) => item.url === '/foreign-hook'), false);
+  assert.equal(hit.headers['x-webhook-key'], savedKey);
+  assert.equal(JSON.stringify(foreign.body).includes(savedKey), false);
   assert.equal(JSON.stringify(hit.body).includes(savedKey), false);
   const own = await call('/api/agents/poker/delivery/test', {
     method: 'POST',

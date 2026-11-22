@@ -164,7 +164,7 @@ test('в карточке одна строка, без блока «Доста�
     try {
       await dev.waitForFunction(() => {
         const line = document.querySelector('#panel.open[data-agent="dev"] [data-direct-link]');
-        return line && line.textContent === 'Прямая связь: подключена';
+        return line && line.textContent === 'Проверяю…';
       }, { timeout: 8000 });
       const quiet = await dev.evaluate(() => document.querySelector('#panel').innerText.includes('Сообщение уйдёт через Путина'));
       assert.equal(quiet, false);
@@ -232,20 +232,23 @@ test('«Служебное» показывает всех, прячет клю�
     const beforeHits = hits.length;
     await page.$eval('#service [data-agent="dev"] [data-direct-check]', (el) => el.scrollIntoView({ block: 'center' }));
     await page.click('#service [data-agent="dev"] [data-direct-check]');
-    await page.waitForFunction(() => {
-      const msg = document.querySelector('#service [data-agent="dev"] [data-direct-msg]');
-      return msg && msg.textContent === 'Доставлено';
-    }, { timeout: 8000 });
+    const started = Date.now();
+    while (hits.length < beforeHits + 1 && Date.now() - started < 8000) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     assert.equal(hits.length, beforeHits + 1);
     assert.equal(hits[hits.length - 1].body.type, 'ping');
     assert.equal(hits[hits.length - 1].body.text, 'Проверка связи');
+    assert.match(hits[hits.length - 1].body.taskId, /^ping-dev-\d+$/);
     assert.equal(hits[hits.length - 1].headers['x-webhook-key'], KEY);
     await page.$eval('#service [data-agent="army"] [data-direct-check]', (el) => el.scrollIntoView({ block: 'center' }));
+    const armyHits = hits.length;
     await page.click('#service [data-agent="army"] [data-direct-check]');
     await page.waitForFunction(() => {
-      const msg = document.querySelector('#service [data-agent="army"] [data-direct-msg]');
-      return msg && msg.textContent === 'Адрес не задан — сообщения идут через Путина';
+      const line = document.querySelector('#service [data-agent="army"] [data-direct-status]');
+      return line && line.textContent === 'Сообщение уйдёт через Путина';
     }, { timeout: 8000 });
+    assert.equal(hits.length, armyHits);
     const after = await (await fetch(`${base}/api/state`)).json();
     assert.equal(after.tasks.length, before.tasks.length);
     assert.equal(after.tasks.some((item) => String(item.text || '').includes('Проверка связи')), false);
@@ -361,7 +364,7 @@ test('на 390 строка и поля не вылезают за окно', { 
     }
     const devLine = await page.$eval('#service [data-agent="dev"] [data-direct-status]', (el) => el.textContent);
     const armyLine = await page.$eval('#service [data-agent="army"] [data-direct-status]', (el) => el.textContent);
-    assert.equal(devLine, 'Прямая связь: подключена');
+    assert.equal(devLine, 'Проверяю…');
     assert.equal(armyLine, 'Сообщение уйдёт через Путина');
     await page.screenshot({ path: path.join(artifacts, 'direct-link-390.png') });
     assert.deepEqual(page.__errors, []);

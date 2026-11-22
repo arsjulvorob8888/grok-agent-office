@@ -222,13 +222,21 @@
     return label === 'Доставлено' || label === 'Выполнена';
   }
 
+  function isServicePing(item) {
+    if (!item) return false;
+    if (item.servicePing === true) return true;
+    const id = String(item.id || '');
+    const taskId = String(item.taskId || '');
+    return id.startsWith('ping-') || taskId.startsWith('ping-');
+  }
+
   function journalSplit(tasks, now = Date.now()) {
     const active = [];
     const delivered = [];
     const cancelled = [];
     const clock = Number.isFinite(now) ? now : Date.now();
     for (const task of tasks || []) {
-      if (!task) continue;
+      if (!task || isServicePing(task)) continue;
       if (task.orderStatus === 'cancelled') {
         cancelled.push(task);
         continue;
@@ -329,12 +337,12 @@
   }
 
   function messagesForGeneral(messages) {
-    return (messages || []).slice();
+    return (messages || []).filter((message) => !isServicePing(message));
   }
 
   function messagesForAgent(messages, tasks, agentId) {
     const byId = indexTasks(tasks);
-    return (messages || []).filter((message) => messageParticipantIds(message, byId).has(agentId));
+    return (messages || []).filter((message) => !isServicePing(message) && messageParticipantIds(message, byId).has(agentId));
   }
 
   function isOpenNeed(need) {
@@ -583,7 +591,7 @@
     const live = [];
     const undelivered = [];
     for (const task of tasks || []) {
-      if (!task || silentTask(task) || isFinalRecord(task, messages)) continue;
+      if (!task || isServicePing(task) || silentTask(task) || isFinalRecord(task, messages)) continue;
       const status = task.orderStatus || 'sent';
       if (status !== 'sent' && status !== 'accepted' && status !== 'in_progress') continue;
       if (isLiveProcess(task, agents, at, holdMs)) {
@@ -611,7 +619,7 @@
   }
 
   function countsAsActiveTask(task) {
-    if (!task || silentTask(task) || isFinalRecord(task, [])) return false;
+    if (!task || isServicePing(task) || silentTask(task) || isFinalRecord(task, [])) return false;
     const status = task.orderStatus || 'sent';
     return status === 'sent' || status === 'accepted' || status === 'in_progress';
   }
@@ -629,7 +637,7 @@
   }
 
   function countsAsQueued(task) {
-    if (!task || silentTask(task)) return false;
+    if (!task || isServicePing(task) || silentTask(task)) return false;
     if (task.orderStatus === 'cancelled' || task.orderStatus === 'done' || task.orderStatus === 'failed') return false;
     if (task.status === 'выполнена') return false;
     return task.status === 'в очереди агента' || task.delivery === 'queue' || !task.orderStatus || task.orderStatus === 'sent';
@@ -679,7 +687,26 @@
   }
 
   // Одна строка карточки. У Путина нет фразы «через Путина»: его маршрут putin — это его адрес.
+  function directLinkPhase(agent) {
+    const check = agent && agent.linkCheck;
+    if (check && check.phase) return check.phase;
+    const id = agent && agent.id;
+    const route = agent && agent.deliveryRoute;
+    const own = id === 'grok' ? (route === 'agent' || route === 'putin') : route === 'agent';
+    if (own) return 'ready';
+    if (id === 'grok') return 'off';
+    return 'via';
+  }
+
   function directLinkLine(agent) {
+    const check = agent && agent.linkCheck;
+    if (check && check.phase === 'ok') {
+      return check.answeredAtMsk ? `Связь работает · ${check.answeredAtMsk}` : 'Связь работает';
+    }
+    if (check && check.phase === 'checking') return 'Проверяю…';
+    if (check && check.phase === 'key') return 'ключ не подошёл';
+    if (check && check.phase === 'timeout') return 'агент не ответил за 5 мин';
+    if (check && check.phase === 'down') return 'адрес не отвечает';
     const id = agent && agent.id;
     const route = agent && agent.deliveryRoute;
     const own = id === 'grok' ? (route === 'agent' || route === 'putin') : route === 'agent';
@@ -727,6 +754,8 @@
     sentRoutePhrase,
     routeSummary,
     directLinkLine,
+    directLinkPhase,
+    isServicePing,
     serviceAgents,
     moscowClock,
     formatClockMsk,

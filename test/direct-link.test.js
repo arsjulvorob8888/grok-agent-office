@@ -33,8 +33,11 @@ process.env.GROK_WEBHOOK_KEY = '';
 process.env.GROK_WEBHOOK_HEADER = '';
 process.env.WEBHOOK_SECRETS_KEY = crypto.randomBytes(32).toString('base64');
 process.env.WEBHOOK_PROBE_TIMEOUT_MS = '250';
+process.env.AGENT_STATUS_TOKEN = 'status-direct-token';
 
 const feed = require('../public/js/feed.js');
+const linkCheck = require('../lib/link-check');
+const { buildDashboard } = require('../lib/agent-dashboard');
 
 test('строка статуса: с адресом, без адреса и без оговорки у Путина', () => {
   assert.equal(feed.directLinkLine({ id: 'dev', deliveryRoute: 'agent' }), ON);
@@ -166,94 +169,136 @@ test('ключ не возвращается целиком, в логе его 
   assert.equal(blob.includes('save-hook'), false);
 });
 
-test('проверка: доставлено, 401, 403, таймаут, нет адреса; ping не меняет журнал', async () => {
+test('после сохранения адреса и ключа уходит ping и ждёт ответ', async () => {
+  const before = snap();
+  const beforeHits = hits.length;
   const saved = await call('/api/agents/dev/delivery', {
     method: 'PUT',
     headers: auth(),
     body: JSON.stringify({ url: `${hookOrigin}/ok`, key: KEY }),
   });
   assert.equal(saved.status, 200);
-  const before = snap();
-  const beforeHits = hits.length;
-  const { value, logs } = await quietLogs(() => call('/api/agents/dev/delivery/test', {
-    method: 'POST',
-    headers: auth(),
-    body: JSON.stringify({}),
-  }));
-  assert.equal(value.status, 200);
-  assert.equal(value.body.ok, true);
-  assert.equal(value.body.phrase, DELIVERED);
-  assert.equal(JSON.stringify(value.body).includes(KEY), false);
+  assert.equal(saved.body.linkCheck.phase, 'checking');
+  assert.equal(feed.directLinkLine({ id: 'dev', deliveryRoute: 'agent', linkCheck: saved.body.linkCheck }), 'Проверяю…');
+  assert.equal(JSON.stringify(saved.body).includes(KEY), false);
   assert.equal(hits.length, beforeHits + 1);
   const hit = hits[hits.length - 1];
   assert.equal(hit.url, '/ok');
   assert.equal(hit.body.type, 'ping');
   assert.equal(hit.body.text, 'Проверка связи');
+  assert.match(hit.body.taskId, /^ping-dev-\d+$/);
   assert.equal(hit.headers['x-webhook-key'], KEY);
   assert.deepEqual(snap(), before);
-  const blob = logs.join('\n');
-  assert.equal(blob.includes(KEY), false);
-  assert.equal(blob.includes('/ok'), false);
 
+  const agent = office.state.agents.find((item) => item.id === 'dev');
+  const statusBefore = agent.status;
+  const liveBefore = JSON.stringify(agent.live || null);
+  const answered = await call('/api/agent-status', {
+    method: 'POST',
+    headers: { authorization: 'Bearer status-direct-token' },
+    body: JSON.stringify({ agentId: 'dev', status: 'idle', taskId: hit.body.taskId }),
+  });
+  assert.equal(answered.status, 200);
+  assert.equal(answered.body.acknowledged, true);
+  const state = await call('/api/state');
+  const dev = state.body.agents.find((item) => item.id === 'dev');
+  assert.equal(dev.linkCheck.phase, 'ok');
+  assert.match(dev.linkCheck.answeredAtMsk, /МСК$/);
+  assert.match(feed.directLinkLine(dev), /^Связь работает · .+ МСК$/);
+  assert.equal(agent.status, statusBefore);
+  assert.equal(JSON.stringify(agent.live || null), liveBefore);
+  assert.deepEqual(snap(), before);
+  assert.equal(JSON.stringify(state.body).includes(KEY), false);
+
+  const againHits = hits.length;
+  const again = await call('/api/agents/dev/delivery/test', {
+    method: 'POST',
+    headers: auth(),
+    body: JSON.stringify({ url: `${hookOrigin}/foreign-should-not-be-called`, key: KEY }),
+  });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.linkCheck.phase, 'checking');
+  assert.notEqual(again.body.linkCheck.taskId, hit.body.taskId);
+  assert.equal(hits.length, againHits + 1);
+  assert.equal(hits[hits.length - 1].url, '/ok');
+  assert.equal(JSON.stringify(again.body).includes(KEY), false);
+  const stale = await call('/api/agent-status', {
+    method: 'POST',
+    headers: { authorization: 'Bearer status-direct-token' },
+    body: JSON.stringify({ agentId: 'dev', status: 'idle', taskId: hit.body.taskId, reply: 'Проверка связи' }),
+  });
+  assert.equal(stale.status, 200);
+  assert.equal(stale.body.acknowledged, false);
+  assert.deepEqual(snap(), before);
+});
+
+test('красный: ключ, адрес и тишина 5 минут', async () => {
   const denied = await call('/api/agents/social/delivery', {
     method: 'PUT',
     headers: auth(),
     body: JSON.stringify({ url: `${hookOrigin}/denied`, key: KEY }),
   });
-  assert.equal(denied.status, 200);
-  const denyProbe = await call('/api/agents/social/delivery/test', {
-    method: 'POST',
-    headers: auth(),
-    body: JSON.stringify({}),
-  });
-  assert.equal(denyProbe.status, 200);
-  assert.equal(denyProbe.body.phrase, BAD_KEY);
-  assert.equal(JSON.stringify(denyProbe.body).includes(KEY), false);
+  assert.equal(denied.body.linkCheck.phase, 'key');
+  assert.equal(feed.directLinkLine({ id: 'social', linkCheck: denied.body.linkCheck }), 'ключ не подошёл');
+  assert.equal(JSON.stringify(denied.body).includes(KEY), false);
 
   const forbidden = await call('/api/agents/blog/delivery', {
     method: 'PUT',
     headers: auth(),
     body: JSON.stringify({ url: `${hookOrigin}/forbidden`, key: KEY }),
   });
-  assert.equal(forbidden.status, 200);
-  const forbidProbe = await call('/api/agents/blog/delivery/test', {
-    method: 'POST',
-    headers: auth(),
-    body: JSON.stringify({}),
-  });
-  assert.equal(forbidProbe.body.phrase, BAD_KEY);
+  assert.equal(forbidden.body.linkCheck.phase, 'key');
 
   const slow = await call('/api/agents/poker/delivery', {
     method: 'PUT',
     headers: auth(),
     body: JSON.stringify({ url: `${hookOrigin}/hang`, key: KEY }),
   });
-  assert.equal(slow.status, 200);
-  const hung = await call('/api/agents/poker/delivery/test', {
-    method: 'POST',
-    headers: auth(),
-    body: JSON.stringify({}),
-  });
-  assert.equal(hung.status, 200);
-  assert.equal(hung.body.phrase, DOWN);
-  assert.equal(hung.body.error, 'timeout');
-  assert.equal(JSON.stringify(hung.body).includes(KEY), false);
+  assert.equal(slow.body.linkCheck.phase, 'down');
+  assert.equal(feed.directLinkLine({ id: 'poker', linkCheck: slow.body.linkCheck }), 'адрес не отвечает');
+  assert.equal(JSON.stringify(slow.body).includes(KEY), false);
 
-  const cleared = await call('/api/agents/army/delivery', {
-    method: 'PUT',
-    headers: auth(),
-    body: JSON.stringify({ url: '' }),
+  const sentAt = 1_700_000_000_000;
+  linkCheck.setNow(() => sentAt);
+  try {
+    const quiet = await call('/api/agents/qa/delivery', {
+      method: 'PUT',
+      headers: auth(),
+      body: JSON.stringify({ url: `${hookOrigin}/ok`, key: KEY }),
+    });
+    assert.equal(quiet.body.linkCheck.phase, 'checking');
+    linkCheck.setNow(() => sentAt + linkCheck.WAIT_MS);
+    const state = await call('/api/state');
+    const qa = state.body.agents.find((item) => item.id === 'qa');
+    assert.equal(qa.linkCheck.phase, 'timeout');
+    assert.equal(feed.directLinkLine(qa), 'агент не ответил за 5 мин');
+    const reloaded = await call('/api/agents/qa/delivery', { headers: auth() });
+    assert.equal(reloaded.body.linkCheck.phase, 'timeout');
+    assert.equal(JSON.stringify(reloaded.body).includes(KEY), false);
+  } finally {
+    linkCheck.resetForTests();
+  }
+});
+
+test('служебный ping не виден в журнале, переписке, процессах и активностях', () => {
+  const ping = { id: 'ping-dev-1', agentId: 'dev', text: 'Проверка связи', orderStatus: 'sent', status: 'в очереди агента', createdAt: new Date().toISOString() };
+  const message = { id: 'm-ping', agentId: 'dev', role: 'agent', taskId: 'ping-dev-1', text: 'Проверка связи', createdAt: new Date().toISOString() };
+  const real = { id: 't-real', agentId: 'dev', text: 'Настоящая задача', orderStatus: 'sent', status: 'в очереди агента', createdAt: new Date().toISOString() };
+  const split = feed.journalSplit([ping, real]);
+  assert.equal(split.badge, 1);
+  assert.equal(split.active.some((item) => item.id === 'ping-dev-1'), false);
+  const talk = feed.messagesForAgent([message, { id: 'm-real', agentId: 'dev', role: 'agent', taskId: 't-real', text: 'Ответ', createdAt: new Date().toISOString() }], [real], 'dev');
+  assert.equal(talk.some((item) => String(item.taskId || '').startsWith('ping-')), false);
+  const panel = feed.processPanel([ping, real], [], Date.now(), { agents: [{ id: 'dev' }], messages: [] });
+  assert.equal(panel.entries.some((item) => item && String(item.id).startsWith('ping-')), false);
+  const dash = buildDashboard({
+    agent: { id: 'dev', name: 'Программирование', completed: 0 },
+    tasks: [ping, real],
+    messages: [message],
+    activity: { activity: 'resting' },
+    now: Date.now(),
   });
-  assert.equal(cleared.status, 200);
-  const missingHits = hits.length;
-  const missing = await call('/api/agents/army/delivery/test', {
-    method: 'POST',
-    headers: auth(),
-    body: JSON.stringify({}),
-  });
-  assert.equal(missing.status, 409);
-  assert.equal(missing.body.error, NO_ADDRESS);
-  assert.equal(JSON.stringify(missing.body).includes(KEY), false);
-  assert.equal(hits.length, missingHits);
-  assert.deepEqual(snap(), before);
+  assert.equal(dash.tasks.some((item) => String(item.id).startsWith('ping-')), false);
+  assert.equal(dash.messages.some((item) => String(item.taskId || '').startsWith('ping-')), false);
+  assert.equal(dash.activityLog.some((item) => String(item.text).includes('Проверка связи')), false);
 });

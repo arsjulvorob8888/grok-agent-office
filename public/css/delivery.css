@@ -11,7 +11,10 @@
 .delivery-msg{margin:0;font-size:12px;min-height:1em}
 .delivery-msg.ok{color:#86efac}
 .delivery-msg.err{color:#fca5a5}
-.direct-link{margin:0;font-size:13px;font-weight:800;line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
+.direct-link,.direct-note[data-phase]{margin:0;font-size:13px;font-weight:800;line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
+.direct-link[data-phase="ok"],.direct-note[data-phase="ok"]{color:#86efac}
+.direct-link[data-phase="checking"],.direct-note[data-phase="checking"]{color:#f5c451}
+.direct-link[data-phase="down"],.direct-link[data-phase="key"],.direct-link[data-phase="timeout"],.direct-note[data-phase="down"],.direct-note[data-phase="key"],.direct-note[data-phase="timeout"]{color:#fca5a5}
 #service{display:none;position:absolute;z-index:9;flex-direction:column;overflow:hidden;min-width:0;background:rgba(12,16,24,.97);pointer-events:none}
 #service.open{display:flex;pointer-events:auto}
 #service[hidden]{display:none !important;pointer-events:none}

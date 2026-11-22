@@ -128,7 +128,11 @@
   function applyView(row, data) {
     const agentId = row.dataset.agent;
     const status = row.querySelector('[data-direct-status]');
-    if (status) status.textContent = lineOf({ id: agentId, deliveryRoute: data && data.route });
+    const agent = { id: agentId, deliveryRoute: data && data.route, linkCheck: data && data.linkCheck };
+    if (status) {
+      status.textContent = lineOf(agent);
+      status.dataset.phase = window.OfficeFeed && OfficeFeed.directLinkPhase ? OfficeFeed.directLinkPhase(agent) : '';
+    }
     const url = row.querySelector('[data-direct-url]');
     if (url && document.activeElement !== url) url.value = (data && data.url) || '';
     const key = row.querySelector('[data-direct-key]');
@@ -177,7 +181,7 @@
     checkBtn.type = 'button';
     checkBtn.className = 'btn ghost';
     checkBtn.dataset.directCheck = '';
-    checkBtn.textContent = 'Проверить';
+    checkBtn.textContent = 'Проверить ещё раз';
     actions.append(saveBtn, checkBtn);
     const msg = document.createElement('p');
     msg.className = 'direct-msg';
@@ -219,12 +223,12 @@
       showLock('Неверный пароль');
       return;
     }
-    const data = res.data || {};
-    if (res.status === 200 && data.phrase) {
-      noteOf(row, data.phrase, data.ok ? 'ok' : 'err');
+    if (res.status === 200) {
+      applyView(row, res.data || {});
+      noteOf(row, '', '');
       return;
     }
-    noteOf(row, data.error || 'Адрес не отвечает', 'err');
+    noteOf(row, (res.data && res.data.error) || 'адрес не отвечает', 'err');
   }
 
   function render(views) {

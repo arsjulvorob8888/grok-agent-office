@@ -1518,7 +1518,8 @@
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
     const needKey = Feed.needsForIds(S.needs, awaitAgentIds(a.id)).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, n.answerDeliveryLabel, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}:${d.deliveryRoute || ''}`).join(',');
-    return [a.id, a.deliveryRoute || '', a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
+    const link = a.linkCheck || {};
+    return [a.id, a.deliveryRoute || '', link.phase || '', link.answeredAt || '', a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
 
   function renderPanel(opts = {}) {
@@ -1724,7 +1725,9 @@
   function paintTaskRoute() {
     const line = $('#directLink');
     if (line && window.OfficeFeed && typeof OfficeFeed.directLinkLine === 'function') {
-      line.textContent = OfficeFeed.directLinkLine(S.byId.get(S.selected));
+      const agent = S.byId.get(S.selected);
+      line.textContent = OfficeFeed.directLinkLine(agent);
+      line.dataset.phase = typeof OfficeFeed.directLinkPhase === 'function' ? OfficeFeed.directLinkPhase(agent) : '';
     }
     const el = $('#taskRoute');
     if (!el || !window.OfficeFeed || typeof OfficeFeed.routeSummary !== 'function') return;
