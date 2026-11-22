@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
-const { activityFor, activeWindowMs, orderRoute, settleRawStatus } = require('./lib/activity');
+const { activityFor, activeWindowMs, orderRoute } = require('./lib/activity');
 const { deliveryCaption } = require('./public/js/feed');
 const retry = require('./lib/outbox-retry');
 const { buildDashboard } = require('./lib/agent-dashboard');
@@ -970,18 +970,25 @@ const needsResolveTimer = setInterval(() => {
   } catch (err) { console.error(err); }
 }, NEEDS_RESOLVE_MS);
 if (typeof needsResolveTimer.unref === 'function') needsResolveTimer.unref();
-// Истёкший живой ход снимается в памяти и будит карту. В базу агента это не пишется.
-const liveSweep = setInterval(() => {
-  try {
-    const at = live.now();
-    const gone = live.expire(state.agents, at);
-    const settled = settleRawStatus(state.agents, at);
-    for (const agent of settled) store.noteAgent(agent);
-    if (settled.length) store.flush().catch(() => {});
-    if (gone.length || settled.length) hub.publish();
-  } catch (err) { console.error(err); }
-}, 15000);
-if (typeof liveSweep.unref === 'function') liveSweep.unref();
+// Истечение окна будит карту в момент границы, а не раз в фиксированные 15 секунд.
+// Живой until уже посчитан из TTL (= STATUS_HOLD_MS). Сырой status снимает
+// settleRawStatus. Пульс и дашборд — activeWindowMs. В базу пишется только сырой status.
+const liveWatch = live.createStatusSweep({
+  agents: () => state.agents,
+  now: () => live.now(),
+  windowMs: () => activeWindowMs(),
+  publish() {
+    try { hub.publish(); } catch (_) { /* поток не обязателен */ }
+  },
+  onSettled(list) {
+    for (const agent of list) store.noteAgent(agent);
+    store.flush().catch(() => {});
+  },
+  activityOf(agent, at) {
+    return activityFor(agent, state.tasks, at, activeWindowMs(), activityExtras());
+  },
+});
+liveWatch.arm();
 
 store.init(state, {
   uploadDir: UPLOAD_DIR,
@@ -3441,6 +3448,7 @@ registerHeartbeat(app, {
   onSeen: async (agent, at) => {
     // Продлевает только живой TTL в памяти. В базу по-прежнему уходит пульс, без поля live.
     live.extend(agent, typeof at === 'number' ? at : live.now());
+    try { liveWatch.touch(); } catch (_) { /* будильник не обязателен для пульса */ }
     store.noteAgent(agent);
     await store.flush();
   },
@@ -3476,6 +3484,10 @@ live.register(app, {
   },
   activityView(agent) {
     return activityFor(agent, state.tasks, live.now(), activeWindowMs(), activityExtras());
+  },
+  publish() {
+    try { hub.publish(); } catch (_) { /* поток не обязателен для ответа */ }
+    try { liveWatch.touch(); } catch (_) { /* будильник не обязателен для ответа */ }
   },
 });
 streamHub.registerStream(app, hub);
@@ -3623,6 +3635,7 @@ app.listen = function listenWithPoryadokSync(...args) {
     const orig = server.close.bind(server);
     server.close = function closeAndDropStreams(callback) {
       try { hub.closeSockets(); } catch (_) { /* поток уже пуст */ }
+      try { liveWatch.stop(); } catch (_) { /* будильник уже остановлен */ }
       if (retryTimer) {
         clearInterval(retryTimer);
         retryTimer = null;
@@ -3669,6 +3682,8 @@ module.exports = {
   reopenTestNeeds,
   testNeedsAutoreopen,
   get testReopenTimer() { return testReopenTimer; },
+  runLiveSweep() { return liveWatch.run(); },
+  liveSweepArmed() { return liveWatch.armed(); },
   FINANCE_ACTION_URL,
   FINANCE_ACTION_HINT,
   SOCIAL_ACTION_URL,

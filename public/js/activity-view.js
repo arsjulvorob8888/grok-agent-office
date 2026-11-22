@@ -189,6 +189,7 @@
   }
 
   async function fallback() {
+    if (document.hidden) return;
     if (Date.now() - lastEvent < 25000) return;
     const res = await fetch('/api/state', { cache: 'no-store' });
     if (!res.ok) return;

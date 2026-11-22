@@ -1,15 +1,20 @@
-/* Поток состояния. Если он замолчал, страница чаще опрашивает /api/state сама. */
+/* Поток состояния. Комментарии SSE браузер не показывает, поэтому живость
+   видна по событию ping. Если поток замолчал, страница сама опрашивает /api/state. */
 (function () {
   'use strict';
 
   const FALLBACK_OK = 30000;
-  const FALLBACK_DOWN = 4000;
+  const FALLBACK_DOWN = 12000;
+  const SILENCE_MS = 55000;
   let source = null;
   let backoff = 1000;
   let waitTimer = null;
   let refreshTimer = null;
+  let silenceTimer = null;
   let up = false;
   let closing = false;
+  let hidden = typeof document !== 'undefined' && document.hidden;
+  let suspended = false;
   let onRefresh = function () {};
 
   function ago(iso, at) {
@@ -25,6 +30,22 @@
     return `${Math.floor(hours / 24)} д`;
   }
 
+  function tell() {
+    try { document.dispatchEvent(new CustomEvent('livestream')); } catch (_) { /* страницы ещё нет */ }
+  }
+
+  function setUp(value) {
+    const next = !!value;
+    if (up === next) {
+      if (next) armSilence();
+      return;
+    }
+    up = next;
+    if (next) armSilence();
+    else clearTimeout(silenceTimer);
+    tell();
+  }
+
   function queueRefresh() {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => {
@@ -33,8 +54,12 @@
     }, 120);
   }
 
+  function blocked() {
+    return hidden || suspended;
+  }
+
   function schedule() {
-    if (waitTimer) return;
+    if (waitTimer || blocked()) return;
     const pause = backoff;
     backoff = Math.min(backoff * 2, 30000);
     waitTimer = setTimeout(() => {
@@ -43,31 +68,79 @@
     }, pause);
   }
 
+  function armSilence() {
+    clearTimeout(silenceTimer);
+    if (!up || blocked()) return;
+    silenceTimer = setTimeout(() => {
+      silenceTimer = null;
+      dropSocket();
+      setUp(false);
+      backoff = 1000;
+      connect();
+      queueRefresh();
+    }, SILENCE_MS);
+  }
+
+  function dropSocket() {
+    if (!source) return;
+    const current = source;
+    closing = true;
+    try { current.close(); } catch (_) { /* уже закрыт */ }
+    if (source === current) source = null;
+    closing = false;
+  }
+
   function connect() {
+    if (blocked()) return;
     if (typeof EventSource === 'undefined') {
-      up = false;
+      setUp(false);
       return;
     }
+    dropSocket();
     closing = false;
-    const next = new EventSource('/api/stream');
+    let next;
+    try {
+      next = new EventSource('/api/stream');
+    } catch (_) {
+      setUp(false);
+      schedule();
+      return;
+    }
     source = next;
     next.onopen = () => {
       if (source !== next) return;
       backoff = 1000;
-      up = true;
+      setUp(true);
+      queueRefresh();
     };
     next.addEventListener('state', () => {
       if (source !== next) return;
+      setUp(true);
       queueRefresh();
+    });
+    next.addEventListener('ping', () => {
+      if (source !== next) return;
+      setUp(true);
     });
     next.onerror = () => {
       if (closing || source !== next) return;
-      up = false;
+      setUp(false);
       closing = true;
-      next.close();
+      try { next.close(); } catch (_) { /* уже закрыт */ }
       if (source === next) source = null;
+      closing = false;
       schedule();
     };
+  }
+
+  function suspend(on) {
+    suspended = !!on;
+    clearTimeout(waitTimer);
+    waitTimer = null;
+    clearTimeout(silenceTimer);
+    dropSocket();
+    setUp(false);
+    if (!suspended && !hidden) connect();
   }
 
   function start(refresh) {
@@ -76,10 +149,25 @@
     connect();
   }
 
+  document.addEventListener('visibilitychange', () => {
+    hidden = document.hidden;
+    if (hidden) {
+      clearTimeout(waitTimer);
+      waitTimer = null;
+      clearTimeout(silenceTimer);
+      return;
+    }
+    backoff = 1000;
+    if (!source || source.readyState !== 1) connect();
+    else armSilence();
+    queueRefresh();
+  });
+
   window.LiveStream = {
     start,
     ago,
-    connected: () => up,
-    pollMs: () => (up ? FALLBACK_OK : FALLBACK_DOWN),
+    suspend,
+    connected: () => up && !suspended,
+    pollMs: () => (up && !suspended ? FALLBACK_OK : FALLBACK_DOWN),
   };
 })();

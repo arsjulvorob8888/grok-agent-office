@@ -86,6 +86,7 @@
     needsReady: false,
     panelScrollTo: '',
     archivedIds: new Set(),
+    deputies: [],
     peekId: null,
     roomId: null,
     roomSig: '',
@@ -1263,14 +1264,27 @@
     if (window.AgentStatus && typeof AgentStatus.finalStatus === 'function') return AgentStatus.finalStatus(a);
     return activityMode(a);
   }
+  function seatLook(a) {
+    if (window.AgentStatus && AgentStatus.presence) return AgentStatus.presence(a);
+    const mode = seatMode(a);
+    const inactive = mode === 'resting';
+    return {
+      mode,
+      dot: inactive ? 'idle' : (mode === 'waiting' ? 'waiting' : 'working'),
+      opacity: inactive ? 0.55 : 1,
+      filter: inactive ? 'grayscale(0.4)' : 'none',
+    };
+  }
   function seatHTML(a, head) {
     const role = a.id === head.id ? 'Руководитель' : (a.parentId ? 'Заместитель' : 'В этом здании');
     const phrase = deliveryPhrase(a);
-    const mode = seatMode(a);
+    const look = seatLook(a);
     const st = phrase || (window.AgentStatus ? AgentStatus.activityLabel(a) : activityLabel(a));
-    return `<article class="room-seat" data-id="${esc(a.id)}">
+    const note = phrase ? '' : (a.doing || a.now || '');
+    const figStyle = `opacity:${look.opacity};filter:${look.filter}`;
+    return `<article class="room-seat" data-id="${esc(a.id)}" data-presence="${esc(look.mode)}">
       <div class="room-sit">
-        <svg class="room-fig" viewBox="-40 -108 80 116" aria-hidden="true">${Figures.render(a.kind, a.color)}</svg>
+        <svg class="room-fig" style="${figStyle}" viewBox="-40 -108 80 116" aria-hidden="true">${Figures.render(a.kind, a.color)}</svg>
         <svg class="room-desk" viewBox="0 0 150 70" aria-hidden="true">
           <ellipse cx="75" cy="64" rx="58" ry="6" fill="#000" opacity=".12"/>
           <path d="M22 40h106v14H22z" fill="#c4a36a"/>
@@ -1282,7 +1296,7 @@
       <div class="room-meta">
         <div class="room-role">${esc(role)}</div>
         <div class="room-name">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</div>
-        <div class="room-status"><span class="room-dot" data-status="${esc(mode)}"></span><span class="status-pill ${esc(phrase ? 'queued' : statusTone(a))}">${esc(st)}</span><span class="now">${phrase ? '' : esc(a.now || '')}</span></div>
+        <div class="room-status"><span class="room-dot" data-status="${esc(look.mode)}"></span><span class="status-pill ${esc(phrase ? 'queued' : look.dot)}">${esc(st)}</span><span class="now">${esc(note)}</span></div>
         <button type="button" class="btn gold room-go" data-id="${esc(a.id)}">Открыть</button>
       </div>
     </article>`;
@@ -1293,7 +1307,7 @@
     const head = S.byId.get(S.roomId);
     if (!head) { closeRoom(); return; }
     const people = [head, ...roomGuests(head.id)];
-    const sig = people.map((a) => [a.id, a.number, a.name, a.status, a.activity, a.now].join(':')).join('|');
+    const sig = people.map((a) => [a.id, a.number, a.name, seatMode(a), a.activity, a.doing, a.status, a.now].join(':')).join('|');
     if (scroll.dataset.sig === sig && S.roomSig === sig) return;
     const top = scroll.scrollTop;
     S.roomSig = sig;
@@ -1321,6 +1335,7 @@
   const STATUS_TEXT = { working: 'Работает', idle: 'Свободен', waiting: 'Ждёт тебя' };
   const ACTIVITY_TEXT = { working: 'Работает', coordinating: 'Координирует', waiting: 'Ждёт', resting: 'Спит' };
   function activityMode(a) {
+    if (window.AgentStatus && AgentStatus.finalStatus) return AgentStatus.finalStatus(a);
     if (window.AgentStatus) return AgentStatus.activityMode(a);
     if (a && a.activity === 'working') return 'working';
     if (a && a.activity === 'coordinating') return 'coordinating';
@@ -2072,7 +2087,10 @@
   }
   function renderHUD() {
     const staff = S.agents.filter((a) => !a.vacant);
-    const active = staff.filter((a) => activityMode(a) === 'working').length;
+    const active = staff.filter((a) => {
+      const mode = window.AgentStatus && AgentStatus.finalStatus ? AgentStatus.finalStatus(a) : activityMode(a);
+      return mode === 'working';
+    }).length;
     const node = $('#stActive');
     if (node) node.textContent = `${active}/${staff.length}`;
     renderUsage();
@@ -2417,13 +2435,37 @@
       }
     }
   }
+  let pollTimer = null;
   function pollWait() {
-    const base = window.LiveStream && LiveStream.connected() ? 30000 : CONFIG.pollMs;
-    return document.hidden ? base * 3 : base;
+    if (document.hidden) return null;
+    if (window.LiveStream && typeof LiveStream.pollMs === 'function') return LiveStream.pollMs();
+    return CONFIG.pollMs;
+  }
+  function schedulePoll() {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+    const wait = pollWait();
+    if (wait == null) return;
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      poll();
+    }, wait);
   }
   function poll() {
-    loadState().catch(() => {}).finally(() => setTimeout(poll, pollWait()));
+    if (document.hidden) return;
+    loadState().catch(() => {}).finally(schedulePoll);
   }
+  document.addEventListener('livestream', () => {
+    if (!document.hidden) schedulePoll();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+      return;
+    }
+    loadState().catch(() => {}).finally(schedulePoll);
+  });
   setInterval(() => { refreshNeeds().catch(() => {}); }, 30000);
 
   function initNeedPage() {
@@ -2677,6 +2719,6 @@
   }).catch(() => {
     $('#blocks').innerHTML = M.buildBlocks([]);
     toast('Нет связи с сервером', 'Проверь, что приложение запущено. Повторю попытку.', 'x', true);
-  }).finally(() => setTimeout(poll, pollWait()));
+  }).finally(schedulePoll);
   window.OfficeLayout = { pos: MAP_POS, roomHostId };
 })();
