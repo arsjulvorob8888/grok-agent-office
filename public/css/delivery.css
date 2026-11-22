@@ -12,9 +12,9 @@
 .delivery-msg.ok{color:#86efac}
 .delivery-msg.err{color:#fca5a5}
 .direct-link{margin:0;font-size:13px;font-weight:800;line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
-#service{display:none;position:absolute;z-index:9;flex-direction:column;overflow:hidden;min-width:0;background:rgba(12,16,24,.97)}
-#service.open{display:flex}
-#service[hidden]{display:none !important}
+#service{display:none;position:absolute;z-index:9;flex-direction:column;overflow:hidden;min-width:0;background:rgba(12,16,24,.97);pointer-events:none}
+#service.open{display:flex;pointer-events:auto}
+#service[hidden]{display:none !important;pointer-events:none}
 #serviceBody{overflow:auto;min-height:0;padding:10px 12px 14px;display:flex;flex-direction:column;gap:12px}
 .direct-row{display:flex;flex-direction:column;gap:6px;min-width:0;padding-bottom:10px;border-bottom:1px solid var(--line)}
 .direct-row h4{margin:0;font:700 13px var(--display)}
