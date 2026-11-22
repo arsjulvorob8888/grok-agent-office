@@ -284,6 +284,7 @@ test('служебный ping не виден в журнале, перепис�
   const ping = { id: 'ping-dev-1', agentId: 'dev', text: 'Проверка связи', orderStatus: 'sent', status: 'в очереди агента', createdAt: new Date().toISOString() };
   const message = { id: 'm-ping', agentId: 'dev', role: 'agent', taskId: 'ping-dev-1', text: 'Проверка связи', createdAt: new Date().toISOString() };
   const real = { id: 't-real', agentId: 'dev', text: 'Настоящая задача', orderStatus: 'sent', status: 'в очереди агента', createdAt: new Date().toISOString() };
+  assert.equal(feed.isOpenOrder(ping), false);
   const split = feed.journalSplit([ping, real]);
   assert.equal(split.badge, 1);
   assert.equal(split.active.some((item) => item.id === 'ping-dev-1'), false);

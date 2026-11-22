@@ -38,42 +38,17 @@
   }
 
   function panel() {
-    return document.getElementById('service');
+    return document.getElementById('serviceDelivery');
   }
 
   function body() {
-    return document.getElementById('serviceBody');
+    return document.getElementById('serviceDelivery');
   }
 
-  function place() {
-    const button = document.getElementById('btnKey');
-    const root = panel();
-    if (!button || !root) return;
-    const rect = button.getBoundingClientRect();
-    const width = Math.min(440, window.innerWidth - 16);
-    let right = Math.max(8, window.innerWidth - rect.right);
-    if (window.innerWidth - right - width < 8) right = Math.max(8, window.innerWidth - width - 8);
-    const narrow = window.innerWidth < 700;
-    const top = Math.round(rect.bottom + 8);
-    const bottomGap = narrow ? 8 : 96;
-    root.style.top = `${top}px`;
-    root.style.right = `${narrow ? 8 : Math.round(right)}px`;
-    root.style.width = `${narrow ? Math.round(window.innerWidth - 16) : Math.round(width)}px`;
-    root.style.maxHeight = `${Math.max(180, Math.round(window.innerHeight - top - bottomGap))}px`;
-  }
-
-  function setOpen(open) {
-    const root = panel();
-    const button = document.getElementById('btnKey');
-    if (!root) return;
-    root.classList.toggle('open', open);
-    root.hidden = !open;
-    root.setAttribute('aria-hidden', open ? 'false' : 'true');
-    if (button) {
-      button.setAttribute('aria-expanded', open ? 'true' : 'false');
-      button.setAttribute('aria-controls', 'service');
-    }
-    if (open) place();
+  function shown() {
+    const pop = document.getElementById('servicePop');
+    const fold = document.getElementById('serviceFold');
+    return !!(pop && !pop.hidden && fold && fold.open && panel());
   }
 
   function lockForm() {
@@ -235,15 +210,6 @@
     const root = body();
     if (!root) return;
     root.replaceChildren();
-    const forget = document.createElement('button');
-    forget.type = 'button';
-    forget.className = 'link-btn';
-    forget.textContent = 'Забыть пароль';
-    forget.addEventListener('click', () => {
-      try { localStorage.removeItem('appPassword'); } catch (_) { /* уже стёрт */ }
-      showLock('');
-    });
-    root.append(forget);
     for (const view of views) {
       const data = view.res.status === 200 ? view.res.data : { route: view.agent.deliveryRoute, url: '', keySet: false };
       const row = rowOf(view.agent, data);
@@ -271,7 +237,7 @@
     }
     root.textContent = 'Загружаю…';
     const stateRes = await fetch('/api/state', { cache: 'no-store' });
-    if (gen !== generation || !panel() || panel().hidden) return;
+    if (gen !== generation || !shown()) return;
     if (!stateRes.ok) {
       root.textContent = 'Не удалось прочитать агентов';
       return;
@@ -284,7 +250,7 @@
       agent,
       res: await api('GET', `/api/agents/${encodeURIComponent(agent.id)}/delivery`),
     })));
-    if (gen !== generation || !panel() || panel().hidden) return;
+    if (gen !== generation || !shown()) return;
     if (views.some((view) => view.res.status === 401)) {
       try { localStorage.removeItem('appPassword'); } catch (_) { /* уже стёрт */ }
       showLock('Неверный пароль');
@@ -294,12 +260,8 @@
     loaded = true;
   }
 
-  function toggle() {
-    const root = panel();
-    if (!root) return;
-    const open = !root.classList.contains('open');
-    setOpen(open);
-    if (!open) return;
+  function refresh() {
+    if (!shown()) return;
     if (!password()) {
       showLock('');
       return;
@@ -308,37 +270,24 @@
   }
 
   function mount() {
-    if (document.getElementById('service')) return;
-    const root = document.createElement('aside');
-    root.id = 'service';
-    root.className = 'card glass';
-    root.hidden = true;
-    root.setAttribute('aria-label', 'Служебное');
-    root.setAttribute('aria-hidden', 'true');
-    const head = document.createElement('div');
-    head.className = 'card-head';
-    const title = document.createElement('h3');
-    title.textContent = 'Служебное';
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.className = 'icon-btn';
-    close.id = 'serviceClose';
-    close.setAttribute('aria-label', 'Закрыть');
-    close.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-    close.addEventListener('click', () => setOpen(false));
-    head.append(title, close);
-    const list = document.createElement('div');
-    list.id = 'serviceBody';
+    const list = panel();
+    if (!list || list.dataset.bound) return;
+    list.dataset.bound = '1';
     list.addEventListener('click', onClick);
-    root.append(head, list);
-    document.getElementById('app').append(root);
-    window.addEventListener('resize', () => {
-      if (root.classList.contains('open')) place();
+    const fold = document.getElementById('serviceFold');
+    if (fold) fold.addEventListener('toggle', () => refresh());
+    document.addEventListener('click', (event) => {
+      if (event.target && event.target.closest && event.target.closest('#btnKey, #serviceFold summary, #servicePassword')) {
+        setTimeout(refresh, 0);
+      }
+    });
+    document.addEventListener('submit', (event) => {
+      if (event.target && event.target.id === 'pwForm') setTimeout(() => { loaded = false; refresh(); }, 30);
     });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
   else mount();
 
-  window.DirectLink = { toggle };
+  window.DirectLink = { refresh };
 })();

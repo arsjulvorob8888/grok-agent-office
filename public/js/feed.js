@@ -230,6 +230,15 @@
     return id.startsWith('ping-') || taskId.startsWith('ping-');
   }
 
+  function isOpenOrder(task, now = Date.now()) {
+    if (!task || isServicePing(task) || task.orderStatus === 'cancelled') return false;
+    const clock = Number.isFinite(now) ? now : Date.now();
+    const created = Date.parse(task.createdAt);
+    const age = Number.isFinite(created) ? clock - created : 0;
+    if (journalSettled(task) && age > JOURNAL_SETTLED_MS) return false;
+    return true;
+  }
+
   function journalSplit(tasks, now = Date.now()) {
     const active = [];
     const delivered = [];
@@ -241,10 +250,8 @@
         cancelled.push(task);
         continue;
       }
-      const created = Date.parse(task.createdAt);
-      const age = Number.isFinite(created) ? clock - created : 0;
-      if (journalSettled(task) && age > JOURNAL_SETTLED_MS) delivered.push(task);
-      else active.push(task);
+      if (isOpenOrder(task, clock)) active.push(task);
+      else delivered.push(task);
     }
     return {
       active,
@@ -273,7 +280,7 @@
   function ordersForAgent(tasks, agentId) {
     const byId = indexTasks(tasks);
     const children = childrenOf(byId);
-    return (tasks || []).filter((task) => orderParticipantIds(task, byId, children).has(agentId));
+    return (tasks || []).filter((task) => !isServicePing(task) && orderParticipantIds(task, byId, children).has(agentId));
   }
 
   // out — агент отправитель (→), in — исполнитель (←), both — и то и другое.
@@ -343,6 +350,23 @@
   function messagesForAgent(messages, tasks, agentId) {
     const byId = indexTasks(tasks);
     return (messages || []).filter((message) => !isServicePing(message) && messageParticipantIds(message, byId).has(agentId));
+  }
+
+  function isStatusMark(message) {
+    if (!message) return false;
+    if (message.source === 'live') return true;
+    return /отметился\s*:/i.test(String(message.text || ''));
+  }
+
+  // Переписка: разговор с владельцем и ответы агента. Отметки статуса и тихие задачи — нет.
+  function correspondenceMessages(messages, tasks, agentId) {
+    const byId = indexTasks(tasks);
+    return messagesForAgent(messages, tasks, agentId).filter((message) => {
+      if (!message || isStatusMark(message)) return false;
+      if (String(message.text || '').trim().toLowerCase() === 'тест') return false;
+      const task = message.taskId ? byId.get(message.taskId) : null;
+      return !(task && silentTask(task));
+    });
   }
 
   function isOpenNeed(need) {
@@ -591,7 +615,7 @@
     const live = [];
     const undelivered = [];
     for (const task of tasks || []) {
-      if (!task || isServicePing(task) || silentTask(task) || isFinalRecord(task, messages)) continue;
+      if (!task || isServicePing(task) || silentTask(task) || !isOpenOrder(task, at) || isFinalRecord(task, messages)) continue;
       const status = task.orderStatus || 'sent';
       if (status !== 'sent' && status !== 'accepted' && status !== 'in_progress') continue;
       if (isLiveProcess(task, agents, at, holdMs)) {
@@ -766,6 +790,7 @@
     taskAnswerText,
     ruCount,
     countsAsActiveTask,
+    isOpenOrder,
     PROCESS_HOLD_MS,
     journalSplit,
     visibleJournal,
@@ -784,6 +809,8 @@
     seesMessage,
     messagesForGeneral,
     messagesForAgent,
+    correspondenceMessages,
+    isStatusMark,
     isTestNeed,
     testNeeds,
     isOpenNeed,

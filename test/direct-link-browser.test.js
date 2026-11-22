@@ -197,17 +197,22 @@ test('«Служебное» показывает всех, прячет клю�
   try {
     await page.waitForSelector('#roster .chip[data-id="health"]', { timeout: 8000 });
     await page.click('#btnKey');
-    await page.waitForSelector('#service.open #servicePwInput', { timeout: 8000 });
+    await page.waitForSelector('#servicePop:not([hidden])', { timeout: 8000 });
     const locked = await visibleBlob(page);
     assert.equal(locked.includes(KEY), false);
     assert.equal(locked.includes('dev-hook'), false);
     assert.match(locked, /Служебное/);
-    await page.type('#servicePwInput', 'pw-link');
-    await page.click('#servicePw button[type="submit"]');
-    await page.waitForSelector('#service [data-direct-row][data-agent="health"]', { timeout: 8000 });
+    await page.click('#servicePassword');
+    await page.waitForSelector('#modal.show #pwInput', { timeout: 4000 });
+    await page.type('#pwInput', 'pw-link');
+    await page.click('#pwForm button[type="submit"]');
+    await page.waitForFunction(() => !document.querySelector('#modal').classList.contains('show'), { timeout: 4000 });
+    if (await page.$eval('#servicePop', (el) => el.hidden)) await page.click('#btnKey');
+    await page.evaluate(() => { document.getElementById('serviceFold').open = true; });
+    await page.waitForSelector('#serviceDelivery [data-direct-row][data-agent="health"]', { timeout: 8000 });
     const state = await (await fetch(`${base}/api/state`)).json();
     const expectIds = feed.serviceAgents(state.agents).map((agent) => agent.id);
-    const shown = await page.$$eval('#service [data-direct-row]', (rows) => rows.map((row) => row.dataset.agent));
+    const shown = await page.$$eval('#serviceDelivery [data-direct-row]', (rows) => rows.map((row) => row.dataset.agent));
     assert.deepEqual(shown, expectIds);
     const roster = await page.$$eval('#roster .chip', (nodes) => nodes.map((node) => node.dataset.id));
     assert.equal(shown.includes('invest'), true);
@@ -215,10 +220,10 @@ test('«Служебное» показывает всех, прячет клю�
     assert.equal(shown.includes('trading'), false);
     assert.equal(roster.includes('invest'), false);
     assert.equal(roster.includes('trading'), false);
-    const keyField = await page.$eval('#service [data-agent="dev"] [data-direct-key]', (el) => ({ type: el.type, value: el.value }));
+    const keyField = await page.$eval('#serviceDelivery [data-agent="dev"] [data-direct-key]', (el) => ({ type: el.type, value: el.value }));
     assert.equal(keyField.type, 'password');
     assert.equal(keyField.value, '');
-    const savedNote = await page.$eval('#service [data-agent="dev"] [data-direct-saved]', (el) => el.textContent);
+    const savedNote = await page.$eval('#serviceDelivery [data-agent="dev"] [data-direct-saved]', (el) => el.textContent);
     assert.equal(savedNote, 'ключ сохранён');
     const openBlob = await visibleBlob(page);
     assert.equal(openBlob.includes(KEY), false);
@@ -230,8 +235,7 @@ test('«Служебное» показывает всех, прячет клю�
       active: document.querySelector('#stActive').textContent,
     }));
     const beforeHits = hits.length;
-    await page.$eval('#service [data-agent="dev"] [data-direct-check]', (el) => el.scrollIntoView({ block: 'center' }));
-    await page.click('#service [data-agent="dev"] [data-direct-check]');
+    await page.$eval('#serviceDelivery [data-agent="dev"] [data-direct-check]', (el) => el.click());
     const started = Date.now();
     while (hits.length < beforeHits + 1 && Date.now() - started < 8000) {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -241,11 +245,10 @@ test('«Служебное» показывает всех, прячет клю�
     assert.equal(hits[hits.length - 1].body.text, 'Проверка связи');
     assert.match(hits[hits.length - 1].body.taskId, /^ping-dev-\d+$/);
     assert.equal(hits[hits.length - 1].headers['x-webhook-key'], KEY);
-    await page.$eval('#service [data-agent="army"] [data-direct-check]', (el) => el.scrollIntoView({ block: 'center' }));
     const armyHits = hits.length;
-    await page.click('#service [data-agent="army"] [data-direct-check]');
+    await page.$eval('#serviceDelivery [data-agent="army"] [data-direct-check]', (el) => el.click());
     await page.waitForFunction(() => {
-      const line = document.querySelector('#service [data-agent="army"] [data-direct-status]');
+      const line = document.querySelector('#serviceDelivery [data-agent="army"] [data-direct-status]');
       return line && line.textContent === 'Сообщение уйдёт через Путина';
     }, { timeout: 8000 });
     assert.equal(hits.length, armyHits);
@@ -263,15 +266,14 @@ test('«Служебное» показывает всех, прячет клю�
     assert.equal(countsAfter.active, countsBefore.active);
     assert.equal(countsAfter.ping, false);
 
-    await page.$eval('#service [data-agent="qa"] [data-direct-url]', (el, value) => { el.value = value; }, `${hookOrigin}/qa-hook`);
-    await page.$eval('#service [data-agent="qa"] [data-direct-key]', (el, value) => { el.value = value; }, QA_KEY);
-    await page.$eval('#service [data-agent="qa"] [data-direct-save]', (el) => el.scrollIntoView({ block: 'center' }));
-    await page.click('#service [data-agent="qa"] [data-direct-save]');
+    await page.$eval('#serviceDelivery [data-agent="qa"] [data-direct-url]', (el, value) => { el.value = value; }, `${hookOrigin}/qa-hook`);
+    await page.$eval('#serviceDelivery [data-agent="qa"] [data-direct-key]', (el, value) => { el.value = value; }, QA_KEY);
+    await page.$eval('#serviceDelivery [data-agent="qa"] [data-direct-save]', (el) => el.click());
     await page.waitForFunction(() => {
-      const note = document.querySelector('#service [data-agent="qa"] [data-direct-saved]');
+      const note = document.querySelector('#serviceDelivery [data-agent="qa"] [data-direct-saved]');
       return note && note.textContent === 'ключ сохранён';
     }, { timeout: 8000 });
-    const qaKey = await page.$eval('#service [data-agent="qa"] [data-direct-key]', (el) => el.value);
+    const qaKey = await page.$eval('#serviceDelivery [data-agent="qa"] [data-direct-key]', (el) => el.value);
     assert.equal(qaKey, '');
     const afterSave = await visibleBlob(page);
     assert.equal(afterSave.includes(QA_KEY), false);
@@ -281,8 +283,8 @@ test('«Служебное» показывает всех, прячет клю�
     assert.equal(read.keySet, true);
 
     const fit = await page.evaluate(() => {
-      const root = document.querySelector('#service');
-      const list = document.querySelector('#serviceBody');
+      const root = document.querySelector('#servicePop');
+      const list = document.querySelector('#serviceDelivery');
       const rect = root.getBoundingClientRect();
       const inputs = [...root.querySelectorAll('input')].map((el) => {
         const box = el.getBoundingClientRect();
@@ -339,10 +341,11 @@ test('на 390 строка и поля не вылезают за окно', { 
     assert.ok(card.right <= card.vw + 1, JSON.stringify(card));
     await page.screenshot({ path: path.join(artifacts, 'direct-link-card-390.png') });
     await page.click('#btnKey');
-    await page.waitForSelector('#service.open [data-direct-row][data-agent="dev"]', { timeout: 8000 });
+    await page.evaluate(() => { document.getElementById('serviceFold').open = true; });
+    await page.waitForSelector('#serviceDelivery [data-direct-row][data-agent="dev"]', { timeout: 8000 });
     const fit = await page.evaluate(() => {
-      const root = document.querySelector('#service');
-      const list = document.querySelector('#serviceBody');
+      const root = document.querySelector('#servicePop');
+      const list = document.querySelector('#serviceDelivery');
       const rect = root.getBoundingClientRect();
       const inputs = [...root.querySelectorAll('input')].map((el) => {
         const box = el.getBoundingClientRect();
@@ -362,8 +365,8 @@ test('на 390 строка и поля не вылезают за окно', { 
     for (const input of fit.inputs) {
       assert.ok(input.width > 40 && input.left >= fit.left - 1 && input.right <= fit.right + 1, JSON.stringify(input));
     }
-    const devLine = await page.$eval('#service [data-agent="dev"] [data-direct-status]', (el) => el.textContent);
-    const armyLine = await page.$eval('#service [data-agent="army"] [data-direct-status]', (el) => el.textContent);
+    const devLine = await page.$eval('#serviceDelivery [data-agent="dev"] [data-direct-status]', (el) => el.textContent);
+    const armyLine = await page.$eval('#serviceDelivery [data-agent="army"] [data-direct-status]', (el) => el.textContent);
     assert.equal(devLine, 'Проверяю…');
     assert.equal(armyLine, 'Сообщение уйдёт через Путина');
     await page.screenshot({ path: path.join(artifacts, 'direct-link-390.png') });

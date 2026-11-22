@@ -92,7 +92,7 @@ test('state содержит новый ростер без секретов', a
     poker: '3',
     devops: '4',
     dev: '5',
-    temshik: '6',
+    temshik: '7.3',
     finance: '7',
     invest: '7.1',
     analyst: '7.2',
@@ -108,6 +108,10 @@ test('state содержит новый ростер без секретов', a
     assert.equal(agent.number, number, id);
     assert.equal(agent.archived, false, id);
   }
+  const temshik = body.agents.find((a) => a.id === 'temshik');
+  assert.equal(temshik.parentId, 'finance');
+  assert.equal(temshik.name, 'Темщик');
+  assert.equal(temshik.grokAgentId, '6a1deccc-2411-4fd1-8da7-e7ba9fce6df2');
   const advisor = body.agents.find((a) => a.id === 'advisor');
   assert.equal(advisor.name, 'Советник Путина');
   assert.equal(advisor.role, 'Стратегический советник Путина');
@@ -123,8 +127,8 @@ test('state содержит новый ростер без секретов', a
     dev: '8117cf6a-c57d-42cc-ba6f-2421fe7af6ad',
     temshik: '6a1deccc-2411-4fd1-8da7-e7ba9fce6df2',
     finance: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
-    invest: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
-    analyst: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+    invest: '504035c8-ccd8-467b-9e34-f16305493533',
+    analyst: '4bbdde69-8b7d-48a4-a5a6-c5136e60257d',
     qa: '892a92c9-8133-48d2-b22d-c77e653309af',
     blog: '118a97ac-2030-4f25-b684-ac19252fb4aa',
     advisor: '961b2d3d-5f80-4891-b87a-c6913bbf2971',
@@ -327,7 +331,7 @@ test('помощник Финансов принимает задачу и со�
   });
   assert.equal(child.status, 200);
   assert.equal(child.body.agent.parentId, 'finance');
-  assert.equal(child.body.agent.number, '7.3');
+  assert.equal(child.body.agent.number, '7.4');
   const st = await json('/api/state');
   const created = st.body.agents.find((a) => a.id === 'credit');
   assert.equal(created.tier, 'sub');

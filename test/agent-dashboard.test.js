@@ -185,10 +185,106 @@ test('дашборд считает колонки, московские дни,
   assert.equal(owner.deliveryLabel, 'В очереди, доставка не подключена');
   const reply = view.messages.find((item) => item.id === 'm-agent');
   assert.equal(reply.deliveryLabel, null);
-  assert.ok(view.activityLog.some((line) => line.text.startsWith('Вы: ')));
+  assert.equal(view.activityLog.some((line) => line.text.startsWith('Вы: ')), false);
+  assert.ok(view.activityLog.some((line) => line.text.startsWith('Агент: ')));
   assert.equal(view.activityLog.some((line) => line.text.includes('Владелец')), false);
   assert.ok(view.activityLog.some((line) => line.text === 'Собрал отчёт' && line.at == null));
   assert.ok(view.activityLog.some((line) => line.at === '2026-11-17T09:00:00Z'));
+});
+
+test('активности qa и advisor без тестовых и отменённых, доставленное одной строкой', () => {
+  const now = Date.parse('2026-11-22T18:00:00.000Z');
+  const noise = [
+    {
+      id: 't-1',
+      text: 'тест',
+      orderStatus: 'cancelled',
+      status: 'отменён',
+      createdAt: '2026-11-17T08:00:00.000Z',
+      history: [{ status: 'sent', at: '2026-11-17T08:00:00.000Z' }],
+    },
+    {
+      id: 't-2',
+      text: ' тест ',
+      orderStatus: 'sent',
+      status: 'в очереди агента',
+      createdAt: '2026-11-17T08:10:00.000Z',
+      history: [{ status: 'sent', at: '2026-11-17T08:10:00.000Z' }],
+    },
+  ];
+  for (const agentId of ['qa', 'advisor']) {
+    const view = buildDashboard({
+      agent: { id: agentId, name: agentId, completed: 0, done: [] },
+      tasks: noise.map((task) => ({ ...task, agent: agentId, agentId })),
+      messages: [
+        { id: `m-${agentId}-1`, agentId, role: 'owner', text: 'тест', createdAt: '2026-11-17T08:01:00.000Z', taskId: 't-1' },
+        { id: `m-${agentId}-2`, agentId, role: 'owner', text: 'Вы: тест', createdAt: '2026-11-17T08:02:00.000Z', taskId: 't-2' },
+      ],
+      activity: { activity: 'resting' },
+      now,
+    });
+    const blob = view.activityLog.map((line) => line.text).join('\n');
+    assert.equal(/тест/i.test(blob), false, `${agentId} ${blob}`);
+    assert.equal(blob.includes('Отправлен'), false, agentId);
+    assert.equal(noise.length, 2);
+  }
+  const text = 'Ответ Арсения на «сводку»: цифры';
+  const delivered = buildDashboard({
+    agent: { id: 'social', name: 'Соцсети', completed: 0, done: [] },
+    tasks: [{
+      id: 't-3',
+      agent: 'social',
+      agentId: 'social',
+      text,
+      orderStatus: 'sent',
+      forwardStatus: 200,
+      outboxStatus: 'delivered',
+      deliveryLabel: 'Отправлена',
+      createdAt: '2026-11-17T14:00:00.000Z',
+      history: [
+        { status: 'sent', at: '2026-11-17T14:00:00.000Z' },
+        { status: 'accepted', at: '2026-11-17T14:05:00.000Z' },
+      ],
+    }],
+    messages: [
+      { id: 'm-social', agentId: 'social', role: 'owner', text, createdAt: '2026-11-17T14:01:00.000Z', taskId: 't-3' },
+    ],
+    activity: { activity: 'resting' },
+    now,
+  });
+  const lines = delivered.activityLog.map((line) => line.text);
+  assert.equal(lines.length, 1, lines.join(' | '));
+  assert.equal(lines[0].startsWith('Доставлено'), true, lines[0]);
+  assert.equal(lines[0].includes(text), true);
+  assert.equal(lines.some((line) => line.startsWith('Вы:')), false);
+  assert.equal(lines.some((line) => line.startsWith('Отправлен')), false);
+  const finance = buildDashboard({
+    agent: { id: 'finance', name: 'Финансы', completed: 0, done: [], now: '' },
+    tasks: [{
+      id: 't-live',
+      agent: 'finance',
+      agentId: 'finance',
+      text: 'Сводка кассы',
+      orderStatus: 'sent',
+      forwardStatus: 200,
+      outboxStatus: 'delivered',
+      deliveryLabel: 'Доставлено',
+      createdAt: '2026-11-22T16:22:00.000Z',
+      history: [{ status: 'sent', at: '2026-11-22T16:22:00.000Z' }],
+    }],
+    messages: [],
+    activity: { activity: 'resting' },
+    now,
+  });
+  const financeLines = finance.activityLog.map((line) => `${line.at || ''} ${line.text}`).join('\n');
+  const clock = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(new Date('2026-11-22T16:22:00.000Z'));
+  assert.equal(clock, '19:22');
+  assert.match(financeLines, /2026-11-22T16:22:00/);
+  assert.match(financeLines, /Доставлено/);
+  assert.equal(/тест/i.test(financeLines), false);
+  assert.equal(financeLines.includes('Отправлен'), false);
 });
 
 test('незавершённые задачи не дают среднее время и долю 0%', () => {

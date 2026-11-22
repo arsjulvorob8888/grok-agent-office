@@ -234,7 +234,7 @@ test('на широком экране пульс, сон, стрелка и «�
     assert.equal(stamp.text, expected);
 
     await finish(id);
-    await page.waitForFunction((orderId) => !document.querySelector(`#delegations [data-order-id="${orderId}"]`), { timeout: 10000 }, id);
+    await page.waitForFunction(() => !document.querySelector('#procList').textContent.includes('ACTIVITY-DESKTOP'), { timeout: 10000 });
     const gone = await page.$eval('#procList', (el) => el.textContent);
     assert.doesNotMatch(gone, /ACTIVITY-DESKTOP/);
   } finally {
@@ -300,7 +300,10 @@ test('на 390px с тачем линия видна, панель нажима�
     }
 
     await finish(id);
-    await page.waitForFunction((orderId) => !document.querySelector(`#delegations [data-order-id="${orderId}"]`), { timeout: 10000 }, id);
+    await page.waitForFunction((orderId) => {
+      const quest = document.querySelector(`#jList [data-anchor="q:${orderId}"] .badge`);
+      return quest && quest.textContent.includes('Выполнена');
+    }, { timeout: 10000 }, id);
     const devSleep = await page.$eval('#agents .agent[data-id="dev"]', (el) => el.classList.contains('sleep'));
     assert.equal(devSleep, false);
   } finally {

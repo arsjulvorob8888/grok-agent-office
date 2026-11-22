@@ -62,11 +62,11 @@ const STATUS_LABELS = {
 //        routines, health, vacant, generic.
 // tier — main (Путин), dept (направление), sub (помощник, parentId), extra (союзник).
 // Номер на карте — среди видимых агентов, без пропусков. Помощники Финансов: 7.1, 7.2.
-// trading, biz и lang в архиве на общей карте. trading и biz — замы Финансов
-// (parentId): живой статус принимается и виден в помещении Финансов.
+// trading, biz и lang в архиве и на экран не выходят. Карточка 7.1 — invest,
+// к ней привязан бот «Инвестиции · Кремль» (прежний trading). Карточка 7.2 —
+// analyst, к ней привязан бот «Бизнес-аналитик · Кремль».
 // grokAgentId — id агента в Grok. Для посевного агента это поле карточки из кода:
-// после рестарта оно не берётся из payload в agent_state. У finance и помощников
-// invest (7.1) и analyst (7.2) один и тот же id.
+// после рестарта оно не берётся из payload в agent_state.
 // ─────────────────────────────────────────────────────────────────────────────
 const SEED_AGENTS = [
   {
@@ -191,6 +191,8 @@ const SEED_AGENTS = [
   {
     id: 'temshik',
     name: 'Темщик',
+    parentId: 'finance',
+    order: 3,
     color: '#d4a017',
     accent: '#fff3c4',
     role: 'Поиск тем и способов заработка',
@@ -258,7 +260,7 @@ const SEED_AGENTS = [
     district: 'Китай-город · Ильинка',
     kind: 'invest',
     tier: 'sub',
-    grokAgentId: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+    grokAgentId: '504035c8-ccd8-467b-9e34-f16305493533',
     x: 1190,
     y: 270,
     links: [],
@@ -278,7 +280,7 @@ const SEED_AGENTS = [
     district: 'Китай-город · Ильинка',
     kind: 'analyst',
     tier: 'sub',
-    grokAgentId: 'e5b4d1ad-52aa-4a3a-aa8e-ddd6dc1ac8f1',
+    grokAgentId: '4bbdde69-8b7d-48a4-a5a6-c5136e60257d',
     x: 980,
     y: 450,
     links: [],
@@ -458,7 +460,8 @@ function seedAgent(base) {
 }
 
 // Номера видимых направлений и союзников идут по порядку, без архивных.
-// Помощники получают 7.1, 7.2 по порядку среди видимых детей одного родителя.
+// Помощники получают 7.1, 7.2, 7.3 по порядку среди видимых детей одного родителя.
+// Номер направления берётся из order, чтобы перенос Темщика под Финансы не сдвигал остальных.
 function prepareRoster(list) {
   let top = 0;
   const sib = {};
@@ -473,6 +476,7 @@ function prepareRoster(list) {
     } else if (!agent.archived) {
       top += 1;
       agent.order = agent.order || top;
+      agent.number = String(agent.order);
     }
     return agent;
   });
@@ -499,6 +503,7 @@ function agentNumber(agent) {
     const idx = siblings.findIndex((a) => a.id === agent.id);
     return `${parentNum}.${idx >= 0 ? idx + 1 : 1}`;
   }
+  if (agent.order) return String(agent.order);
   const tops = visibleRoster(state.agents)
     .filter((a) => !a.parentId)
     .sort((a, b) => (a.order || 0) - (b.order || 0) || a.id.localeCompare(b.id));
@@ -1004,7 +1009,8 @@ store.init(state, {
   seedAgentIds: SEED_AGENTS.map((agent) => agent.id),
 });
 store.ready.then(() => {
-  if (!usage.prune(state, usage.now())) return null;
+  rememberLegacyDelivered();
+  if (!usage.prune(state, usage.now())) return store.flush();
   store.noteGrokUsage(state.grokUsage);
   return store.flush();
 }).catch(() => {});
@@ -2926,6 +2932,42 @@ function flushOutbox(mode) {
   return run;
 }
 
+const RETIRED_STAFF = ['trading', 'biz'];
+
+function archiveRetiredStaff() {
+  const changed = [];
+  for (const id of RETIRED_STAFF) {
+    const agent = (state.agents || []).find((item) => item && item.id === id);
+    if (!agent || agent.archived) continue;
+    agent.archived = true;
+    changed.push(agent);
+    store.noteAgent(agent);
+  }
+  return changed;
+}
+
+function clearTestNow() {
+  const changed = [];
+  for (const agent of state.agents || []) {
+    if (!agent || (agent.id !== 'qa' && agent.id !== 'advisor')) continue;
+    if (String(agent.now || '').trim().toLowerCase() !== 'тест') continue;
+    agent.now = '';
+    changed.push(agent);
+    store.noteAgent(agent);
+  }
+  return changed;
+}
+
+function rememberLegacyDelivered() {
+  if (!Array.isArray(state.outbox)) state.outbox = [];
+  const plan = retry.settleLegacyDelivered(state.tasks, state.outbox);
+  for (const task of plan.tasks) store.noteTask(task);
+  for (const item of plan.outbox) store.noteOutbox(item);
+  plan.now = clearTestNow();
+  plan.archived = archiveRetiredStaff();
+  return plan;
+}
+
 function rememberCancelledOrders() {
   const plan = retry.normalizeCancelledOrders(state.tasks, state.outbox);
   for (const task of plan.tasks) store.noteTask(task);
@@ -2957,6 +2999,7 @@ function backfillMissingOutbox() {
 }
 
 async function deliverPendingAfterRouteChange() {
+  rememberLegacyDelivered();
   rememberCancelledOrders();
   backfillMissingOutbox();
   rememberCancelledOrders();
@@ -3779,4 +3822,7 @@ module.exports = {
   kremlinWebhookHeaders,
   formatAtMsk,
   FINANCE_TEXT_NOTE,
+  rememberLegacyDelivered,
+  clearTestNow,
+  archiveRetiredStaff,
 };

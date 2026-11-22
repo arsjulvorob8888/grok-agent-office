@@ -469,21 +469,22 @@ test('старая запись без forwardStatus не называется �
           who: row ? row.querySelector('.proc-route').textContent : '',
           process: row ? row.querySelector('.proc-st').textContent : '',
           feed: quest ? quest.querySelector('.badge').textContent : '',
-          history: quest ? [...quest.querySelectorAll('.order-hist b')].map((node) => node.textContent).join('|') : '',
+          text: quest ? quest.textContent : '',
         };
       };
       return { held: pick('NEON-NULL'), sent: pick('NEON-OK'), failed: pick('NEON-ERR') };
     });
+    const once = (text, needle) => text.split(needle).length - 1;
     assert.equal(labels.held.who.includes('Путин'), true);
     assert.equal(labels.held.process, 'В очереди, ждёт отправки');
     assert.equal(labels.held.feed, 'В очереди, ждёт отправки');
-    assert.equal(labels.held.history, 'В очереди, ждёт отправки');
+    assert.equal(once(labels.held.text, 'В очереди, ждёт отправки'), 1);
     assert.equal(labels.sent.process, '');
     assert.equal(labels.sent.feed, 'Отправлена');
-    assert.equal(labels.sent.history, 'Отправлена');
+    assert.equal(once(labels.sent.text, 'Отправлена'), 1);
     assert.equal(labels.failed.process, 'Ошибка доставки 502');
     assert.equal(labels.failed.feed, 'Ошибка доставки 502');
-    assert.equal(labels.failed.history, 'Ошибка доставки 502');
+    assert.equal(once(labels.failed.text, 'Ошибка доставки 502'), 1);
   } finally {
     await browser.close();
   }
