@@ -1985,10 +1985,7 @@
     });
   }
   function taskWord(n) {
-    const n10 = n % 10, n100 = n % 100;
-    if (n10 === 1 && n100 !== 11) return 'задача';
-    if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return 'задачи';
-    return 'задач';
+    return Feed.ruCount(n, 'задача', 'задачи', 'задач');
   }
   function openTaskCount(id) {
     return S.tasks.filter((t) => (t.agentId || t.agent) === id && Feed.countsAsActiveTask(t) && !(window.TaskRules && TaskRules.isSilentTask(t))).length;
@@ -2520,7 +2517,10 @@
       }
       who.textContent = `Ждёт: ${titled(agent)}`;
     }
-    document.addEventListener('officestate', paintWho);
+    document.addEventListener('officestate', () => {
+      if (need) paintPublic();
+      else paintWho();
+    });
 
     function paintExternal() {
       if (!external) return;
@@ -2578,7 +2578,12 @@
       if (title) title.textContent = need.what || 'Вопрос';
       if (where) where.textContent = need.where ? `Где: ${need.where}` : '';
       if (badge) {
-        const cap = need && need.answerDeliveryLabel ? need.answerDeliveryLabel : '';
+        let cap = need && need.answerDeliveryLabel ? need.answerDeliveryLabel : '';
+        if (cap === 'Ваш ответ доставлен агенту' && Feed.taskAnswerText) {
+          const task = (S.tasks || []).find((item) => item && (item.needId === need.id || (need.what && String(item.text || '').startsWith(`Ответ Арсения на «${need.what}»`))));
+          const text = task ? Feed.taskAnswerText(need, task) : '';
+          if (text) cap = `${cap}: ${text}`;
+        }
         badge.hidden = !cap;
         if (cap) badge.textContent = cap;
       }
