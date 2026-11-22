@@ -2991,6 +2991,11 @@ function clearTestNow() {
 function rememberLegacyDelivered() {
   if (!Array.isArray(state.outbox)) state.outbox = [];
   const plan = retry.settleLegacyDelivered(state.tasks, state.outbox);
+  const direct = retry.retargetDirectOwnerSource(state.tasks, state.outbox);
+  plan.direct = direct;
+  for (const task of direct) {
+    if (!plan.tasks.includes(task)) plan.tasks.push(task);
+  }
   for (const task of plan.tasks) store.noteTask(task);
   for (const item of plan.outbox) store.noteOutbox(item);
   plan.now = clearTestNow();
@@ -3075,7 +3080,8 @@ function lastDeliveryView() {
 function applyKremlinResult(task, result) {
   if (!task || !result || !result.attempted) return;
   if (result.sent) {
-    task.status = 'отправлена Путину';
+    const direct = task.sentRoute === 'agent' && (!task.fromAgentId || task.fromAgentId === 'owner');
+    task.status = direct ? 'отправлена агенту' : 'отправлена Путину';
     task.forwardStatus = result.status;
     task.forwardError = null;
     return;
