@@ -17,6 +17,7 @@ const live = require('./lib/live-status');
 const usage = require('./lib/usage');
 const streamHub = require('./lib/stream');
 const delivery = require('./lib/delivery');
+const agentTokens = require('./lib/agent-tokens');
 
 // Поток «состояние изменилось». Живой TTL агента в этот хаб не кладёт секретов.
 const hub = streamHub.createHub();
@@ -501,6 +502,7 @@ const state = {
   grokUsage: { latest: null, history: [] },
   decisions: [],
   nextDecisionId: 1,
+  agentTokens: [],
 };
 
 const NEED_URGENCY = new Set(['low', 'normal', 'high']);
@@ -2110,34 +2112,104 @@ function requireAppPassword(req, res, next) {
   next();
 }
 
+function pushClaim(ids, value) {
+  if (typeof value !== 'string') return;
+  const id = value.trim();
+  if (!id || ids.includes(id)) return;
+  ids.push(id);
+}
+
+function claimedAgentIds(req) {
+  const ids = [];
+  const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
+  if (req.params && typeof req.params.id === 'string' && /^\/api\/agents\/[^/]+/.test(pathOnly)) {
+    pushClaim(ids, req.params.id);
+  }
+  if (/^\/api\/orders\/[^/]+$/.test(pathOnly)) {
+    const orderId = req.params && req.params.id ? String(req.params.id) : pathOnly.split('/').pop();
+    const task = state.tasks.find((item) => item && item.id === orderId);
+    if (task) pushClaim(ids, String(task.agentId || task.agent || ''));
+  }
+  if (/^\/api\/needs\/[^/]+\/confirm$/.test(pathOnly)) {
+    const needId = req.params && req.params.id ? String(req.params.id) : '';
+    const item = state.needs.find((need) => need && need.id === needId);
+    if (item) pushClaim(ids, item.fromAgentId);
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const agentRoute = pathOnly === '/api/status'
+    || pathOnly === '/api/messages'
+    || pathOnly.startsWith('/api/agents/')
+    || pathOnly.startsWith('/api/needs');
+  if (agentRoute) {
+    pushClaim(ids, body.agentId);
+    if (pathOnly === '/api/status' || pathOnly === '/api/messages' || pathOnly.startsWith('/api/agents/')) {
+      pushClaim(ids, body.agent);
+    }
+    if (pathOnly.startsWith('/api/needs')) pushClaim(ids, body.fromAgentId);
+  }
+  if (pathOnly === '/api/messages' && Array.isArray(body.messages)) {
+    for (const item of body.messages) {
+      if (!item || typeof item !== 'object') continue;
+      pushClaim(ids, item.agentId);
+      pushClaim(ids, item.agent);
+    }
+  }
+  if (pathOnly === '/api/messages' || pathOnly.startsWith('/api/agents/')) {
+    const query = req.query || {};
+    pushClaim(ids, query.agentId);
+    pushClaim(ids, query.agent);
+  }
+  return ids;
+}
+
+function decideAgentToken(req) {
+  return agentTokens.authorize({
+    presented: req.get('x-agent-token') || '',
+    claimedIds: claimedAgentIds(req),
+    records: state.agentTokens,
+    sharedSecret: AGENT_TOKEN,
+  });
+}
+
 function usageAuthorized(req) {
   const statusToken = typeof process.env.AGENT_STATUS_TOKEN === 'string' ? process.env.AGENT_STATUS_TOKEN : '';
   const header = String(req.get('authorization') || '');
   const match = /^Bearer\s+(\S+)\s*$/i.exec(header.trim());
   const bearer = match ? match[1] : '';
   if (statusToken && bearer && safeEqual(bearer, statusToken)) return true;
-  const agent = req.get('x-agent-token') || '';
-  if (AGENT_TOKEN && agent && safeEqual(agent, AGENT_TOKEN)) return true;
-  return false;
+  return decideAgentToken(req).ok;
+}
+
+function finishAgentAuth(req, res, next) {
+  const decision = decideAgentToken(req);
+  if (decision.ok) return next();
+  return res.status(decision.status).json({ error: decision.error });
 }
 
 function requireAgentToken(req, res, next) {
-  if (!AGENT_TOKEN) {
-    return res.status(503).json({ error: 'Токен агентов не настроен (AGENT_TOKEN)' });
+  const ct = String(req.headers['content-type'] || '');
+  if (ct.includes('multipart/form-data')) {
+    return maybeUpload(req, res, () => {
+      if (res.headersSent) return;
+      finishAgentAuth(req, res, next);
+    });
   }
-  const provided = req.get('x-agent-token') || '';
-  if (!safeEqual(provided, AGENT_TOKEN)) {
-    return res.status(401).json({ error: 'Неверный токен агента' });
-  }
-  next();
+  return finishAgentAuth(req, res, next);
 }
 
 function requireUserOrAgent(req, res, next) {
   const pw = req.get('x-app-password') || '';
-  const tok = req.get('x-agent-token') || '';
-  if (APP_PASSWORD && safeEqual(pw, APP_PASSWORD)) return next();
-  if (AGENT_TOKEN && safeEqual(tok, AGENT_TOKEN)) return next();
-  if (!APP_PASSWORD && !AGENT_TOKEN) return res.status(503).json({ error: 'Доступ не настроен' });
+  if (APP_PASSWORD && pw && safeEqual(pw, APP_PASSWORD)) return next();
+  const decision = decideAgentToken(req);
+  if (decision.ok) return next();
+  if (decision.status === 403) return res.status(403).json({ error: decision.error });
+  if (decision.status === 401 && decision.error === 'Для этого агента нужен личный токен') {
+    return res.status(401).json({ error: decision.error });
+  }
+  const active = Array.isArray(state.agentTokens) && state.agentTokens.some((row) => row && !row.revokedAt);
+  if (!APP_PASSWORD && !AGENT_TOKEN && !active) {
+    return res.status(503).json({ error: 'Доступ не настроен' });
+  }
   return res.status(401).json({ error: 'Нужен пароль доступа или токен агента' });
 }
 
@@ -2180,12 +2252,10 @@ function deliveryAuthorized(req) {
   const header = String(req.get('authorization') || '');
   const match = header.match(/^Bearer\s+(\S+)\s*$/i);
   const bearer = match ? match[1] : '';
-  const agent = req.get('x-agent-token') || '';
   const password = req.get('x-app-password') || '';
   if (AGENT_TOKEN && bearer && safeEqual(bearer, AGENT_TOKEN)) return true;
-  if (AGENT_TOKEN && agent && safeEqual(agent, AGENT_TOKEN)) return true;
   if (APP_PASSWORD && password && safeEqual(password, APP_PASSWORD)) return true;
-  return false;
+  return decideAgentToken(req).ok;
 }
 
 function sendDecisions(req, res, markdown) {
@@ -2285,6 +2355,37 @@ app.post('/api/orders/:id/retry', requireAppPassword, async (req, res) => {
   await store.flush();
   if (result && result.skipped) return res.json({ ok: true, sent: 0, already: true });
   res.json({ ok: true, sent: kind === 'sent' ? 1 : 0, failed: kind === 'failed' ? 1 : 0 });
+});
+
+app.post('/api/agent-tokens', requireAppPassword, async (req, res) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const requested = typeof body.agentId === 'string' ? body.agentId.trim() : '';
+  let agents;
+  if (requested) {
+    const agent = findAgent(requested);
+    if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
+    agents = [agent];
+  } else {
+    agents = visibleRoster(state.agents);
+  }
+  if (!Array.isArray(state.agentTokens)) state.agentTokens = [];
+  const { issued, touched } = agentTokens.issue(state.agentTokens, agents, new Date().toISOString());
+  for (const row of touched) store.noteAgentToken(row);
+  await store.flush();
+  res.set('Cache-Control', 'no-store');
+  res.status(201).json({ ok: true, warning: agentTokens.WARNING, tokens: issued });
+});
+
+app.post('/api/agent-tokens/:agentId/revoke', requireAppPassword, async (req, res) => {
+  const agentId = String(req.params.agentId || '').trim();
+  const agent = findAgent(agentId);
+  if (!agent) return res.status(404).json({ error: 'Неизвестный агент' });
+  if (!Array.isArray(state.agentTokens)) state.agentTokens = [];
+  const result = agentTokens.revoke(state.agentTokens, agent.id, new Date().toISOString());
+  for (const row of result.touched) store.noteAgentToken(row);
+  await store.flush();
+  res.set('Cache-Control', 'no-store');
+  res.json({ ok: true, agentId: agent.id, revoked: result.revoked });
 });
 
 app.get('/api/state', (req, res) => {
@@ -3028,7 +3129,7 @@ function forgetUploads(files) {
   store.noteFilesRemoved(removed);
 }
 
-app.post('/api/messages', requireAgentToken, maybeUpload, async (req, res) => {
+app.post('/api/messages', requireAgentToken, async (req, res) => {
   try {
     if (Array.isArray(req.body?.messages)) {
       if (req.files && req.files.length) {
