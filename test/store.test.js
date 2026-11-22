@@ -712,6 +712,7 @@ describe('хранилище', { concurrency: 1 }, () => {
       advisor: '961b2d3d-5f80-4891-b87a-c6913bbf2971',
       social: 'a1bd53f2-5655-446b-8207-393e61fc20e1',
       routines: 'd6b45571-e211-4218-a1e2-1c0918973ddc',
+      health: '0ed66c28-6327-4768-8bf1-f2e06f72c2ac',
       trading: '504035c8-ccd8-467b-9e34-f16305493533',
       biz: 'a64c9436-36bc-4122-af1b-89d56950b0c1',
       lang: '5f09e2b6-ec92-44ef-bcbd-b1f848daed18',

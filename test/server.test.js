@@ -73,7 +73,7 @@ test('state содержит новый ростер без секретов', a
   const { status, body } = await json('/api/state');
   assert.equal(status, 200);
   const ids = body.agents.map((a) => a.id);
-  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst', 'lang', 'biz', 'advisor', 'social', 'routines']) {
+  for (const id of ['grok', 'army', 'poker', 'trading', 'devops', 'dev', 'qa', 'temshik', 'blog', 'finance', 'invest', 'analyst', 'lang', 'biz', 'advisor', 'social', 'routines', 'health']) {
     assert.ok(ids.includes(id), `нет агента ${id}`);
   }
   const grok = body.agents.find((a) => a.id === 'grok');
@@ -101,6 +101,7 @@ test('state содержит новый ростер без секретов', a
     advisor: '10',
     social: '11',
     routines: '12',
+    health: '13',
   };
   for (const [id, number] of Object.entries(numbers)) {
     const agent = body.agents.find((a) => a.id === id);
@@ -129,6 +130,7 @@ test('state содержит новый ростер без секретов', a
     advisor: '961b2d3d-5f80-4891-b87a-c6913bbf2971',
     social: 'a1bd53f2-5655-446b-8207-393e61fc20e1',
     routines: 'd6b45571-e211-4218-a1e2-1c0918973ddc',
+    health: '0ed66c28-6327-4768-8bf1-f2e06f72c2ac',
     trading: '504035c8-ccd8-467b-9e34-f16305493533',
     biz: 'a64c9436-36bc-4122-af1b-89d56950b0c1',
     lang: '5f09e2b6-ec92-44ef-bcbd-b1f848daed18',
@@ -168,6 +170,12 @@ test('state содержит новый ростер без секретов', a
   assert.equal(routines.district, 'Хамовники');
   assert.match(routines.role, /рутинам и автоматизации/);
   assert.match(routines.role, /обучает владельца/);
+  const health = body.agents.find((a) => a.id === 'health');
+  assert.equal(health.name, 'Здоровье и спорт · Кремль');
+  assert.equal(health.number, '13');
+  assert.equal(health.kind, 'health');
+  assert.equal(health.district, 'Лужники');
+  assert.deepEqual([health.x, health.y], [556, 620]);
   for (const id of ['trading', 'biz', 'lang']) {
     const archived = body.agents.find((a) => a.id === id);
     assert.equal(archived.archived, true, id);
@@ -285,7 +293,7 @@ test('неизвестный агент создаётся на лету и по
   const a = st.body.agents.find((x) => x.id === 'crypto');
   assert.equal(a.name, 'Крипта');
   assert.equal(a.status, 'working');
-  assert.equal(a.number, '13');
+  assert.equal(a.number, '14');
   assert.equal(a.archived, false);
   assert.ok(Number.isFinite(a.x) && Number.isFinite(a.y));
   assert.ok(st.body.agents.find((x) => x.id === 'grok').links.includes('crypto'));

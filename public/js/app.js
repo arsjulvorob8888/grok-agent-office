@@ -192,6 +192,7 @@
     temshik: [860, 920],
     devops: [1180, 900],
     qa: [1500, 740],
+    health: [556, 620],
   };
   // Кто сидит внутри чужого здания и на карте не рисуется.
   const ROOM_OF = { advisor: 'grok' };
@@ -309,7 +310,7 @@
       const tier = tierOf(a);
       const act = activityClass(a);
       e.g.setAttribute('class', `agent tier-${tier} st-${a.status}${act}${S.selected === a.id ? ' sel' : ''}`);
-      e.tag.className = `tag ${tier}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
+      e.tag.className = `tag ${tier}${a.id === 'health' ? ' fit' : ''}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
       e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${a.status}"></span>`;
       e.w = 0;
       const show = !a.vacant && (a.status === 'working' || a.status === 'waiting') && a.now;
@@ -783,6 +784,10 @@
 
   // ── Ростер и мини-карта ─────────────────────────────────────────────────
   function portrait(a, vb) {
+    if (a && a.id === 'health') {
+      const file = String(vb).startsWith('-34') ? 'health-sport.png' : 'health-sport-avatar.svg';
+      return `<img class="avatar-img" src="/img/${file}" alt="">`;
+    }
     return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid slice">${Figures.render(a.kind, a.color)}</svg>`;
   }
   function buildRoster() {
