@@ -248,6 +248,10 @@ test('ответы, закрытия, панель и приказы не зов
   assert.ok(financeOpen.body.tasks.some((task) => task.text.includes('итого 10')));
 
   const testsBefore = kremlinHits.length;
+  const questionOpen = office.state.needs.find((n) => n.id === 'need-test-question');
+  questionOpen.closedAt = null;
+  questionOpen.closedBy = null;
+  questionOpen.answerStatus = null;
   const testAnswer = await json('/api/needs/need-test-question/answer', {
     method: 'POST', body: JSON.stringify({ text: 'пробный без очереди', partial: true }),
   });

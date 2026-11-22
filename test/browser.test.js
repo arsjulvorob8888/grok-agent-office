@@ -22,7 +22,7 @@ process.env.NEEDS_DETAILS_JSON = JSON.stringify({
 });
 delete process.env.PORYADOK_INGEST_TOKEN;
 
-const { app } = require('../server.js');
+const { app, state } = require('../server.js');
 const puppeteer = require('puppeteer-core');
 
 function chromePath() {
@@ -189,13 +189,17 @@ test('прокрутка панели на 390px сохраняется посл
     assert.ok(before.body > 40, `панель не прокручивается (${before.body})`);
     assert.ok(before.qr > 10, `результат не прокручивается (scroll ${before.qr}, h ${before.qrH}/${before.qrC})`);
 
+    await page.evaluate(() => {
+      window.__officeSeen = 0;
+      document.addEventListener('officestate', () => { window.__officeSeen += 1; });
+    });
     const marked = await api('/api/status', {
       method: 'POST',
       headers: { 'x-agent-token': 'tok-ui' },
       body: JSON.stringify({ agent: 'dev', status: 'waiting', now: 'MARKER-NOW ждёт взгляд' }),
     });
     assert.equal(marked.status, 200);
-    await page.waitForFunction(() => (document.querySelector('.status-line .now') || {}).textContent?.includes('MARKER-NOW'), { timeout: 10000 });
+    await page.waitForFunction(() => window.__officeSeen > 0, { timeout: 10000 });
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
     const after = await page.evaluate(() => {
@@ -1131,7 +1135,7 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.match(chip('finance'), /^7\./);
     assert.equal(chipIds.includes('invest'), false);
     assert.equal(chipIds.includes('analyst'), false);
-    assert.equal(chipIds.includes('advisor'), false);
+    assert.equal(chipIds.includes('advisor'), true);
     assert.match(chip('qa'), /^8\./);
     assert.match(chip('blog'), /^9\./);
     assert.match(chip('social'), /^11\./);
@@ -1229,7 +1233,7 @@ test('на десктопе подписи «1. Путин» и «10. Совет
     });
     assert.equal(ui.vw, 1280);
     assert.equal(ui.advisorTitle, '10. Советник Путина');
-    assert.equal(ui.advisorChip, '');
+    assert.equal(ui.advisorChip, '10. Советник Путина');
     assert.equal(ui.advisorTag, '');
     assert.match(ui.advisorKicker, /Кремль/);
     assert.match(ui.advisorRole, /стратегический советник Путина/i);
@@ -1469,6 +1473,12 @@ test('одобрение показывает только «Да» и «Нет�
 });
 
 test('после «Да» страница возвращает на карту, закрытый пункт без кнопок и повтор — 409', { timeout: 30000 }, async () => {
+  const qa = state.needs.find((item) => item.id === 'need-test-qa');
+  qa.closedAt = null;
+  qa.closedBy = null;
+  qa.answerStatus = null;
+  qa.answer = null;
+  qa.answers = [];
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
@@ -1545,6 +1555,11 @@ test('после «Да» страница возвращает на карту,
 });
 
 test('частичный текстовый тест копится и не уходит с страницы', { timeout: 30000 }, async () => {
+  const question = state.needs.find((item) => item.id === 'need-test-question');
+  question.closedAt = null;
+  question.closedBy = null;
+  question.answerStatus = null;
+  question.answers = [];
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
@@ -1691,7 +1706,7 @@ test('помещения, лента, подсказка, бейдж и зазо
       assert.equal(boxes.agents.some((b) => b.id === 'invest' || b.id === 'analyst' || b.id === 'advisor'), false);
       assert.equal(boxes.chips.includes('invest'), false);
       assert.equal(boxes.chips.includes('analyst'), false);
-      assert.equal(boxes.chips.includes('advisor'), false);
+      assert.equal(boxes.chips.includes('advisor'), true);
       assert.ok(boxes.chips.includes('finance') && boxes.chips.includes('grok'));
       assert.deepEqual(errors, []);
     } finally {
@@ -1823,15 +1838,14 @@ test('помещения, лента, подсказка, бейдж и зазо
       return map && roster && map.textContent === expected && roster.textContent === expected;
     }, { timeout: 12000 }, String(sum));
     await watch.page.waitForFunction(() => {
-      const finance = document.querySelector('#roster .chip[data-id="finance"] .chip-event');
-      const grok = document.querySelector('#roster .chip[data-id="grok"] .chip-event');
-      if (!finance || !grok) return false;
-      const name = document.querySelector('#roster .chip[data-id="finance"] .cn').getBoundingClientRect();
-      const row = finance.getBoundingClientRect();
-      return /Финансы · Инвестиции:\s*Смотрю долю кэша/.test(finance.textContent)
-        && /Путин · Советник/.test(grok.textContent)
-        && /Готовлю сводку/.test(grok.textContent)
-        && row.top >= name.bottom - 1;
+      const finance = document.querySelector('#roster .chip[data-id="finance"]');
+      const grok = document.querySelector('#roster .chip[data-id="grok"]');
+      const advisor = document.querySelector('#roster .chip[data-id="advisor"]');
+      if (!finance || !grok || !advisor) return false;
+      const leaked = [...document.querySelectorAll('#roster .chip-event')].map((el) => el.textContent.trim()).join('');
+      return leaked === ''
+        && !grok.innerText.includes('Готовлю сводку')
+        && !finance.innerText.includes('Смотрю долю кэша');
     }, { timeout: 12000 });
     assert.deepEqual(watch.errors, []);
   } finally {

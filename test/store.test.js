@@ -241,8 +241,8 @@ async function seedOffice(base) {
     method: 'POST',
     body: JSON.stringify({ answer: 'yes' }),
   });
-  assert.equal(closedTest.status, 201);
-  assert.ok(closedTest.body.closedAt);
+  assert.equal(closedTest.status, 409);
+  assert.equal(closedTest.body.error, 'Пункт уже закрыт');
   const marked = await json(base, '/api/status', {
     method: 'POST',
     headers: { 'x-agent-token': 'tok-test' },
@@ -309,12 +309,15 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(needs.body.needs.find((item) => item.id === 'need-test-qa'), undefined);
       assert.equal(needs.body.needs.find((item) => item.id === 'need-test-question'), undefined);
       const withTests = await json(second.base, '/api/needs?includeTest=1');
-      assert.equal(withTests.body.needs.length, 4);
-      assert.ok(withTests.body.needs.find((item) => item.id === 'need-test-qa'));
-      assert.ok(withTests.body.needs.find((item) => item.id === 'need-test-question'));
+      assert.equal(withTests.body.needs.length, 2);
+      assert.equal(withTests.body.needs.find((item) => item.id === 'need-test-qa'), undefined);
+      assert.equal(withTests.body.needs.find((item) => item.id === 'need-test-question'), undefined);
       const direct = await json(second.base, '/api/needs/need-test-question');
       assert.equal(direct.status, 200);
       assert.equal(direct.body.kind, 'test');
+      assert.equal(direct.body.status, 'closed');
+      assert.ok(direct.body.closedAt);
+      assert.equal(direct.body.answerStatus, 'resolved');
       const forgotten = await json(second.base, '/api/decisions', { headers: { 'x-app-password': 'pw-test' } });
       assert.equal(forgotten.status, 200);
       assert.deepEqual(forgotten.body.decisions, []);
@@ -554,15 +557,18 @@ describe('хранилище', { concurrency: 1 }, () => {
       assert.equal(dev.done[0], 'Сохранил опыт');
       assert.equal(ids.includes('need-finance'), false);
       const openTests = await json(second.base, '/api/needs?includeTest=1');
-      const reopened = openTests.body.needs.find((item) => item.id === 'need-test-qa');
-      assert.ok(reopened);
-      assert.equal(reopened.closedAt, null);
-      assert.equal(reopened.answerMode, 'yesno');
-      assert.deepEqual(reopened.answers, []);
-      const question = openTests.body.needs.find((item) => item.id === 'need-test-question');
-      assert.ok(question);
-      assert.equal(question.closedAt, null);
-      assert.equal(question.answerMode, 'text');
+      assert.equal(openTests.body.needs.find((item) => item.id === 'need-test-qa'), undefined);
+      const reopened = await json(second.base, '/api/needs/need-test-qa');
+      assert.equal(reopened.status, 200);
+      assert.ok(reopened.body.closedAt);
+      assert.equal(reopened.body.status, 'closed');
+      assert.equal(reopened.body.answerMode, 'yesno');
+      assert.equal(reopened.body.answerStatus, 'resolved');
+      const question = await json(second.base, '/api/needs/need-test-question');
+      assert.equal(question.status, 200);
+      assert.ok(question.body.closedAt);
+      assert.equal(question.body.status, 'closed');
+      assert.equal(question.body.answerMode, 'text');
       const journal = await json(second.base, '/api/decisions', { headers: { 'x-app-password': 'pw-test' } });
       assert.equal(journal.status, 200);
       const financeRows = journal.body.decisions.filter((row) => row.needId === 'need-finance' && row.answer === 'Ответ на финансы');

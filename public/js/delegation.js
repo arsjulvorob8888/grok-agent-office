@@ -71,7 +71,11 @@
   }
 
   function activeOrders(tasks) {
-    return (tasks || []).filter((t) => t && OPEN.has(t.orderStatus));
+    return (tasks || []).filter((t) => {
+      if (!t || !OPEN.has(t.orderStatus)) return false;
+      if (window.TaskRules && TaskRules.isSilentTask(t)) return false;
+      return true;
+    });
   }
 
   function draw(tasks, agents) {

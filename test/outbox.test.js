@@ -323,9 +323,12 @@ test('на 390px карточка говорит, что доставка не �
     page.on('pageerror', (err) => { errors.push(String(err)); });
     await page.goto(`${base}/?agent=routines`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction((text) => {
-      const pill = document.querySelector('#panel.open .status-line');
+      const pill = document.querySelector('#panel.open .status-line .status-pill');
       const badge = document.querySelector('#panel.open .quest .badge');
-      return pill && badge && pill.textContent.includes(text) && badge.textContent.includes(text);
+      const labels = ['Работает', 'Координирует', 'Ждёт', 'Спит'];
+      return pill && badge && badge.textContent.includes(text)
+        && !pill.textContent.includes(text)
+        && labels.some((label) => pill.textContent.includes(label));
     }, { timeout: 8000 }, OFFLINE);
     assert.deepEqual(errors, []);
     const box = await page.evaluate(() => {

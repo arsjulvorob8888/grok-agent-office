@@ -221,11 +221,12 @@
   const kremlin = () => { const g = S.byId.get(CONFIG.mainId); return g ? [g.x, g.y + 22] : [800, 562]; };
 
   function levelInfo(a) {
+    if (window.TaskRules) return TaskRules.xpOf(a, S.tasks);
     const sent = S.tasks.filter((t) => t.agent === a.id).length;
     const xp = (a.completed || 0) * CONFIG.xpPerTask + sent * CONFIG.xpPerSent;
     let lvl = 1, need = 150, base = 0;
     while (xp >= base + need) { base += need; lvl++; need = 150 + (lvl - 1) * 75; }
-    return { xp, lvl, into: xp - base, need, sent };
+    return { xp, lvl, into: xp - base, need, sent, completed: a.completed || 0 };
   }
 
   function agentSig(list) {
@@ -331,13 +332,15 @@
       const tier = tierOf(a);
       const act = activityClass(a);
       const tone = statusTone(a);
+      const label = window.AgentStatus ? AgentStatus.statusLabel(a) : activityLabel(a);
       if (e.g) e.g.setAttribute('class', `agent tier-${tier} st-${tone}${act}${S.selected === a.id ? ' sel' : ''}`);
+      if (e.tag) e.tag.dataset.status = label;
       if (!e.g) {
         e.tag.className = `tag guest${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
-        e.tag.innerHTML = `<span class="dot ${tone}"></span>`;
+        e.tag.innerHTML = `<span class="dot ${tone}" data-status="${esc(label)}"></span>`;
       } else {
         e.tag.className = `tag ${tier}${a.id === 'health' ? ' fit' : ''}${S.selected === a.id ? ' sel' : ''}${actStateClass(a)}`;
-        e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${tone}"></span>`;
+        e.tag.innerHTML = `<span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span><span class="dot ${tone}" data-status="${esc(label)}"></span>`;
       }
       e.w = 0;
       const show = showsStatusBubble(a);
@@ -345,7 +348,8 @@
       if (e.bubble) e.bubble.className = `bubble ${tone}${show && peek ? '' : ' hide'}`;
       e.bubbleOn = !!(e.bubble && show && peek);
       const thinking = a.live && a.live.status === 'working';
-      if (e.bubble) e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(a.now || '');
+      const bubbleText = window.AgentStatus ? AgentStatus.ownDoing(a) : '';
+      if (e.bubble) e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(bubbleText);
       if (e.link) {
         const hot = activityMode(a) === 'working';
         e.link.setAttribute('class', `link${tier === 'sub' ? ' sub' : ''}${hot ? ' hot' : ''}${S.selected === a.id ? ' sel' : ''}`);
@@ -361,7 +365,7 @@
   }
 
   function latestOrder(agentId) {
-    const list = S.tasks.filter((t) => (t.agentId || t.agent) === agentId);
+    const list = S.tasks.filter((t) => (t.agentId || t.agent) === agentId && !(window.TaskRules && TaskRules.isSilentTask(t)));
     list.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.id).localeCompare(String(a.id)));
     const newest = list[0];
     if (!newest) return null;
@@ -820,9 +824,14 @@
     }
     return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid slice">${Figures.render(a.kind, a.color)}</svg>`;
   }
+  function rosterAgents() {
+    return S.agents.filter((a) => (window.AgentStatus && AgentStatus.inBottomRoster
+      ? AgentStatus.inBottomRoster(a, ROOM_OF)
+      : onMap(a))).sort(cmpNum);
+  }
   function buildRoster() {
     const r = $('#roster');
-    const list = S.agents.filter(onMap).sort(cmpNum);
+    const list = rosterAgents();
     let html = '', lastGroup = null;
     for (const a of list) {
       const t = tierOf(a);
@@ -880,7 +889,10 @@
       c.classList.toggle('act-coordinating', activityMode(a) === 'coordinating');
       c.classList.toggle('act-waiting', activityMode(a) === 'waiting');
       c.classList.toggle('act-idle', activityMode(a) === 'resting');
+      const label = window.AgentStatus ? AgentStatus.statusLabel(a) : activityLabel(a);
+      c.dataset.status = label;
       c.querySelector('.st').className = `st ${statusTone(a)}`;
+      c.querySelector('.st').dataset.status = label;
       c.querySelector('.lv').textContent = a.vacant ? '—' : `${levelInfo(a).lvl}`;
       paintAwaitBadge(c.querySelector('.await-you'), a.id, true);
       paintGuestEvents(c, a);
@@ -917,7 +929,7 @@
       if (wrap) wrap.classList.toggle('zero', n === 0);
     }
     if (!dots) return;
-    const html = S.agents.filter(onMap).sort(cmpNum).map((a) => {
+    const html = rosterAgents().map((a) => {
       const st = statusTone(a);
       return `<i class="agent-bar-dot ${st}"></i>`;
     }).join('');
@@ -926,20 +938,15 @@
       dots.innerHTML = html;
     }
   }
-  function paintGuestEvents(chip, host) {
+  function paintGuestEvents(chip) {
     const box = chip.querySelector('.chip-events');
     if (!box) return;
-    const lines = roomGuests(host.id).map((guest) => {
-      const text = String(guest.currentTask || '').trim();
-      if (!text) return '';
-      return `${plainName(host)} · ${plainName(guest)}: ${text}`;
-    }).filter(Boolean);
-    const sig = lines.join('\n');
-    if (box.dataset.sig !== sig) {
-      box.dataset.sig = sig;
-      box.innerHTML = lines.map((line) => `<span class="chip-event">${esc(line)}</span>`).join('');
+    // Doing гостя не переносится на чип начальника: у каждого только своё.
+    if (box.dataset.sig !== '') {
+      box.dataset.sig = '';
+      box.innerHTML = '';
     }
-    box.hidden = lines.length === 0;
+    box.hidden = true;
   }
   function buildMiniDots() {
     $('#miniDots').innerHTML = S.agents.filter(onMap).map((a) => `<circle class="mini-dot" cx="${a.x}" cy="${a.y}" r="18" fill="${a.color}" opacity=".8"/>`).join('');
@@ -1277,10 +1284,9 @@
   }
   function seatHTML(a, head) {
     const role = a.id === head.id ? 'Руководитель' : (a.parentId ? 'Заместитель' : 'В этом здании');
-    const phrase = deliveryPhrase(a);
     const look = seatLook(a);
-    const st = phrase || (window.AgentStatus ? AgentStatus.activityLabel(a) : activityLabel(a));
-    const note = phrase ? '' : (a.doing || a.now || '');
+    const st = window.AgentStatus ? AgentStatus.statusLabel(a) : activityLabel(a);
+    const note = window.AgentStatus ? AgentStatus.ownDoing(a) : '';
     const figStyle = `opacity:${look.opacity};filter:${look.filter}`;
     return `<article class="room-seat" data-id="${esc(a.id)}" data-presence="${esc(look.mode)}">
       <div class="room-sit">
@@ -1296,7 +1302,7 @@
       <div class="room-meta">
         <div class="room-role">${esc(role)}</div>
         <div class="room-name">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</div>
-        <div class="room-status"><span class="room-dot" data-status="${esc(look.mode)}"></span><span class="status-pill ${esc(phrase ? 'queued' : look.dot)}">${esc(st)}</span><span class="now">${esc(note)}</span></div>
+        <div class="room-status"><span class="room-dot" data-status="${esc(look.mode)}"></span><span class="status-pill ${esc(look.dot)}" data-status="${esc(st)}">${esc(st)}</span><span class="now">${esc(note)}</span></div>
         <button type="button" class="btn gold room-go" data-id="${esc(a.id)}">Открыть</button>
       </div>
     </article>`;
@@ -1351,7 +1357,9 @@
     return 'idle';
   }
   function showsStatusBubble(a) {
-    if (!a || a.vacant || !a.now) return false;
+    if (!a || a.vacant) return false;
+    const what = window.AgentStatus ? AgentStatus.ownDoing(a) : '';
+    if (!what) return false;
     const mode = activityMode(a);
     return mode === 'working' || mode === 'waiting';
   }
@@ -1371,14 +1379,9 @@
     return ` sleep${dim}`;
   }
   function activityLabel(a) {
+    if (window.AgentStatus && AgentStatus.statusLabel) return AgentStatus.statusLabel(a);
     if (window.AgentStatus) return AgentStatus.activityLabel(a);
-    return ACTIVITY_TEXT[activityMode(a)] || STATUS_TEXT[a && a.status] || '';
-  }
-  function deliveryPhrase(a) {
-    if (!a || activityMode(a) === 'working') return '';
-    const task = S.tasks.find((t) => (t.agentId || t.agent) === a.id && (t.deliveryLabel || t.outboxStatus));
-    if (!task) return '';
-    return Feed.taskDeliveryLabel ? Feed.taskDeliveryLabel(task) : (task.deliveryLabel || '');
+    return ACTIVITY_TEXT[activityMode(a)] || '';
   }
   function activityDot(a) {
     const mode = activityMode(a);
@@ -1388,10 +1391,8 @@
     return 'idle';
   }
   function statusNowHTML(a) {
-    const mode = activityMode(a);
-    const active = mode === 'working' || mode === 'coordinating';
-    const what = String((a && (a.doing || (active ? a.currentTask : '') || a.now)) || '').trim();
-    if (!active || !what) return `<span class="now">${esc(a && a.now || '')}</span>`;
+    const what = window.AgentStatus && AgentStatus.chipCaption ? AgentStatus.chipCaption(a) : '';
+    if (!what) return '<span class="now"></span>';
     const age = agoText(a.doingSince || a.lastSeenAt);
     return `<span class="now"><span class="k">чем занят</span> ${esc(what)}</span>${age ? `<span class="ago">уже ${esc(age)}</span>` : ''}`;
   }
@@ -1582,8 +1583,8 @@
       <div class="p-body">
         ${panelNeedsHTML(a)}
         ${a.vacant ? '' : `<div class="p-row" data-anchor="level"><div class="lvl-badge"><div><b>${L.lvl}</b><span>УРОВЕНЬ</span></div></div>
-          <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${a.completed || 0}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
-        <div class="status-line" data-anchor="status"><span class="status-pill ${deliveryPhrase(a) ? 'queued' : activityDot(a)}">${esc(deliveryPhrase(a) || activityLabel(a))}</span>${deliveryPhrase(a) ? '<span class="now"></span>' : statusNowHTML(a)}</div>
+          <div class="xp"><div class="xp-top"><span>Опыт <b>${L.into}</b> / ${L.need}</span><span>Выполнено: <b>${L.completed != null ? L.completed : (a.completed || 0)}</b></span></div><div class="bar"><i style="width:${Math.round((L.into / L.need) * 100)}%"></i></div></div></div>
+        <div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}" data-status="${esc(activityLabel(a))}">${esc(activityLabel(a))}</span>${statusNowHTML(a)}</div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
@@ -1880,7 +1881,7 @@
     const modal = $('#modal');
     modal.classList.add('show');
     modal.dataset.openedAt = String(Date.now());
-    $('#modal p').innerHTML = err ? `<span style="color:#fca5a5">${esc(err)}</span>` : 'Введи пароль доступа (<code>APP_PASSWORD</code> из Render). Он хранится только в этом браузере.';
+    $('#modal p').textContent = err || 'Введите пароль доступа';
     $('#pwInput').value = '';
     setTimeout(() => $('#pwInput').focus(), 60);
   }
@@ -1960,7 +1961,8 @@
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
     const split = Feed.journalSplit ? Feed.journalSplit(Feed.ordersForGeneral(S.tasks)) : { active: Feed.ordersForGeneral(S.tasks), cancelled: [], badge: S.tasks.length };
     const sig = split.active.concat(split.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
-    $('#jCount').textContent = String(split.badge);
+    const badge = split.active.filter((t) => !(window.TaskRules && TaskRules.isSilentTask(t))).length;
+    $('#jCount').textContent = String(badge);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
     const quest = (t) => questHTML(t, true);
@@ -1989,7 +1991,7 @@
     return 'задач';
   }
   function openTaskCount(id) {
-    return S.tasks.filter((t) => (t.agentId || t.agent) === id && Feed.countsAsActiveTask(t)).length;
+    return S.tasks.filter((t) => (t.agentId || t.agent) === id && Feed.countsAsActiveTask(t) && !(window.TaskRules && TaskRules.isSilentTask(t))).length;
   }
   function treeChildren(a) {
     const explicit = S.agents.filter((x) => x.parentId === a.id);
@@ -2002,12 +2004,12 @@
     const kids = treeChildren(a);
     const shut = S.hierFold.has(a.id);
     const n = openTaskCount(a.id);
-    const st = activityLabel(a);
+    const st = window.AgentStatus ? AgentStatus.statusLabel(a) : activityLabel(a);
     return `<div class="org-item">
       <div class="org-row">
         <button type="button" class="org-twist${kids.length ? '' : ' leaf'}${shut ? ' shut' : ''}" data-fold="${esc(a.id)}" aria-label="${shut ? 'Развернуть' : 'Свернуть'}">${kids.length ? '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>' : ''}</button>
-        <button type="button" class="org-card${S.selected === a.id ? ' sel' : ''}" data-id="${esc(a.id)}">
-          <span class="top"><span class="dot ${esc(activityDot(a))}"></span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>${n ? `<span class="pill">${n}</span>` : ''}</span>
+        <button type="button" class="org-card${S.selected === a.id ? ' sel' : ''}" data-id="${esc(a.id)}" data-status="${esc(st)}">
+          <span class="top"><span class="dot ${esc(activityDot(a))}" data-status="${esc(st)}"></span><span class="nm">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</span>${n ? `<span class="pill">${n}</span>` : ''}</span>
           <span class="meta">${esc(st)}${n ? ` · ${n} ${taskWord(n)}` : ''}</span>
         </button>
       </div>
@@ -2387,7 +2389,7 @@
     const next = new Map();
     for (const t of S.tasks) {
       next.set(t.id, t.status);
-      if (S.loaded && t.status === 'выполнена' && prevStatus.get(t.id) && prevStatus.get(t.id) !== 'выполнена') {
+      if (S.loaded && t.status === 'выполнена' && prevStatus.get(t.id) && prevStatus.get(t.id) !== 'выполнена' && !(window.TaskRules && TaskRules.isSilentTask(t))) {
         const a = S.byId.get(t.agent);
         if (a) {
           toast(`${plainName(a)}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${t.result ? t.result.slice(0, 90) : t.text.slice(0, 90)}`, 'check');

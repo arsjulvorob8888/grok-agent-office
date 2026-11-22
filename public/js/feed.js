@@ -401,6 +401,16 @@
     return 'Сохранён, ещё не доставлен';
   }
 
+  function silentTask(task) {
+    const rules = typeof TaskRules !== 'undefined' ? TaskRules : null;
+    if (rules && typeof rules.isSilentTask === 'function') return rules.isSilentTask(task);
+    if (!task) return false;
+    if (task.orderStatus === 'cancelled') return true;
+    const status = String(task.status || '').trim().toLowerCase();
+    if (status === 'отменён' || status === 'отменен' || status === 'cancelled') return true;
+    return String(task.text || '').trim().toLowerCase() === 'тест';
+  }
+
   // Спокойная подпись, не реплика агента. Пустая строка — ждать нечего.
   function replyWaitCaption(tasks, messages, agentId) {
     const open = (tasks || []).filter((task) => {
@@ -497,7 +507,7 @@
     const live = [];
     const undelivered = [];
     for (const task of tasks || []) {
-      if (!task || isFinalRecord(task, messages)) continue;
+      if (!task || silentTask(task) || isFinalRecord(task, messages)) continue;
       const status = task.orderStatus || 'sent';
       if (status !== 'sent' && status !== 'accepted' && status !== 'in_progress') continue;
       if (isLiveProcess(task, agents, at, holdMs)) {
@@ -543,7 +553,7 @@
   }
 
   function countsAsQueued(task) {
-    if (!task) return false;
+    if (!task || silentTask(task)) return false;
     if (task.orderStatus === 'cancelled' || task.orderStatus === 'done' || task.orderStatus === 'failed') return false;
     if (task.status === 'выполнена') return false;
     return task.status === 'в очереди агента' || task.delivery === 'queue' || !task.orderStatus || task.orderStatus === 'sent';
