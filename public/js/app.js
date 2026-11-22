@@ -398,18 +398,12 @@
     e.badge.setAttribute('aria-label', aria);
     e.badge.title = aria;
   }
+  function awaitAgentIds(agentId) {
+    return [agentId, ...roomGuests(agentId).map((a) => a.id)];
+  }
   function needsOnBadge(agentId, team) {
-    const ids = team ? [agentId, ...roomGuests(agentId).map((a) => a.id)] : [agentId];
-    const seen = new Set();
-    const open = [];
-    for (const id of ids) {
-      for (const n of Feed.openNeedsForAgent(S.needs, id)) {
-        if (seen.has(n.id)) continue;
-        seen.add(n.id);
-        open.push(n);
-      }
-    }
-    return open;
+    const ids = team ? awaitAgentIds(agentId) : [agentId];
+    return Feed.needsForIds(S.needs, ids);
   }
   function paintAwaitBadge(el, agentId, team) {
     if (!el) return;
@@ -1522,7 +1516,7 @@
     const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
     const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
-    const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, n.answerDeliveryLabel, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
+    const needKey = Feed.needsForIds(S.needs, awaitAgentIds(a.id)).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, n.answerDeliveryLabel, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}:${d.deliveryRoute || ''}`).join(',');
     return [a.id, a.deliveryRoute || '', a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
@@ -1531,7 +1525,7 @@
     const a = S.byId.get(S.selected);
     if (!a) return;
     const tier = tierOf(a), L = levelInfo(a);
-    const tasks = Feed.ordersForAgent(S.tasks, a.id);
+    const tasks = Feed.ordersForAgent(S.tasks, a.id).filter((t) => !(window.TaskRules && TaskRules.isSilentTask(t)));
     const pin = S.pinnedOrder && tasks.find((t) => t.id === S.pinnedOrder);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
     const parent = a.parentId ? S.byId.get(a.parentId) : null;
@@ -1963,17 +1957,18 @@
     const top = list.scrollTop;
     const saved = {};
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
-    const split = Feed.journalSplit ? Feed.journalSplit(Feed.ordersForGeneral(S.tasks), Date.now()) : { active: Feed.ordersForGeneral(S.tasks), delivered: [], cancelled: [], badge: S.tasks.length, empty: '' };
-    const sig = split.active.concat(split.delivered || [], split.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
-    $('#jCount').textContent = String(split.badge != null ? split.badge : split.active.length);
+    const view = Feed.visibleJournal(Feed.ordersForGeneral(S.tasks), Date.now());
+    const sig = view.active.concat(view.delivered || [], view.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
+    const badge = view.total;
+    $('#jCount').textContent = String(badge);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
     const quest = (t) => questHTML(t, true);
     const fold = (items, cls, title) => (items && items.length
       ? `<details class="${cls}"><summary>${title} (${items.length})</summary>${items.slice(0, 60).map(quest).join('')}</details>`
       : '');
-    const idle = split.active.length ? '' : `<div class="empty"><b>${esc(split.empty || 'Активных заданий нет')}</b></div>`;
-    list.innerHTML = idle + split.active.slice(0, 60).map(quest).join('') + fold(split.delivered, 'j-delivered', 'Доставленные') + fold(split.cancelled, 'j-cancelled', 'Отменённые');
+    const idle = view.active.length ? '' : `<div class="empty"><b>${esc(view.empty || 'Активных заданий нет')}</b></div>`;
+    list.innerHTML = idle + view.active.slice(0, 60).map(quest).join('') + fold(view.delivered, 'j-delivered', 'Доставленные') + fold(view.cancelled, 'j-cancelled', 'Отменённые');
     list.scrollTop = top;
     list.querySelectorAll('[data-scroll-key]').forEach((el) => {
       if (typeof saved[el.dataset.scrollKey] === 'number') el.scrollTop = saved[el.dataset.scrollKey];
@@ -2198,7 +2193,7 @@
     placeOverlay();
   }
   function panelNeedsHTML(agent) {
-    const list = Feed.needsForAgent(S.needs, agent.id);
+    const list = Feed.needsForIds(S.needs, awaitAgentIds(agent.id));
     if (!list.length) return '';
     return `<div class="sec awaits" data-anchor="awaits"><h4>Ждёт от вас</h4><div class="awaits-list">${list.map((n) => needCardHTML(n, true)).join('')}</div></div>`;
   }

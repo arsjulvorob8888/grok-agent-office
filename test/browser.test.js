@@ -1954,9 +1954,10 @@ test('фокус после панели и помещения возвраща�
       await page.$eval('#roster .chip[data-id="finance"]', (el) => el.scrollIntoView({ inline: 'center', block: 'nearest' }));
       await page.click('#roster .chip[data-id="finance"]');
       await page.waitForFunction(() => {
-        const btn = document.querySelector('#panel.open[data-agent="finance"] #pClose');
-        const panel = document.querySelector('#panel');
-        if (!btn || !panel || panel.inert || panel.getAttribute('aria-hidden') === 'true') return false;
+        const panel = document.querySelector('#panel.open[data-agent="finance"]');
+        const btn = panel && panel.querySelector('#pClose');
+        if (!btn || panel.inert || panel.getAttribute('aria-hidden') === 'true') return false;
+        if (getComputedStyle(panel).transform !== 'none') return false;
         const r = btn.getBoundingClientRect();
         const x = r.left + r.width / 2;
         const y = r.top + r.height / 2;
@@ -1964,8 +1965,27 @@ test('фокус после панели и помещения возвраща�
         const hit = document.elementFromPoint(x, y);
         return !!(hit && (hit === btn || btn.contains(hit)));
       }, { timeout: 4000 });
-      await page.click('#pClose');
-      await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'), { timeout: 4000 });
+      const closeAt = await page.$eval('#panel.open[data-agent="finance"] #pClose', (btn) => {
+        const r = btn.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      await page.mouse.click(closeAt.x, closeAt.y);
+      try {
+        await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'), { timeout: 4000 });
+      } catch (err) {
+        const state = await page.evaluate((point) => {
+          const panel = document.querySelector('#panel');
+          const btn = document.querySelector('#pClose');
+          const hit = document.elementFromPoint(point.x, point.y);
+          return {
+            open: !!(panel && panel.classList.contains('open')),
+            transform: panel ? getComputedStyle(panel).transform : '',
+            hit: hit ? `${hit.tagName}.${hit.className}#${hit.id}` : '',
+            btn: !!btn,
+          };
+        }, closeAt);
+        throw new Error(`${viewport.width} панель не закрылась: ${JSON.stringify(state)}; ${err.message}`);
+      }
       const panelBack = await page.evaluate(() => {
         const panel = document.querySelector('#panel');
         const active = document.activeElement;
