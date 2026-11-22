@@ -1376,8 +1376,9 @@
   }
   function deliveryPhrase(a) {
     if (!a || activityMode(a) === 'working') return '';
-    const task = S.tasks.find((t) => (t.agentId || t.agent) === a.id && t.deliveryLabel);
-    return task ? task.deliveryLabel : '';
+    const task = S.tasks.find((t) => (t.agentId || t.agent) === a.id && (t.deliveryLabel || t.outboxStatus));
+    if (!task) return '';
+    return Feed.taskDeliveryLabel ? Feed.taskDeliveryLabel(task) : (task.deliveryLabel || '');
   }
   function activityDot(a) {
     const mode = activityMode(a);
@@ -1425,11 +1426,13 @@
     const dir = viewerId ? Feed.orderDirection(t, viewerId, S.tasks) : '';
     const mark = dir === 'out' ? '→' : dir === 'in' ? '←' : dir === 'both' ? '↔' : '';
     const dirLabel = dir === 'out' ? 'отдал' : dir === 'in' ? 'получил' : dir === 'both' ? 'себе' : '';
+    const via = Feed.sentRoutePhrase ? Feed.sentRoutePhrase(t.sentRoute) : '';
     return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}"${dir ? ` data-dir="${dir}"` : ''} style="--c:${esc(a.color)}">
       <span class="qi">${ico(cls === 'done' ? 'check' : cls === 'fail' ? 'x' : 'send')}</span>
       <span class="qt">${esc(title)}</span>
       <span class="qm">${mark ? `<span class="qdir" aria-label="${dirLabel}">${mark}</span>` : ''}<span class="badge ${cls}">${label}</span>${showAgent ? `<span>${esc(titled(a))}</span>·` : ''}<span>${fmtTime(t.createdAt)}</span></span>
       ${chainHTML(t)}
+      ${via ? `<div class="quest-via">${esc(via)}</div>` : ''}
       ${historyHTML(t)}
       ${attachmentsHTML(t.attachments)}
       ${t.result ? `<div class="qr" data-scroll-key="result:${esc(t.id)}">${linkify(t.result)}</div>` : ''}
@@ -1500,7 +1503,7 @@
         return `<div class="msg-row system"><div class="msg-sys">${linkify(Sender.displayOrderSender(m.text))}</div></div>`;
       }
       const speaker = S.byId.get(m.agentId) || agent;
-      const who = m.role === 'owner' ? 'Вы' : titled(speaker);
+      const who = m.role === 'owner' ? Sender.speakerLabel('owner') : titled(speaker);
       return `<div class="msg-row ${m.role === 'owner' ? 'owner' : 'agent'}">
         <div class="msg-bubble">
           <div class="msg-meta"><b>${esc(who)}</b><span>${fmtTime(m.timestamp || m.createdAt)}</span></div>
@@ -1516,7 +1519,7 @@
     if (!a) return '';
     const L = levelInfo(a);
     const tasks = Feed.ordersForAgent(S.tasks, a.id).slice(0, 20);
-    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
+    const taskKey = tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.progress, t.note, t.fromAgentId, t.parentOrderId, t.text, t.result, t.forwardStatus, Feed.orderDirection(t, a.id, S.tasks), JSON.stringify(t.history || []), JSON.stringify(t.attachments || [])].join('\u0001')).join('\u0002');
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
     const needKey = Feed.needsForAgent(S.needs, a.id).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, n.answerDeliveryLabel, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}:${d.deliveryRoute || ''}`).join(',');
@@ -1955,11 +1958,18 @@
     const top = list.scrollTop;
     const saved = {};
     list.querySelectorAll('[data-scroll-key]').forEach((el) => { saved[el.dataset.scrollKey] = el.scrollTop; });
-    const sig = S.tasks.map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
-    $('#jCount').textContent = S.tasks.length;
+    const split = Feed.journalSplit ? Feed.journalSplit(Feed.ordersForGeneral(S.tasks)) : { active: Feed.ordersForGeneral(S.tasks), cancelled: [], badge: S.tasks.length };
+    const sig = split.active.concat(split.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length].join(':')).join('|');
+    $('#jCount').textContent = String(split.badge);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
-    list.innerHTML = Feed.ordersForGeneral(S.tasks).slice(0, 60).map((t) => questHTML(t, true)).join('') || '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
+    const quest = (t) => questHTML(t, true);
+    const activeHtml = split.active.slice(0, 60).map(quest).join('');
+    const cancelledHtml = split.cancelled.length
+      ? `<details class="j-cancelled"><summary>Отменённые (${split.cancelled.length})</summary>${split.cancelled.slice(0, 60).map(quest).join('')}</details>`
+      : '';
+    const empty = '<div class="empty"><b>Журнал пуст</b>Выбери агента на карте и нажми «Дать задачу».</div>';
+    list.innerHTML = (activeHtml || (cancelledHtml ? '' : empty)) + cancelledHtml;
     list.scrollTop = top;
     list.querySelectorAll('[data-scroll-key]').forEach((el) => {
       if (typeof saved[el.dataset.scrollKey] === 'number') el.scrollTop = saved[el.dataset.scrollKey];
@@ -1979,7 +1989,7 @@
     return 'задач';
   }
   function openTaskCount(id) {
-    return S.tasks.filter((t) => t.agent === id && t.status !== 'выполнена' && t.orderStatus !== 'cancelled' && t.orderStatus !== 'done' && t.orderStatus !== 'failed').length;
+    return S.tasks.filter((t) => (t.agentId || t.agent) === id && Feed.countsAsActiveTask(t)).length;
   }
   function treeChildren(a) {
     const explicit = S.agents.filter((x) => x.parentId === a.id);

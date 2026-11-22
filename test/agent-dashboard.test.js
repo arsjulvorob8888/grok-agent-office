@@ -185,7 +185,7 @@ test('дашборд считает колонки, московские дни,
   assert.equal(owner.deliveryLabel, 'В очереди, доставка не подключена');
   const reply = view.messages.find((item) => item.id === 'm-agent');
   assert.equal(reply.deliveryLabel, null);
-  assert.ok(view.activityLog.some((line) => line.text.startsWith('Путин: ')));
+  assert.ok(view.activityLog.some((line) => line.text.startsWith('Вы: ')));
   assert.equal(view.activityLog.some((line) => line.text.includes('Владелец')), false);
   assert.ok(view.activityLog.some((line) => line.text === 'Собрал отчёт' && line.at == null));
   assert.ok(view.activityLog.some((line) => line.at === '2026-11-17T09:00:00Z'));

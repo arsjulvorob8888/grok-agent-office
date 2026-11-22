@@ -12,7 +12,7 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const HELD = 'Агенту ещё не доставлено';
-const WAIT = 'Ответ придёт сюда, когда агент его пришлёт';
+const WAIT = 'Доставлено агенту, ответа пока нет';
 
 function freePort() {
   return new Promise((resolve, reject) => {

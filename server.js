@@ -7,7 +7,7 @@ const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
 const { activityFor, activeWindowMs, orderRoute } = require('./lib/activity');
-const { deliveryCaption } = require('./public/js/feed');
+const { deliveryCaption, answerDeliveryCaption } = require('./public/js/feed');
 const retry = require('./lib/outbox-retry');
 const { buildDashboard } = require('./lib/agent-dashboard');
 const { registerHeartbeat } = require('./lib/heartbeat');
@@ -1583,10 +1583,13 @@ function publicTask(t) {
     history: (t.history || []).map(publicHistoryEntry),
     attachments: (t.attachments || []).map(publicAttachment),
   };
+  const item = outboxForTask(t.id);
   const view = withStoredFields(base, t);
+  view.outboxStatus = item && item.status ? item.status : null;
   view.deliveryLabel = deliveryLabelFor(t);
   view.routeLabel = orderRoute(t, routeName);
   view.deliveryRoute = delivery.publicRoute(t.agentId || t.agent, state, process.env);
+  view.sentRoute = publicSentRoute(t, item);
   return view;
 }
 
@@ -1609,6 +1612,18 @@ function outboxForTask(taskId) {
 
 const NO_ROUTE_ERROR = 'нет маршрута доставки';
 
+function publicSentRoute(task, item) {
+  const raw = (item && item.route) || (task && task.sentRoute);
+  if (raw === 'agent' || raw === 'putin' || raw === 'env') return raw;
+  return null;
+}
+
+function rememberSentRoute(task, item) {
+  const via = item && item.route;
+  if (!task || (via !== 'agent' && via !== 'putin' && via !== 'env' && via !== 'none')) return;
+  task.sentRoute = via;
+}
+
 function deliveryLabelFor(task) {
   if (!task) return null;
   if ((task.orderStatus || 'sent') !== 'sent') return null;
@@ -1617,7 +1632,7 @@ function deliveryLabelFor(task) {
   const item = outboxForTask(task.id);
   if (item && item.status !== 'delivered' && item.lastError === NO_ROUTE_ERROR) return NO_ROUTE_ERROR;
   const next = item && item.status !== 'delivered' ? retry.nextRetryAt(item) : null;
-  return deliveryCaption(task.forwardStatus, { route, nextRetryAt: next });
+  return deliveryCaption(task.forwardStatus, { route, nextRetryAt: next, outboxStatus: item && item.status });
 }
 
 function taskDelivered2xx(task) {
@@ -1625,21 +1640,7 @@ function taskDelivered2xx(task) {
 }
 
 function answerDeliveryLabel(item) {
-  if (!item || item.answerStatus !== 'answered') return null;
-  const linked = [];
-  for (const task of state.tasks || []) {
-    if (!task) continue;
-    if (task.needId === item.id) linked.push(task);
-    else if (item.what && String(task.text || '').startsWith(`Ответ Арсения на «${item.what}»`)) linked.push(task);
-  }
-  for (const entry of state.outbox || []) {
-    if (!entry || !entry.payload || entry.payload.needId !== item.id) continue;
-    if (entry.status === 'delivered') return 'Ответ получен агентом';
-    const task = (state.tasks || []).find((row) => row && row.id === entry.taskId);
-    if (task && !linked.includes(task)) linked.push(task);
-  }
-  if (linked.some((task) => taskDelivered2xx(task))) return 'Ответ получен агентом';
-  return 'Сохранён, ещё не доставлен';
+  return answerDeliveryCaption(item, state.tasks, state.outbox);
 }
 
 function publicOutbox(item) {
@@ -2774,6 +2775,8 @@ async function sendOutboxItem(item, options = {}) {
     logDeliveryAttempt(item, 'error=decrypt_error', 0);
     return { sent: false, attempted: true, status: 0, error: 'decrypt_error' };
   }
+  if (dest && (dest.via === 'agent' || dest.via === 'putin' || dest.via === 'env')) item.route = dest.via;
+  else if (!dest || !dest.url) item.route = 'none';
   if (!dest || !dest.url) {
     retry.releaseClaim(item);
     if (item.lastError !== NO_ROUTE_ERROR) {
@@ -2833,6 +2836,7 @@ function recordOutboxResult(item, result) {
   if (!result || result.skipped || !result.attempted) return null;
   applyOutboxResult(item, result);
   const task = state.tasks.find((entry) => entry.id === item.taskId);
+  rememberSentRoute(task, item);
   applyKremlinResult(task, result);
   if (result.sent) markDeliveredAgent(item, task);
   if (task) store.noteTask(task);
@@ -3021,6 +3025,7 @@ async function enqueueQueueTask({ agentId, text, fromAgentId, parentOrderId, att
   state.outbox.push(item);
   store.noteOutbox(item);
   const result = await sendOutboxItem(item);
+  rememberSentRoute(task, item);
   applyOutboxResult(item, result);
   applyKremlinResult(task, result);
   if (result && result.sent) {

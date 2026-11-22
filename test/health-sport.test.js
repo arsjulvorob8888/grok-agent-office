@@ -193,7 +193,7 @@ test('приказ идёт своим вебхуком, иначе через r
     body: JSON.stringify({ agent: 'health', text: 'Утренняя пробежка' }),
   });
   assert.equal(own.status, 201);
-  assert.equal(own.body.deliveryLabel, 'Отправлена');
+  assert.equal(own.body.deliveryLabel, 'Доставлено');
   const envHit = hits.filter((hit) => hit.body && hit.body.taskId === own.body.id).pop();
   assert.equal(envHit.url, '/env');
   assert.equal(envHit.body.agentId, 'health');
@@ -214,7 +214,7 @@ test('приказ идёт своим вебхуком, иначе через r
     body: JSON.stringify({ agent: 'health', text: 'Через строку grok' }),
   });
   assert.equal(viaGrok.status, 201);
-  assert.equal(viaGrok.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaGrok.body.deliveryLabel, 'Доставлено');
   const grokHit = hits.filter((hit) => hit.body && hit.body.taskId === viaGrok.body.id).pop();
   assert.equal(grokHit.url, '/grok-shared');
   assert.equal(grokHit.body.agentId, 'health');
@@ -231,7 +231,7 @@ test('приказ идёт своим вебхуком, иначе через r
     headers: { 'x-app-password': 'pw-health' },
     body: JSON.stringify({ agent: 'health', text: 'Через Путина' }),
   });
-  assert.equal(viaPutin.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaPutin.body.deliveryLabel, 'Доставлено');
   const putinHit = hits.filter((hit) => hit.body && hit.body.taskId === viaPutin.body.id).pop();
   assert.equal(putinHit.url, '/putin');
   assert.equal(putinHit.body.agentId, 'health');
@@ -252,7 +252,7 @@ test('приказ идёт своим вебхуком, иначе через r
     headers: { 'x-app-password': 'pw-health' },
     body: JSON.stringify({ agent: 'health', text: 'Свой вебхук' }),
   });
-  assert.equal(viaOwn.body.deliveryLabel, 'Отправлена');
+  assert.equal(viaOwn.body.deliveryLabel, 'Доставлено');
   const ownHit = hits.filter((hit) => hit.body && hit.body.taskId === viaOwn.body.id).pop();
   assert.equal(ownHit.url, '/health');
   assert.equal(ownHit.body.agentId, 'health');
