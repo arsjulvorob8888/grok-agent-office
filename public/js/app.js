@@ -2163,7 +2163,7 @@
     document.body.classList.toggle('usage-hot', view.level === 'critical');
   }
   function renderHUD() {
-    const staff = S.agents.filter((a) => !a.vacant);
+    const staff = rosterAgents();
     const active = staff.filter((a) => {
       const mode = window.AgentStatus && AgentStatus.finalStatus ? AgentStatus.finalStatus(a) : activityMode(a);
       return mode === 'working';

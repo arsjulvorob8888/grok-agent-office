@@ -443,3 +443,52 @@ test('на 390 открытый журнал не перекрыт миника�
     await page.close();
   }
 });
+
+test('счётчик шапки равен агентам нижней панели', { timeout: 40000 }, async () => {
+  const deputy = await api('/api/status', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-quiet' },
+    body: JSON.stringify({ agent: 'invest', status: 'working', now: 'Смотрю долю' }),
+  });
+  assert.equal(deputy.status, 200);
+  const roster = await api('/api/status', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-quiet' },
+    body: JSON.stringify({ agent: 'army', status: 'working', now: 'На линии' }),
+  });
+  assert.equal(roster.status, 200);
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForFunction(() => {
+      const army = document.querySelector('#roster .chip[data-id="army"]');
+      return army && army.classList.contains('act-working');
+    }, { timeout: 8000 });
+    const info = await page.evaluate(() => {
+      const raw = document.querySelector('#stActive').textContent.trim();
+      const parts = raw.split('/');
+      const chips = [...document.querySelectorAll('#roster .chip')];
+      return {
+        raw,
+        num: Number(parts[0]),
+        den: Number(parts[1]),
+        chips: chips.length,
+        working: chips.filter((chip) => chip.classList.contains('act-working')).length,
+        ids: chips.map((chip) => chip.dataset.id),
+        onMap: ['invest', 'analyst', 'trading', 'biz'].filter((id) => document.querySelector(`#roster .chip[data-id="${id}"], #agents .agent[data-id="${id}"]`)),
+      };
+    });
+    assert.equal(info.den, info.chips, info.raw);
+    assert.equal(info.num, info.working, info.raw);
+    assert.deepEqual(info.onMap, []);
+    assert.equal(info.ids.includes('army'), true);
+    assert.equal(info.ids.includes('advisor'), true);
+    assert.ok(info.working >= 1, info.raw);
+    await page.evaluate(() => document.querySelector('#overlay .tag[data-id="finance"]').click());
+    await page.waitForSelector('#room.open .room-seat[data-id="invest"]', { timeout: 4000 });
+    await page.waitForSelector('#room.open .room-seat[data-id="analyst"]', { timeout: 4000 });
+    assert.deepEqual(page.__errors, []);
+    await page.screenshot({ path: '/tmp/screen-quiet-1280-counter.png' });
+  } finally {
+    await page.close();
+  }
+});
