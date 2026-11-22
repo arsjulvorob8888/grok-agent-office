@@ -17,6 +17,7 @@ const live = require('./lib/live-status');
 const usage = require('./lib/usage');
 const streamHub = require('./lib/stream');
 const delivery = require('./lib/delivery');
+const linkCheck = require('./lib/link-check');
 const agentTokens = require('./lib/agent-tokens');
 const { isSilentTask } = require('./public/js/task-rules');
 const { PROFILE_ALIASES } = require('./lib/agent-aliases');
@@ -528,6 +529,7 @@ const state = {
   routines: [],
   outbox: [],
   webhookTargets: {},
+  linkChecks: {},
   nextTaskId: 1,
   nextMessageId: 1,
   nextNeedId: 1,
@@ -1067,6 +1069,7 @@ function publicState(opts = {}) {
       vacant: !!a.vacant,
       completed: a.completed || 0,
       deliveryRoute: delivery.publicRoute(a.id, state, process.env),
+      linkCheck: linkCheck.present(state.linkChecks && state.linkChecks[a.id], linkCheck.now(), formatAtMsk),
       responsibilities: (a.responsibilities || []).slice(),
       ...activityFor(a, state.tasks, live.now(), activeWindowMs(), activityExtras()),
       live: publicAgentLive(a.live, live.now()),
@@ -3611,6 +3614,9 @@ live.register(app, {
   publish() {
     try { hub.publish(); } catch (_) { /* поток не обязателен для ответа */ }
     try { liveWatch.touch(); } catch (_) { /* будильник не обязателен для ответа */ }
+  },
+  ackLinkPing(agent, taskId, at) {
+    return linkCheck.acknowledge(state, agent.id, taskId, at);
   },
 });
 streamHub.registerStream(app, hub);
