@@ -1714,7 +1714,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await desk.page.waitForSelector('#room.open .room-seat[data-id="invest"]');
     await desk.page.waitForSelector('#room.open .room-seat[data-id="analyst"]');
     const seats = await desk.page.$$eval('#room .room-seat', (els) => els.map((el) => el.dataset.id));
-    assert.deepEqual(seats, ['finance', 'invest', 'analyst', 'biz', 'trading']);
+    assert.deepEqual(seats, ['finance', 'invest', 'analyst', 'trading', 'biz']);
     await desk.page.click('#room .room-go[data-id="invest"]');
     await desk.page.waitForSelector('#panel.open[data-agent="invest"]', { timeout: 8000 });
     assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
