@@ -1706,7 +1706,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await desk.page.waitForFunction(() => {
       const tip = document.querySelector('#tooltip');
       const text = tip ? tip.textContent : '';
-      return tip && tip.classList.contains('show') && /Заместители:\s*2/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text);
+      return tip && tip.classList.contains('show') && /Заместители:\s*4/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && /Трейдинг/.test(text) && /Business Adviser/.test(text);
     }, { timeout: 4000 });
     assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
     await desk.page.mouse.click(point.x, point.y);
@@ -1714,7 +1714,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await desk.page.waitForSelector('#room.open .room-seat[data-id="invest"]');
     await desk.page.waitForSelector('#room.open .room-seat[data-id="analyst"]');
     const seats = await desk.page.$$eval('#room .room-seat', (els) => els.map((el) => el.dataset.id));
-    assert.deepEqual(seats, ['finance', 'invest', 'analyst']);
+    assert.deepEqual(seats, ['finance', 'invest', 'analyst', 'trading', 'biz']);
     await desk.page.click('#room .room-go[data-id="invest"]');
     await desk.page.waitForSelector('#panel.open[data-agent="invest"]', { timeout: 8000 });
     assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
@@ -1749,7 +1749,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await phone.page.waitForFunction(() => {
       const tip = document.querySelector('#tooltip');
       const text = tip ? tip.textContent : '';
-      return tip && tip.classList.contains('show') && /Заместители:\s*2/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text);
+      return tip && tip.classList.contains('show') && /Заместители:\s*4/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && /Трейдинг/.test(text) && /Business Adviser/.test(text);
     }, { timeout: 4000 });
     assert.equal(await phone.page.$eval('#room', (el) => el.classList.contains('open')), false);
     await phone.page.touchscreen.touchEnd();

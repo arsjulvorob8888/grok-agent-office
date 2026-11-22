@@ -207,7 +207,14 @@
     return (hostId && S.byId.get(hostId)) || a;
   };
   function roomGuests(hostId) {
-    return S.agents.filter((a) => roomHostId(a) === hostId).sort(cmpNum);
+    const visible = S.agents.filter((a) => roomHostId(a) === hostId);
+    const deputies = (S.deputies || []).filter((a) => a && a.parentId === hostId && !visible.some((item) => item.id === a.id));
+    return visible.concat(deputies).sort((a, b) => {
+      const rank = (agent) => (agent.number ? 0 : 1);
+      const byRank = rank(a) - rank(b);
+      if (byRank) return byRank;
+      return cmpNum(a, b) || String(a.name || a.id).localeCompare(String(b.name || b.id), 'ru');
+    });
   }
   const figTop = (a) => figFeet(a) - 100 * figScaleOf(a);
   const kremlin = () => { const g = S.byId.get(CONFIG.mainId); return g ? [g.x, g.y + 22] : [800, 562]; };
@@ -1252,10 +1259,15 @@
       <circle cx="562" cy="142" r="16" fill="#7ea572"/>
     </svg>`;
   }
+  function seatMode(a) {
+    if (window.AgentStatus && typeof AgentStatus.finalStatus === 'function') return AgentStatus.finalStatus(a);
+    return activityMode(a);
+  }
   function seatHTML(a, head) {
     const role = a.id === head.id ? 'Руководитель' : (a.parentId ? 'Заместитель' : 'В этом здании');
     const phrase = deliveryPhrase(a);
-    const st = phrase || activityLabel(a);
+    const mode = seatMode(a);
+    const st = phrase || (window.AgentStatus ? AgentStatus.activityLabel(a) : activityLabel(a));
     return `<article class="room-seat" data-id="${esc(a.id)}">
       <div class="room-sit">
         <svg class="room-fig" viewBox="-40 -108 80 116" aria-hidden="true">${Figures.render(a.kind, a.color)}</svg>
@@ -1270,7 +1282,7 @@
       <div class="room-meta">
         <div class="room-role">${esc(role)}</div>
         <div class="room-name">${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</div>
-        <div class="room-status"><span class="status-pill ${esc(phrase ? 'queued' : statusTone(a))}">${esc(st)}</span><span class="now">${phrase ? '' : esc(a.now || '')}</span></div>
+        <div class="room-status"><span class="room-dot" data-status="${esc(mode)}"></span><span class="status-pill ${esc(phrase ? 'queued' : statusTone(a))}">${esc(st)}</span><span class="now">${phrase ? '' : esc(a.now || '')}</span></div>
         <button type="button" class="btn gold room-go" data-id="${esc(a.id)}">Открыть</button>
       </div>
     </article>`;
@@ -2327,6 +2339,7 @@
     const incoming = (data.agents || []).filter((a) => a && a.id);
     S.archivedIds = new Set(incoming.filter((a) => a.archived).map((a) => a.id));
     const agents = incoming.filter((a) => !a.archived);
+    S.deputies = incoming.filter((a) => a.archived && a.parentId);
     for (const a of agents) {
       a.x = Number.isFinite(a.x) ? a.x : 800; a.y = Number.isFinite(a.y) ? a.y : 540;
       if (MAP_POS[a.id]) { a.x = MAP_POS[a.id][0]; a.y = MAP_POS[a.id][1]; }
@@ -2337,6 +2350,7 @@
     S.agents = agents; S.tasks = data.tasks || []; S.messages = data.messages || [];
     S.grokUsage = data.grokUsage || null;
     S.byId = new Map(agents.map((a) => [a.id, a]));
+    for (const deputy of S.deputies) S.byId.set(deputy.id, deputy);
     syncNeeds(data.needs);
     const sig = agentSig(agents);
     if (sig !== S.sig) { S.sig = sig; buildAgents(); }

@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const store = require('./lib/store');
-const { activityFor, activeWindowMs, orderRoute } = require('./lib/activity');
+const { activityFor, activeWindowMs, orderRoute, settleRawStatus } = require('./lib/activity');
 const { deliveryCaption } = require('./public/js/feed');
 const retry = require('./lib/outbox-retry');
 const { buildDashboard } = require('./lib/agent-dashboard');
@@ -18,6 +18,7 @@ const usage = require('./lib/usage');
 const streamHub = require('./lib/stream');
 const delivery = require('./lib/delivery');
 const agentTokens = require('./lib/agent-tokens');
+const { PROFILE_ALIASES } = require('./lib/agent-aliases');
 
 // Поток «состояние изменилось». Живой TTL агента в этот хаб не кладёт секретов.
 const hub = streamHub.createHub();
@@ -59,7 +60,8 @@ const STATUS_LABELS = {
 //        routines, health, vacant, generic.
 // tier — main (Путин), dept (направление), sub (помощник, parentId), extra (союзник).
 // Номер на карте — среди видимых агентов, без пропусков. Помощники Финансов: 7.1, 7.2.
-// trading, biz и lang в архиве: записи остаются, на карту и в новые приказы не попадают.
+// trading, biz и lang в архиве на общей карте. trading и biz — замы Финансов
+// (parentId): живой статус принимается и виден в помещении Финансов.
 // grokAgentId — id агента в Grok. Для посевного агента это поле карточки из кода:
 // после рестарта оно не берётся из payload в agent_state. У finance и помощников
 // invest (7.1) и analyst (7.2) один и тот же id.
@@ -129,12 +131,13 @@ const SEED_AGENTS = [
   {
     id: 'trading',
     name: 'Трейдинг',
+    parentId: 'finance',
     color: '#1f7ae0',
     accent: '#bfe3ff',
     role: 'Торговый скрипт и аналитика',
     district: 'Москва-Сити',
     kind: 'trading',
-    tier: 'dept',
+    tier: 'sub',
     archived: true,
     grokAgentId: '504035c8-ccd8-467b-9e34-f16305493533',
     x: 345,
@@ -324,12 +327,13 @@ const SEED_AGENTS = [
   {
     id: 'biz',
     name: 'Business Adviser',
+    parentId: 'finance',
     color: '#14b8a6',
     accent: '#fff',
     role: 'Бизнес-идеи и аналитика',
     district: 'Сколково',
     kind: 'biz',
-    tier: 'extra',
+    tier: 'sub',
     archived: true,
     grokAgentId: 'a64c9436-36bc-4122-af1b-89d56950b0c1',
     x: 150,
@@ -434,8 +438,12 @@ const EXTRA_SLOTS = [
 ];
 
 function seedAgent(base) {
+  const aliases = Array.isArray(base.aliases) && base.aliases.length
+    ? base.aliases.slice()
+    : (PROFILE_ALIASES[base.id] || []).slice();
   return {
     ...base,
+    aliases,
     parentId: base.parentId || null,
     archived: !!base.archived,
     status: 'idle',
@@ -965,8 +973,12 @@ if (typeof needsResolveTimer.unref === 'function') needsResolveTimer.unref();
 // Истёкший живой ход снимается в памяти и будит карту. В базу агента это не пишется.
 const liveSweep = setInterval(() => {
   try {
-    const gone = live.expire(state.agents, live.now());
-    if (gone.length) hub.publish();
+    const at = live.now();
+    const gone = live.expire(state.agents, at);
+    const settled = settleRawStatus(state.agents, at);
+    for (const agent of settled) store.noteAgent(agent);
+    if (settled.length) store.flush().catch(() => {});
+    if (gone.length || settled.length) hub.publish();
   } catch (err) { console.error(err); }
 }, 15000);
 if (typeof liveSweep.unref === 'function') liveSweep.unref();

@@ -200,8 +200,10 @@ test('имя «Программирование · Кремль» станови
   const unknown = await postStatus({ agentId: 'Нет такого · Кремль', status: 'working' });
   assert.equal(unknown.status, 404);
 
-  const archived = await postStatus({ agentId: 'Трейдинг', status: 'working', doing: 'архив' });
+  const archived = await postStatus({ agentId: 'Language Coach', status: 'working', doing: 'архив' });
   assert.equal(archived.status, 409);
+  assert.equal(archived.body.agentId, 'lang');
+  assert.equal(archived.body.error, 'агент в архиве на карте — статус не принят');
 
   const noId = await postStatus({ agent: 'dev', status: 'working' });
   assert.equal(noId.status, 400);
@@ -256,22 +258,23 @@ test('переход пишется в ленту один раз, продле�
   assert.match(liveMessages('temshik')[2].text, /Темщик отметился: работает$/);
 });
 
-test('TTL 10 минут: фейковые часы, продление working и пульсом, явный idle', async () => {
+test('TTL 15 минут: фейковые часы, продление working и пульсом, явный idle', async () => {
   assert.ok(live, 'нет lib/live-status.js');
   const t0 = Date.parse('2031-06-01T08:00:00.000Z');
+  const hold = 15 * 60 * 1000;
   let clock = t0;
   live.setNow(() => clock);
   try {
     const started = await postStatus({ agentId: 'qa', status: 'working', doing: 'Считаю' });
     assert.equal(started.status, 200);
-    assert.equal(started.body.until, new Date(t0 + 10 * 60 * 1000).toISOString());
+    assert.equal(started.body.until, new Date(t0 + hold).toISOString());
 
-    clock = t0 + 10 * 60 * 1000 - 1;
+    clock = t0 + hold - 1;
     let view = agentOf((await json('/api/state')).body, 'qa');
     assert.equal(view.activity, 'working');
     assert.equal(view.doing, 'Считаю');
 
-    clock = t0 + 10 * 60 * 1000;
+    clock = t0 + hold;
     view = agentOf((await json('/api/state')).body, 'qa');
     assert.equal(view.activity, 'resting');
     assert.equal(view.doing, null);
@@ -285,11 +288,11 @@ test('TTL 10 минут: фейковые часы, продление working �
     assert.equal(extended.status, 200);
     assert.equal(extended.body.since, second.body.since);
     assert.equal(liveMessages('qa').length, 2);
-    clock = t0 + 60 * 60 * 1000 + 18 * 60 * 1000;
+    clock = t0 + 60 * 60 * 1000 + 23 * 60 * 1000;
     view = agentOf((await json('/api/state')).body, 'qa');
     assert.equal(view.activity, 'working');
     assert.equal(view.doing, 'Ещё считаю');
-    clock = t0 + 60 * 60 * 1000 + 19 * 60 * 1000;
+    clock = t0 + 60 * 60 * 1000 + 24 * 60 * 1000;
     view = agentOf((await json('/api/state')).body, 'qa');
     assert.equal(view.activity, 'resting');
 
@@ -308,7 +311,7 @@ test('TTL 10 минут: фейковые часы, продление working �
     view = agentOf((await json('/api/state')).body, 'qa');
     assert.equal(view.doing, 'Держит линию', 'пульс продлевает живой working');
     assert.equal(liveMessages('qa').length, beforeBeat, 'пульс не пишет строку в ленту');
-    clock = beatAt + 10 * 60 * 1000;
+    clock = beatAt + 15 * 60 * 1000;
     process.env.ACTIVITY_WINDOW_MIN = '5';
     view = agentOf((await json('/api/state')).body, 'qa');
     assert.equal(view.doing, null);
