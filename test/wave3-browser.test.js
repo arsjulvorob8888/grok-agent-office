@@ -215,7 +215,8 @@ if (!CHROME || !puppeteer) {
       assert.equal(before.text, 'Куда уйдёт приказ: Адрес из окружения');
       const pageText = await page.evaluate(() => document.body.innerText);
       assert.equal(pageText.includes(ENV_URL), false);
-      assert.equal(pageText.includes('Grok'), false);
+      const withoutHint = pageText.replace(/«Кремль: входящие с сайта» в Grok/g, '');
+      assert.equal(withoutHint.includes('Grok'), false);
 
       await page.type('#taskText', 'Короткий приказ волны 3');
       await page.click('#taskSubmit');

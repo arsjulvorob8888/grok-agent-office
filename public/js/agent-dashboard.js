@@ -45,7 +45,10 @@
   }
 
   function visibleText(text) {
-    return window.OfficeSender.displayOrderSender(text || '');
+    const sent = window.OfficeSender.displayOrderSender(text || '');
+    return window.OfficeFeed && typeof OfficeFeed.maskServiceIds === 'function'
+      ? OfficeFeed.maskServiceIds(sent)
+      : sent;
   }
 
   function readHash() {
@@ -452,7 +455,7 @@
     const doing = window.AgentStatus && AgentStatus.ownDoing ? AgentStatus.ownDoing(agent) : '';
     const log = (data.activityLog || []).map((line) => {
       const when = line.at ? `<time datetime="${esc(line.at)}">${esc(fmtTime(line.at))}</time>` : '<time>без времени</time>';
-      return `<li>${when}${esc(line.text)}</li>`;
+      return `<li>${when}${esc(visibleText(line.text))}</li>`;
     }).join('');
     return `
       <div class="dash-status">
@@ -461,7 +464,7 @@
       </div>
       <div class="dash-block">
         <h3>Текущая задача</h3>
-        <p class="${agent.currentTask ? '' : 'dash-empty'}">${agent.currentTask ? esc(agent.currentTask) : 'Сейчас нет задачи'}</p>
+        <p class="${agent.currentTask ? '' : 'dash-empty'}">${agent.currentTask ? esc(visibleText(agent.currentTask)) : 'Сейчас нет задачи'}</p>
       </div>
       <div class="dash-metrics">
         <div class="dash-metric"><b>${metrics.total}</b><span>${esc(window.OfficeFeed && OfficeFeed.ruCount ? OfficeFeed.ruCount(metrics.total, 'задача', 'задачи', 'задач') : 'задач')}</span></div>
@@ -497,7 +500,7 @@
     if (task.deliveryLabel) bits.push(esc(task.deliveryLabel));
     if (task.orderStatus === 'failed') bits.push('Не выполнен');
     return `<article class="dash-card">
-      <p>${esc(task.text || 'Задача')}</p>
+      <p>${esc(visibleText(task.text || 'Задача'))}</p>
       ${bits.length ? `<p class="dash-card-meta">${bits.join(' · ')}</p>` : ''}
       ${retry ? `<div class="dash-card-actions">${retry}</div>` : ''}
     </article>`;
@@ -619,7 +622,10 @@
     const wait = window.OfficeFeed && OfficeFeed.replyWaitCaption
       ? OfficeFeed.replyWaitCaption(data.tasks, messages, agentId)
       : '';
-    const lines = messages.map((message) => {
+    const lines = messages.filter((message) => {
+      return !(window.OfficeFeed && typeof OfficeFeed.ownerDirectPlaque === 'function'
+        && OfficeFeed.ownerDirectPlaque(message, data.tasks));
+    }).map((message) => {
       const role = message.role === 'owner' ? 'owner' : message.role === 'system' ? 'system' : 'agent';
       const who = role === 'owner' ? ownerName() : role === 'system' ? 'Система' : ((data.agent && data.agent.name) || 'Агент');
       const text = visibleText(message.text);

@@ -347,7 +347,7 @@
       e.bubbleOn = !!(e.bubble && show && peek);
       const thinking = a.live && a.live.status === 'working';
       const bubbleText = window.AgentStatus ? AgentStatus.ownDoing(a) : '';
-      if (e.bubble) e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(bubbleText);
+      if (e.bubble) e.bubble.innerHTML = (thinking ? '<span class="typing"><i></i><i></i><i></i></span>' : '') + esc(showText(bubbleText));
       if (e.link) {
         const hot = activityMode(a) === 'working';
         e.link.setAttribute('class', `link${tier === 'sub' ? ' sub' : ''}${hot ? ' hot' : ''}${S.selected === a.id ? ' sel' : ''}`);
@@ -1015,8 +1015,12 @@
   // Опрос /api/state каждые 4 с перерисовывал панель через innerHTML и сбрасывал
   // scrollTop и у .p-body, и у внутренних .qr. Пока данные те же — панель не трогаем.
   // Когда данные меняются, возвращаем якорь и scrollTop каждого вложенного блока.
+  function showText(text) {
+    if (Feed && typeof Feed.maskServiceIds === 'function') return Feed.maskServiceIds(text);
+    return text == null ? '' : String(text);
+  }
   function linkify(text) {
-    const s = String(text ?? '');
+    const s = showText(text);
     const re = /(https?:\/\/[^\s<]+)/g;
     let out = '', last = 0, m;
     while ((m = re.exec(s))) {
@@ -1436,7 +1440,7 @@
     return 'idle';
   }
   function statusNowHTML(a) {
-    const what = window.AgentStatus && AgentStatus.chipCaption ? AgentStatus.chipCaption(a) : '';
+    const what = showText(window.AgentStatus && AgentStatus.chipCaption ? AgentStatus.chipCaption(a) : '');
     if (!what) return '<span class="now"></span>';
     const age = agoText(a.doingSince || a.lastSeenAt);
     return `<span class="now"><span class="k">чем занят</span> ${esc(what)}</span>${age ? `<span class="ago">уже ${esc(age)}</span>` : ''}`;
@@ -1475,7 +1479,7 @@
   function questHTML(t, showAgent, viewerId) {
     const a = S.byId.get(t.agent) || { name: t.agent, color: '#64748b' };
     const [cls, label] = taskBadge(t);
-    const title = t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение');
+    const title = showText(t.text || ((t.attachments || []).map((x) => x.name).filter(Boolean).join(', ') || 'Вложение'));
     const dir = viewerId ? Feed.orderDirection(t, viewerId, S.tasks) : '';
     const via = Feed.sentRoutePhrase ? Feed.sentRoutePhrase(t.sentRoute) : '';
     return `<div class="quest" data-anchor="q:${esc(t.id)}" data-agent="${esc(t.agent)}"${dir ? ` data-dir="${dir}"` : ''} style="--c:${esc(a.color)}">
@@ -1534,8 +1538,11 @@
     return `<ol class="order-hist">${list.map((h) => {
       const bits = [];
       if (h.status === 'in_progress' && h.progress != null) bits.push(`${h.progress}%`);
-      if (h.note) bits.push(h.note);
-      if (h.status === 'done' && h.result) bits.push(h.result.length > 140 ? `${h.result.slice(0, 140)}…` : h.result);
+      if (h.note) bits.push(showText(h.note));
+      if (h.status === 'done' && h.result) {
+        const result = showText(h.result);
+        bits.push(result.length > 140 ? `${result.slice(0, 140)}…` : result);
+      }
       const word = Feed.historyCaption ? Feed.historyCaption(t, h) : (ORDER_WORD[h.status] || h.status || '');
       return `<li><time datetime="${esc(h.at || '')}">${fmtTime(h.at)}</time><b>${esc(word)}</b>${bits.length ? `<span>${esc(bits.join(' · '))}</span>` : ''}</li>`;
     }).join('')}</ol>`;
@@ -1555,12 +1562,13 @@
     const msgs = source.slice().sort((a, b) =>
       String(a.timestamp || a.createdAt).localeCompare(String(b.timestamp || b.createdAt)) || String(a.id).localeCompare(String(b.id)));
     const wait = Feed.replyWaitCaption ? Feed.replyWaitCaption(S.tasks, S.messages, agent.id) : '';
-    const note = wait ? `<p class="reply-wait">${esc(wait)}</p>` : '';
+    const note = wait ? `<p class="reply-wait">${esc(showText(wait))}</p>` : '';
     const activity = activityCaption(agent);
     const activityRow = activity ? `<p class="msg-activity">${esc(activity)}</p>` : '';
     if (!msgs.length && !note && !activityRow) return '<div class="empty"><b>Сообщений пока нет</b>Дай задачу — она появится здесь и в чате агента.</div>';
     return note + activityRow + msgs.map((m) => {
       if (m.role === 'system') {
+        if (Feed.ownerDirectPlaque && Feed.ownerDirectPlaque(m, S.tasks)) return '';
         return `<div class="msg-row system"><div class="msg-sys">${linkify(Sender.displayOrderSender(m.text))}</div></div>`;
       }
       const speaker = S.byId.get(m.agentId) || agent;
@@ -1608,6 +1616,10 @@
       focused: document.activeElement && panel.contains(document.activeElement) ? document.activeElement.id : '',
       msg: ($('#formMsg') || {}).textContent || '',
       msgClass: ($('#formMsg') || {}).className || 'msg',
+      cardUrl: (() => {
+        const field = $('#directCard [data-card-url]');
+        return field && field.dataset.touched ? field.value : '';
+      })(),
     } : null;
     panel.dataset.agent = a.id;
     panel.style.setProperty('--c', a.color);
@@ -1621,7 +1633,6 @@
             ${depts.map((d) => `<option value="${esc(d.id)}">${esc(titled(d))}</option>`).join('')}
             <option value="__all">Всем направлениям (${depts.filter((d) => tierOf(d) === 'dept').length})</option></select>` : ''}
         <p class="task-route" id="taskRoute" data-route="none"></p>
-        <p class="direct-link" id="directLink" data-direct-link></p>
         <label for="taskText">${tier === 'main' ? 'Приказ' : 'Задача для агента'}</label>
         <textarea id="taskText" maxlength="4000" placeholder="${tier === 'main' ? 'Например: собери итоги недели по всем направлениям' : 'Опиши, что нужно сделать…'}"></textarea>
         <div class="attach-row">
@@ -1654,6 +1665,7 @@
         ${a.vacant ? '' : `<div class="status-line" data-anchor="status"><span class="status-pill ${activityDot(a)}" data-status="${esc(activityLabel(a))}">${esc(activityLabel(a))}</span>${statusNowHTML(a)}</div>
         ${currentOrderHTML(a)}`}
         <div class="sec" data-anchor="duties"><h4>${tier === 'main' ? 'Полномочия' : 'Обязанности'}</h4><ul class="duties">${(a.responsibilities || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>Пока не заданы</li>'}</ul></div>
+        ${a.vacant ? '' : `<div class="sec" data-anchor="link">${directCardHTML(a, keep && keep.cardUrl)}</div>`}
         <div class="sec" data-anchor="form"><h4>${tier === 'main' ? 'Отдать приказ' : 'Дать задачу'}</h4>${form}</div>
         ${a.vacant ? '' : `<div class="sec" data-anchor="chat"><h4>Переписка</h4><div class="chat-log" data-scroll-key="chat">${chatHTML(a)}</div></div>`}
         ${a.vacant ? '' : taskBlock}
@@ -1676,6 +1688,7 @@
       }
       renderDrafts();
       paintTaskRoute();
+      bindDirectCard(a);
       const targetSel = $('#taskTarget');
       if (targetSel) targetSel.addEventListener('change', paintTaskRoute);
       f.onsubmit = (e) => { e.preventDefault(); submitTask(); };
@@ -1787,13 +1800,182 @@
     const kind = agent && agent.deliveryRoute;
     return kind === 'agent' || kind === 'putin' || kind === 'env' || kind === 'none' ? kind : 'none';
   }
-  function paintTaskRoute() {
-    const line = $('#directLink');
-    if (line && window.OfficeFeed && typeof OfficeFeed.directLinkLine === 'function') {
-      const agent = S.byId.get(S.selected);
-      line.textContent = OfficeFeed.directLinkLine(agent);
-      line.dataset.phase = typeof OfficeFeed.directLinkPhase === 'function' ? OfficeFeed.directLinkPhase(agent) : '';
+  function directCardStored(id) {
+    try {
+      const value = localStorage.getItem(`directCard:${id}`);
+      if (value === 'open') return true;
+      if (value === 'shut') return false;
+    } catch (_) { /* нет хранилища */ }
+    return null;
+  }
+  function directCardHTML(agent, typedUrl) {
+    const stored = directCardStored(agent.id);
+    const open = stored == null ? Feed.directCardDefaultOpen(agent) : stored;
+    const phase = Feed.directLinkPhase(agent);
+    const summary = Feed.directCardSummary(agent);
+    const plain = Feed.directCardPlain(agent);
+    const authed = !!getPassword();
+    const fields = authed
+      ? `<label>Адрес<input type="url" data-card-url autocomplete="off" spellcheck="false" value="${esc(typedUrl || '')}"></label>
+        <label>Ключ<input type="password" data-card-key autocomplete="new-password" spellcheck="false" value=""></label>
+        <p class="direct-note" data-card-saved></p>
+        <div class="direct-actions">
+          <button type="button" class="btn gold" data-card-save>Сохранить</button>
+          <button type="button" class="btn ghost" data-card-check>Проверить ещё раз</button>
+        </div>
+        <p class="direct-msg" data-card-msg aria-live="polite"></p>`
+      : `<form class="direct-lock" id="directLock">
+          <p class="direct-note">Войдите, чтобы задать адрес и ключ.</p>
+          <label for="directPw">Пароль владельца<input id="directPw" type="password" autocomplete="current-password"></label>
+          <button class="btn gold" type="submit">Войти</button>
+          <p class="direct-msg" data-card-msg aria-live="polite"></p>
+        </form>`;
+    return `<details class="direct-card" id="directCard" data-direct-card data-agent="${esc(agent.id)}" data-phase="${esc(phase)}"${open ? ' open' : ''}>
+      <summary data-direct-summary><i class="direct-lamp" data-phase="${esc(phase)}" aria-hidden="true"></i>${esc(summary)}</summary>
+      <div class="direct-card-body">
+        <p class="direct-plain" data-direct-plain>${esc(plain)}</p>
+        ${fields}
+      </div>
+    </details>`;
+  }
+  function paintDirectCard(agent) {
+    const card = $('#directCard');
+    if (!card || !agent) return;
+    const phase = Feed.directLinkPhase(agent);
+    card.dataset.phase = phase;
+    const summary = card.querySelector('[data-direct-summary]');
+    if (summary) {
+      const lamp = summary.querySelector('.direct-lamp');
+      summary.textContent = '';
+      const mark = lamp || document.createElement('i');
+      mark.className = 'direct-lamp';
+      mark.dataset.phase = phase;
+      mark.setAttribute('aria-hidden', 'true');
+      summary.append(mark, document.createTextNode(Feed.directCardSummary(agent)));
     }
+    const plain = card.querySelector('[data-direct-plain]');
+    if (plain) plain.textContent = Feed.directCardPlain(agent);
+  }
+  function applyDirectResult(agent, data) {
+    if (!agent || !data) return;
+    if (data.route) agent.deliveryRoute = data.route;
+    if (data.linkCheck) agent.linkCheck = data.linkCheck;
+    paintDirectCard(agent);
+    paintTaskRoute();
+  }
+  function directNote(text, tone) {
+    const msg = $('#directCard [data-card-msg]');
+    if (!msg) return;
+    msg.textContent = text || '';
+    msg.className = `direct-msg${tone ? ` ${tone}` : ''}`;
+  }
+  async function fillDirectCard(agent) {
+    const card = $('#directCard');
+    if (!card || card.dataset.agent !== agent.id || !getPassword()) return;
+    const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/delivery`, {
+      headers: { 'x-app-password': getPassword() },
+      cache: 'no-store',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 403) {
+      noteBadPassword();
+      renderPanel();
+      return;
+    }
+    if (!res.ok) return;
+    const url = card.querySelector('[data-card-url]');
+    if (url && document.activeElement !== url && !url.dataset.touched) url.value = data.url || '';
+    const key = card.querySelector('[data-card-key]');
+    if (key) key.value = '';
+    const saved = card.querySelector('[data-card-saved]');
+    if (saved) saved.textContent = data.keySet ? 'ключ сохранён' : '';
+    applyDirectResult(agent, data);
+  }
+  async function saveDirectCard(agent) {
+    const card = $('#directCard');
+    if (!card) return;
+    const url = card.querySelector('[data-card-url]');
+    const key = card.querySelector('[data-card-key]');
+    const payload = { url: url ? url.value.trim() : '' };
+    if (key && key.value) payload.key = key.value;
+    directNote('Сохраняю…', '');
+    const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/delivery`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 403) {
+      noteBadPassword();
+      renderPanel();
+      return;
+    }
+    if (!res.ok) {
+      directNote((data && data.error) || 'Не удалось сохранить', 'err');
+      return;
+    }
+    if (key) key.value = '';
+    if (url) {
+      url.dataset.touched = '';
+      url.value = data.url || '';
+    }
+    const saved = card.querySelector('[data-card-saved]');
+    if (saved) saved.textContent = data.keySet ? 'ключ сохранён' : '';
+    applyDirectResult(agent, data);
+    directNote('Сохранено', 'ok');
+  }
+  async function checkDirectCard(agent) {
+    const card = $('#directCard');
+    if (!card) return;
+    directNote('Проверяю…', '');
+    const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/delivery/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-password': getPassword() },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 403) {
+      noteBadPassword();
+      renderPanel();
+      return;
+    }
+    if (!res.ok) {
+      directNote((data && data.error) || 'Адрес не отвечает', 'err');
+      return;
+    }
+    applyDirectResult(agent, data);
+    directNote('', '');
+  }
+  function bindDirectCard(agent) {
+    const card = $('#directCard');
+    if (!card) return;
+    const summary = card.querySelector('summary');
+    if (summary) {
+      summary.addEventListener('click', () => {
+        try { localStorage.setItem(`directCard:${agent.id}`, card.open ? 'shut' : 'open'); } catch (_) { /* нет хранилища */ }
+      });
+    }
+    const lock = $('#directLock');
+    if (lock) {
+      lock.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const value = ($('#directPw').value || '').trim();
+        if (!value) return;
+        try { localStorage.setItem('appPassword', value); } catch (_) { return; }
+        renderPanel();
+      });
+      return;
+    }
+    const url = card.querySelector('[data-card-url]');
+    if (url) url.addEventListener('input', () => { url.dataset.touched = '1'; });
+    const saveBtn = card.querySelector('[data-card-save]');
+    const checkBtn = card.querySelector('[data-card-check]');
+    if (saveBtn) saveBtn.addEventListener('click', () => saveDirectCard(agent));
+    if (checkBtn) checkBtn.addEventListener('click', () => checkDirectCard(agent));
+    fillDirectCard(agent);
+  }
+  function paintTaskRoute() {
+    const agent = S.byId.get(S.selected);
     const el = $('#taskRoute');
     if (!el || !window.OfficeFeed || typeof OfficeFeed.routeSummary !== 'function') return;
     const sel = $('#taskTarget');
@@ -2375,7 +2557,7 @@
       : '';
     return `<article class="need-item urg-${view}${n.closedAt ? ' is-closed' : ''}${view === 'stale' ? ' is-stale' : ''}${test ? ' is-test' : ''}" data-id="${esc(n.id)}">
       ${close}
-      <div class="need-what">${test ? '<span class="test-mark">тест</span>' : ''}${esc(n.what)}</div>
+      <div class="need-what">${test ? '<span class="test-mark">тест</span>' : ''}${esc(showText(n.what))}</div>
       <div class="need-meta"><span>от <b class="need-from">${esc(needFromLabel(n.fromAgentId))}</b></span><span class="need-where">где: <b>${esc(n.where || '')}</b></span><span class="need-urg">${NEED_LABEL[view] || NEED_LABEL.normal}</span><span class="need-updated">${esc(moscowStamp(n.updatedAt || n.createdAt))}</span>${n.answerDeliveryLabel ? `<span class="need-answered">${esc(n.answerDeliveryLabel)}</span>` : ''}</div>
       ${needActionHTML(n)}
     </article>`;
@@ -2527,6 +2709,7 @@
     S.byId = new Map(agents.map((a) => [a.id, a]));
     for (const deputy of S.deputies) S.byId.set(deputy.id, deputy);
     syncNeeds(data.needs);
+    if (Feed && typeof Feed.rememberServiceLabels === 'function') Feed.rememberServiceLabels(S.tasks, S.needs);
     const sig = agentSig(agents);
     if (sig !== S.sig) { S.sig = sig; buildAgents(); }
     noteFreshOrders();
@@ -2537,7 +2720,7 @@
       if (S.loaded && t.status === 'выполнена' && prevStatus.get(t.id) && prevStatus.get(t.id) !== 'выполнена' && !(window.TaskRules && TaskRules.isSilentTask(t))) {
         const a = S.byId.get(t.agent);
         if (a) {
-          toast(`${plainName(a)}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${t.result ? t.result.slice(0, 90) : t.text.slice(0, 90)}`, 'check');
+          toast(`${plainName(a)}: задача выполнена`, `+${CONFIG.xpPerTask} XP · ${showText(t.result || t.text).slice(0, 90)}`, 'check');
           xpPop(a, CONFIG.xpPerTask); chime();
         }
       }

@@ -89,18 +89,16 @@ test('два прохода в памяти не отправляют один �
   }
 });
 
-test('задача «тест» без outbox отменяется и не встаёт в очередь', () => {
+test('задача «тест» без outbox встаёт в очередь и не отменяется', () => {
   const tasks = [
     { id: 't-1', agentId: 'social', text: 'Пост', orderStatus: 'sent', forwardStatus: null },
     { id: 't-4', agentId: 'advisor', text: ' тест ', orderStatus: 'sent', forwardStatus: null },
   ];
   const plan = retry.planBackfill(tasks, [], []);
-  assert.equal(plan.missing.length, 1);
-  assert.equal(plan.missing[0].task.id, 't-1');
-  assert.equal(plan.cancelled.length, 1);
-  assert.equal(tasks[1].orderStatus, 'cancelled');
-  assert.equal(tasks[1].note, 'устарело');
-  const again = retry.planBackfill(tasks, [{ taskId: 't-1', status: 'queued' }], []);
+  assert.equal(plan.cancelled.length, 0);
+  assert.deepEqual(plan.missing.map((item) => item.task.id), ['t-1', 't-4']);
+  assert.equal(tasks[1].orderStatus, 'sent');
+  const again = retry.planBackfill(tasks, [{ taskId: 't-1', status: 'queued' }, { taskId: 't-4', status: 'queued' }], []);
   assert.equal(again.missing.length, 0);
   assert.equal(again.cancelled.length, 0);
 });

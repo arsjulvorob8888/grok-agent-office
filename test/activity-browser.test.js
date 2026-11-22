@@ -599,7 +599,7 @@ test('status=working и activity=resting дают одну точку, ярко�
           assert.ok(Number(row.fig.opacity) < 0.8, `${width} ${row.id} ${JSON.stringify(row.fig)}`);
           assert.match(row.fig.filter, /grayscale/);
         }
-        if (row.bld) assert.ok(Number(row.bld.opacity) < 0.8, `${width} ${row.id}`);
+        if (row.bld) assert.ok(Number(row.bld.opacity) >= 0.9, `${width} ${row.id} ${JSON.stringify(row.bld)}`);
       }
       const counted = Number(String(view.active).split('/')[0]);
       const pageWorking = await page.evaluate(() => document.querySelectorAll('#overlay .tag .dot.working').length);

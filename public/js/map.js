@@ -619,7 +619,6 @@
         s += `<path d="M-64,-62 L0,-96 L64,-62 Z" fill="#f8f3e6" stroke="#c6a15a" stroke-width="1.6"/>`;
         s += `<text x="0" y="-70" text-anchor="middle" font-size="16" font-weight="800" fill="#8a6a1f" font-family="Unbounded, sans-serif">₽</text>`;
         s += `<rect x="-16" y="-24" width="32" height="22" fill="#1a3a5c"/><rect x="-7" y="-18" width="14" height="16" fill="#0e2438"/>`;
-        s += `<rect x="-72" y="-2" width="144" height="4" fill="#1a3a5c"/>`;
         return s;
       }
       case 'invest': {
