@@ -221,7 +221,9 @@
     const row = root.querySelector(`[data-direct-row][data-agent="${focusAgent}"]`);
     if (!row) return;
     row.classList.add('direct-row-focus');
-    row.scrollIntoView({ block: 'nearest' });
+    row.scrollIntoView({ block: 'center' });
+    const url = row.querySelector('[data-direct-url]');
+    if (url) url.focus({ preventScroll: true });
   }
 
   function onClick(event) {
