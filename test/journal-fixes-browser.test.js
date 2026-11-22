@@ -12,6 +12,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const root = path.join(__dirname, '..');
+const Feed = require('../public/js/feed');
 const ENV_KEY = 'browser-journal-env-key';
 let hook;
 let office;
@@ -166,7 +167,7 @@ if (!CHROME || !puppeteer) {
 
   test('журнал и процессы на 1280 и 390, панель сама показывает взятую задачу', { timeout: 90000 }, async () => {
     const state = await api('/api/state');
-    const active = state.body.tasks.filter((task) => task.orderStatus !== 'cancelled').length;
+    const active = state.body.tasks.filter((task) => Feed.isOpenOrder(task)).length;
     const cancelled = state.body.tasks.filter((task) => task.orderStatus === 'cancelled' && String(task.text || '').trim() === 'тест');
     assert.equal(cancelled.length, 2);
     for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {

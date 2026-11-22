@@ -170,7 +170,7 @@ test('в записи журнала кому, когда и статус вст
       };
     });
     assert.match(row.text, /ОДНА-СТРОКА/);
-    assert.match(row.line, /Путин\s*→/);
+    assert.equal(/Путин\s*→/.test(row.line), false, row.line);
     assert.equal(row.text.includes('Вы →'), false);
     assert.equal(row.text.includes('Владелец →'), false);
     assert.match(row.line, /МСК/);

@@ -214,8 +214,6 @@
     return (tasks || []).slice();
   }
 
-  const JOURNAL_SETTLED_MS = 24 * 60 * 60 * 1000;
-
   function journalSettled(task) {
     if (!task || task.orderStatus === 'cancelled') return false;
     const label = taskBadge(task)[1];
@@ -230,13 +228,12 @@
     return id.startsWith('ping-') || taskId.startsWith('ping-');
   }
 
+  // Доставленное и выполненное сразу не открыто. Журнал, стрелки и счётчик
+  // смотрят в эту функцию, поэтому сутки больше ничего не держат наверху.
   function isOpenOrder(task, now = Date.now()) {
+    void now;
     if (!task || isServicePing(task) || task.orderStatus === 'cancelled') return false;
-    const clock = Number.isFinite(now) ? now : Date.now();
-    const created = Date.parse(task.createdAt);
-    const age = Number.isFinite(created) ? clock - created : 0;
-    if (journalSettled(task) && age > JOURNAL_SETTLED_MS) return false;
-    return true;
+    return !journalSettled(task);
   }
 
   function journalSplit(tasks, now = Date.now()) {
@@ -258,7 +255,7 @@
       delivered,
       cancelled,
       badge: active.length,
-      empty: active.length ? '' : 'Активных заданий нет',
+      empty: active.length ? '' : 'Всё доставлено',
     };
   }
 
@@ -273,7 +270,7 @@
       delivered,
       cancelled: split.cancelled,
       total: active.length,
-      empty: active.length ? '' : (split.empty || 'Активных заданий нет'),
+      empty: active.length ? '' : (split.empty || 'Всё доставлено'),
     };
   }
 
@@ -358,16 +355,24 @@
     return /отметился\s*:/i.test(String(message.text || ''));
   }
 
-  // Плашка «Приказ: … → …» в переписке. У задачи из окна агента отправитель — владелец:
-  // его реплика уже подписана «Вы», отдельная плашка с «Путин →» была бы неправдой.
-  // Настоящий приказ Путина (fromAgentId не owner) плашку сохраняет.
+  // Прямое сообщение владельца: из окна агента или через его вебхук.
+  // Пустой отправитель — тот же владелец. Приказ Путина (другой fromAgentId) — нет.
+  function ownerDirectTask(task) {
+    if (!task) return false;
+    const from = task.fromAgentId;
+    return from == null || from === '' || from === 'owner';
+  }
+
+  // Плашка «Приказ: … → …» в переписке. У прямого сообщения владельца реплика
+  // уже подписана «Вы», отдельная плашка с «Путин →» была бы неправдой.
+  // Настоящий приказ Путина плашку сохраняет.
   function ownerDirectPlaque(message, tasks) {
     if (!message || message.role !== 'system') return false;
     if (!String(message.text || '').startsWith('Приказ:')) return false;
     const id = message.taskId;
     if (!id) return false;
     const task = (tasks || []).find((item) => item && item.id === id);
-    return !!(task && task.fromAgentId === 'owner');
+    return ownerDirectTask(task);
   }
 
   // Переписка: разговор с владельцем и ответы агента. Отметки статуса и тихие задачи — нет.
@@ -892,6 +897,7 @@
     seesMessage,
     messagesForGeneral,
     messagesForAgent,
+    ownerDirectTask,
     ownerDirectPlaque,
     correspondenceMessages,
     isStatusMark,
