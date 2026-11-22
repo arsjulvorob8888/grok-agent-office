@@ -138,56 +138,27 @@ async function check(width, height) {
     assert.ok(Date.now() - idleAt < 5000, `${width}: погасло за ${Date.now() - idleAt} мс`);
 
     await page.evaluate(() => document.querySelector('#overlay .tag[data-id="finance"]').click());
-    await page.waitForSelector('#room.open .room-seat[data-id="trading"]');
-    await page.waitForSelector('#room.open .room-seat[data-id="biz"]');
+    await page.waitForSelector('#room.open .room-seat[data-id="invest"]');
+    await page.waitForSelector('#room.open .room-seat[data-id="analyst"]');
     const counter = await page.$eval('#stActive', (el) => el.textContent);
-    const roomAt = Date.now();
-    const trading = await postStatus({ agentId: 'Трейдинг · Кремль', status: 'working', doing: 'Смотрю стакан' });
-    const biz = await postStatus({ agentId: 'Business Adviser', status: 'working', doing: 'Считаю юнит' });
+    const trading = await postStatus({ agentId: 'trading', status: 'working', doing: 'Смотрю стакан' });
+    const biz = await postStatus({ agentId: 'biz', status: 'working', doing: 'Считаю юнит' });
     assert.equal(trading.status, 200, JSON.stringify(trading.body));
     assert.equal(biz.status, 200, JSON.stringify(biz.body));
-    await page.waitForFunction(() => {
-      const read = (id) => {
-        const seat = document.querySelector(`#room .room-seat[data-id="${id}"]`);
-        const fig = seat && seat.querySelector('.room-fig');
-        const dot = seat && seat.querySelector('.room-dot');
-        const pill = seat && seat.querySelector('.status-pill');
-        if (!fig || !dot || !pill) return false;
-        const style = getComputedStyle(fig);
-        return dot.dataset.status === 'working'
-          && pill.textContent === 'Работает'
-          && Math.abs(parseFloat(style.opacity) - 1) < 0.05
-          && !/grayscale/.test(style.filter)
-          && !document.querySelector(`#agents .agent[data-id="${id}"]`);
-      };
-      return read('trading') && read('biz');
-    }, { timeout: 5000 });
-    assert.ok(Date.now() - roomAt < 5000, `${width}: помещение за ${Date.now() - roomAt} мс`);
+    const hidden = await page.evaluate(() => ({
+      tradingSeat: !!document.querySelector('#room .room-seat[data-id="trading"]'),
+      bizSeat: !!document.querySelector('#room .room-seat[data-id="biz"]'),
+      text: document.querySelector('#room').textContent,
+    }));
+    assert.equal(hidden.tradingSeat, false);
+    assert.equal(hidden.bizSeat, false);
+    assert.equal(/Трейдинг|Business Adviser/.test(hidden.text), false);
     const afterDeputies = await page.$eval('#stActive', (el) => el.textContent);
-    const [beforeNum, beforeDen] = counter.split('/').map(Number);
-    const [afterNum, afterDen] = afterDeputies.split('/').map(Number);
-    assert.equal(afterDen, beforeDen, `${width} знаменатель реального списка ${counter} → ${afterDeputies}`);
-    assert.equal(afterNum, beforeNum + 2, `${width} Трейдинг и Business Adviser в числителе ${counter} → ${afterDeputies}`);
+    assert.equal(afterDeputies, counter, `${width} архивные замы не входят в счётчик ${counter} → ${afterDeputies}`);
     assert.equal(await page.$('#agents .agent[data-id="trading"]'), null);
     assert.equal(await page.$('#agents .agent[data-id="biz"]'), null);
-
-    const roomIdle = Date.now();
     assert.equal((await postStatus({ agentId: 'trading', status: 'idle' })).status, 200);
     assert.equal((await postStatus({ agentId: 'biz', status: 'idle' })).status, 200);
-    await page.waitForFunction(() => {
-      const dim = (id) => {
-        const seat = document.querySelector(`#room .room-seat[data-id="${id}"]`);
-        const fig = seat && seat.querySelector('.room-fig');
-        const dot = seat && seat.querySelector('.room-dot');
-        if (!fig || !dot) return false;
-        const style = getComputedStyle(fig);
-        return dot.dataset.status === 'resting'
-          && parseFloat(style.opacity) < 0.8
-          && /grayscale/.test(style.filter);
-      };
-      return dim('trading') && dim('biz');
-    }, { timeout: 5000 });
-    assert.ok(Date.now() - roomIdle < 5000);
 
     await page.evaluate(() => LiveStream.suspend(true));
     const fallback = await page.evaluate(() => ({

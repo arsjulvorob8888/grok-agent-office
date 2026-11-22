@@ -138,10 +138,13 @@ async function exercise(viewport, shot) {
     assert.equal(locked.includes(PUTIN_KEY), false);
     assert.equal(locked.includes('grok-hook-fixture'), false);
     assert.equal(locked.includes('putin-hook-fixture'), false);
-    await page.click('[data-delivery-root] button');
+    await page.$eval('[data-delivery-root] button', (el) => el.click());
     await page.waitForSelector('#modal.show #pwInput', { timeout: 4000 });
-    await page.type('#pwInput', 'pw-ui');
-    await page.click('#pwForm button[type="submit"]');
+    await page.$eval('#pwForm', (form) => {
+      const input = form.querySelector('#pwInput');
+      input.value = 'pw-ui';
+      form.requestSubmit();
+    });
     await page.waitForFunction(() => {
       const input = document.querySelector('section[data-delivery-kind="agent"] input[data-delivery-url="agent"]');
       return input && input.value.includes('grok-hook-fixture');

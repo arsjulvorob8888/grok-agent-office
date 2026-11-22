@@ -20,7 +20,7 @@ delete process.env.PORYADOK_INGEST_TOKEN;
 
 const Feed = require('../public/js/feed');
 const retry = require('../lib/outbox-retry');
-const { app, state, rememberLegacyDelivered, clearTestNow } = require('../server.js');
+const { app, state, rememberLegacyDelivered, clearTestNow, archiveRetiredStaff } = require('../server.js');
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-11-22T18:00:00.000Z');
@@ -157,6 +157,17 @@ test('миграция переводит t-3 и t-4 в доставленные
   assert.equal(clearTestNow().length, 0);
   assert.ok(state.agents.some((agent) => agent.id === 'qa'));
   assert.ok(state.agents.some((agent) => agent.id === 'advisor'));
+  const trading = state.agents.find((agent) => agent.id === 'trading');
+  const biz = state.agents.find((agent) => agent.id === 'biz');
+  const beforeIds = state.agents.map((agent) => agent.id);
+  trading.archived = false;
+  biz.archived = false;
+  const retired = archiveRetiredStaff();
+  assert.deepEqual(retired.map((agent) => agent.id).sort(), ['biz', 'trading']);
+  assert.equal(trading.archived, true);
+  assert.equal(biz.archived, true);
+  assert.equal(archiveRetiredStaff().length, 0);
+  assert.deepEqual(state.agents.map((agent) => agent.id), beforeIds);
 });
 
 function chromePath() {

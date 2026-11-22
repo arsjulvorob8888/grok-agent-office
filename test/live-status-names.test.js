@@ -14,7 +14,9 @@ const PROFILE_NAMES = [
   ['Программирование · Кремль', 'dev'],
   ['Здоровье и спорт · Кремль', 'health'],
   ['Technology Blog · Кремль', 'blog'],
-  ['Трейдинг · Кремль', 'trading'],
+  ['Трейдинг · Кремль', 'invest'],
+  ['Инвестиции · Кремль', 'invest'],
+  ['Бизнес-аналитик · Кремль', 'analyst'],
   ['Language Coach', 'lang'],
   ['Темщик · Кремль', 'temshik'],
   ['Тестировщик ПО · Кремль', 'qa'],
@@ -132,7 +134,7 @@ test('POST по 16 именам: неархивный меняет activity, а�
     assert.equal(posted.body.id, id, name);
     assert.equal(view.activity, 'working', name);
     assert.equal(view.doing, doing, name);
-    if (id === 'trading' || id === 'biz') {
+    if (id === 'biz') {
       assert.equal(view.archived, true, name);
       assert.equal(view.parentId, 'finance', name);
     } else {
@@ -237,10 +239,18 @@ test('архивный зам с parentId принимает статус, ар�
   assert.equal(trading.parentId, 'finance');
   assert.equal(biz.parentId, 'finance');
   assert.equal(lang.parentId, null);
+  const tradingRecord = state.agents.find((agent) => agent.id === 'trading');
+  const keptName = tradingRecord.name;
   const named = await postStatus({ agentId: 'Трейдинг · Кремль', status: 'working', doing: 'в комнате' });
   assert.equal(named.status, 200, JSON.stringify(named.body));
   assert.equal(named.body.ok, true);
-  assert.equal(named.body.id, 'trading');
+  assert.equal(named.body.id, 'invest');
+  const byOldId = await postStatus({ agentId: 'trading', status: 'working', doing: 'старый id' });
+  assert.ok(byOldId.status >= 200 && byOldId.status < 300, JSON.stringify(byOldId.body));
+  assert.equal(byOldId.body.id, 'invest');
+  const renamed = await postStatus({ agentId: 'Инвестиции · Кремль', status: 'working', doing: 'новое имя' });
+  assert.ok(renamed.status >= 200 && renamed.status < 300, JSON.stringify(renamed.body));
+  assert.equal(renamed.body.id, 'invest');
   const adviser = await postStatus({ agentId: 'Business Adviser', status: 'working', doing: 'совет' });
   assert.equal(adviser.status, 200, JSON.stringify(adviser.body));
   assert.equal(adviser.body.ok, true);
@@ -249,10 +259,18 @@ test('архивный зам с parentId принимает статус, ар�
   assert.equal(coach.body.agentId, 'lang');
   assert.equal(coach.body.error, ARCHIVE_ERROR);
   const body = (await json('/api/state')).body;
-  assert.equal(agentOf(body, 'trading').activity, 'working');
-  assert.equal(agentOf(body, 'trading').doing, 'в комнате');
-  assert.equal(agentOf(body, 'trading').archived, true);
+  const card = agentOf(body, 'invest');
+  assert.equal(card.activity, 'working');
+  assert.equal(card.doing, 'новое имя');
+  assert.equal(card.name, 'Инвестиции');
+  assert.equal(card.number, '7.1');
+  assert.equal(card.archived, false);
+  const stored = agentOf(body, 'trading');
+  assert.equal(stored.archived, true);
+  assert.equal(stored.name, keptName);
+  assert.equal(stored.id, 'trading');
   assert.equal(agentOf(body, 'biz').doing, 'совет');
+  assert.equal(agentOf(body, 'biz').archived, true);
   assert.equal(agentOf(body, 'lang').doing, null);
 });
 
@@ -451,19 +469,22 @@ test('статус замов виден в помещении Финансов 
     assert.equal(map.lang, false);
     const point = await hitFinance(page);
     await page.mouse.click(point.x, point.y);
-    await page.waitForSelector('#room.open .room-seat[data-id="trading"]', { timeout: 8000 });
+    await page.waitForSelector('#room.open .room-seat[data-id="invest"]', { timeout: 8000 });
     const seats = await page.$$eval('#room.open .room-seat', (els) => els.map((el) => ({
       id: el.dataset.id,
+      name: el.textContent.replace(/\s+/g, ' ').trim(),
       status: el.querySelector('.room-dot') ? el.querySelector('.room-dot').getAttribute('data-status') : '',
       label: el.querySelector('.status-pill') ? el.querySelector('.status-pill').textContent : '',
     })));
     const bySeat = Object.fromEntries(seats.map((seat) => [seat.id, seat]));
-    assert.equal(bySeat.trading.status, 'working');
-    assert.equal(bySeat.biz.status, 'working');
-    assert.match(bySeat.trading.label, /Работает/);
-    assert.match(bySeat.biz.label, /Работает/);
+    assert.equal(bySeat.trading, undefined);
+    assert.equal(bySeat.biz, undefined);
     assert.equal(bySeat.lang, undefined);
-    assert.ok(bySeat.invest && bySeat.invest.status);
+    assert.match(bySeat.invest.name, /7\.1\s*Инвестиции/);
+    assert.equal(bySeat.invest.status, 'working');
+    assert.match(bySeat.invest.label, /Работает/);
+    assert.match(bySeat.analyst.name, /7\.2\s*Бизнес-аналитик/);
+    assert.equal(/Трейдинг|Business Adviser/.test(seats.map((seat) => seat.name).join('\n')), false);
     assert.equal(seats.every((seat) => seat.status), true);
   } finally {
     await browser.close();

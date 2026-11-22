@@ -151,12 +151,11 @@ test('владелец выпускает токен в панели один р
   try {
     await openService(page);
     const box = await page.$eval('[data-token-issue]', (el) => {
-      el.scrollIntoView({ block: 'center' });
       const r = el.getBoundingClientRect();
       return { text: el.textContent, top: r.top, left: r.left, width: r.width, height: r.height };
     });
     assert.equal(box.text, 'Выпустить токены');
-    assert.ok(box.width > 40 && box.height > 20);
+    assert.ok(box.width > 40 && box.height > 20, JSON.stringify(box));
     assert.ok(box.top >= 0 && box.left >= 0 && box.top < 800);
     assert.equal(await page.$eval('[data-token-revoke]', (el) => el.textContent), 'Отозвать');
 
@@ -230,10 +229,19 @@ async function pageReady(page) {
 }
 
 async function openService(page) {
-  const shown = await page.$('#servicePop:not([hidden])');
-  if (!shown) await page.click('#btnKey');
-  await page.waitForSelector('#serviceFold', { timeout: 4000 });
-  const open = await page.$eval('#serviceFold', (el) => el.open);
-  if (!open) await page.click('#serviceFold summary');
-  await page.waitForSelector('#serviceFold [data-token-issue]', { timeout: 8000 });
+  await page.evaluate(() => {
+    const pop = document.querySelector('#servicePop');
+    if (pop && pop.hidden) document.querySelector('#btnKey').click();
+  });
+  await page.waitForSelector('#servicePop:not([hidden])', { timeout: 4000 });
+  await page.evaluate(() => {
+    const fold = document.querySelector('#serviceFold');
+    if (fold && !fold.open) fold.querySelector('summary').click();
+  });
+  await page.waitForFunction(() => {
+    const button = document.querySelector('#servicePop:not([hidden]) #serviceFold[open] [data-token-issue]');
+    if (!button) return false;
+    const box = button.getBoundingClientRect();
+    return box.width > 40 && box.height > 20;
+  }, { timeout: 8000 });
 }

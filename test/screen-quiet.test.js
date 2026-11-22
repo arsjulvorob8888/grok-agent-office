@@ -485,7 +485,7 @@ test('счётчик шапки равен агентам нижней пане�
         onMap: ['invest', 'analyst', 'trading', 'biz'].filter((id) => document.querySelector(`#roster .chip[data-id="${id}"], #agents .agent[data-id="${id}"]`)),
       };
     });
-    assert.equal(info.den, info.chips + 2, info.raw);
+    assert.equal(info.den, info.chips, info.raw);
     assert.equal(info.num, info.working, info.raw);
     assert.equal(info.ids.includes('trading'), false);
     assert.equal(info.ids.includes('biz'), false);
@@ -529,6 +529,95 @@ test('работающий советник на карте с фигуркой 
     assert.equal(view.figure, true);
     assert.equal(view.name, '10. Советник Путина');
     assert.equal(view.working, true);
+  } finally {
+    await page.close();
+  }
+});
+
+test('алиасы Трейдинга попадают в 7.1, отдельных карточек нет', { timeout: 40000 }, async () => {
+  process.env.AGENT_STATUS_TOKEN = 'status-quiet';
+  const headers = { Authorization: 'Bearer status-quiet' };
+  const byName = await api('/api/agent-status', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ agentId: 'Инвестиции · Кремль', status: 'working', doing: 'Новое имя' }),
+  });
+  assert.ok(byName.status >= 200 && byName.status < 300, JSON.stringify(byName.body));
+  assert.equal(byName.body.id, 'invest');
+  const byOld = await api('/api/agent-status', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ agentId: 'Трейдинг · Кремль', status: 'working', doing: 'Старое имя' }),
+  });
+  assert.ok(byOld.status >= 200 && byOld.status < 300, JSON.stringify(byOld.body));
+  assert.equal(byOld.body.id, 'invest');
+  const byId = await api('/api/agent-status', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ agentId: 'trading', status: 'idle' }),
+  });
+  assert.ok(byId.status >= 200 && byId.status < 300, JSON.stringify(byId.body));
+  assert.equal(byId.body.id, 'invest');
+  const marked = await api('/api/agent-status', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ agentId: 'trading', status: 'working', doing: 'Живая отметка' }),
+  });
+  assert.ok(marked.status >= 200 && marked.status < 300, JSON.stringify(marked.body));
+  const analystMark = await api('/api/agent-status', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ agentId: 'Бизнес-аналитик · Кремль', status: 'working', doing: 'Считаю модель' }),
+  });
+  assert.ok(analystMark.status >= 200 && analystMark.status < 300, JSON.stringify(analystMark.body));
+  assert.equal(analystMark.body.id, 'analyst');
+  const stateAfter = await api('/api/state');
+  const card = stateAfter.body.agents.find((agent) => agent.id === 'invest');
+  const analyst = stateAfter.body.agents.find((agent) => agent.id === 'analyst');
+  const stored = stateAfter.body.agents.find((agent) => agent.id === 'trading');
+  assert.equal(card.number, '7.1');
+  assert.equal(card.name, 'Инвестиции');
+  assert.equal(card.grokAgentId, '504035c8-ccd8-467b-9e34-f16305493533');
+  assert.equal(card.activity, 'working');
+  assert.equal(card.doing, 'Живая отметка');
+  assert.equal(analyst.number, '7.2');
+  assert.equal(analyst.name, 'Бизнес-аналитик');
+  assert.equal(analyst.grokAgentId, '4bbdde69-8b7d-48a4-a5a6-c5136e60257d');
+  assert.equal(analyst.activity, 'working');
+  assert.equal(analyst.doing, 'Считаю модель');
+  assert.equal(stored.archived, true);
+  assert.equal(stored.name, 'Трейдинг');
+  assert.equal(stored.grokAgentId, card.grokAgentId);
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+    await page.click('#btnHier');
+    await page.waitForSelector('#hier.open #hTree', { timeout: 4000 });
+    await page.evaluate(() => document.querySelector('#overlay .tag[data-id="finance"]').click());
+    await page.waitForFunction(() => {
+      const invest = document.querySelector('#room.open .room-seat[data-id="invest"]');
+      const analystSeat = document.querySelector('#room.open .room-seat[data-id="analyst"]');
+      return invest && analystSeat
+        && /Работает/.test(invest.textContent) && /7\.1\s*Инвестиции/.test(invest.textContent)
+        && /Работает/.test(analystSeat.textContent) && /7\.2\s*Бизнес-аналитик/.test(analystSeat.textContent);
+    }, { timeout: 4000 });
+    const view = await page.evaluate(() => {
+      const raw = document.querySelector('#stActive').textContent.trim();
+      const chips = [...document.querySelectorAll('#roster .chip')];
+      const dom = document.body.innerText;
+      return {
+        raw,
+        den: Number(raw.split('/')[1]),
+        chips: chips.length,
+        dom,
+        analyst: /7\.2\s*Бизнес-аналитик/.test(document.querySelector('#room').textContent)
+          && /7\.2\s*Бизнес-аналитик/.test(document.querySelector('#hTree').textContent),
+      };
+    });
+    assert.equal(view.dom.includes('Трейдинг'), false);
+    assert.equal(view.dom.includes('Business Adviser'), false);
+    assert.equal(view.analyst, true);
+    assert.equal(view.den, view.chips, view.raw);
   } finally {
     await page.close();
   }

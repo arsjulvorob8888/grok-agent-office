@@ -208,9 +208,7 @@
     return (hostId && S.byId.get(hostId)) || a;
   };
   function roomGuests(hostId) {
-    const visible = S.agents.filter((a) => roomHostId(a) === hostId);
-    const deputies = (S.deputies || []).filter((a) => a && a.parentId === hostId && !visible.some((item) => item.id === a.id));
-    return visible.concat(deputies).sort((a, b) => {
+    return S.agents.filter((a) => roomHostId(a) === hostId).sort((a, b) => {
       const rank = (agent) => (agent.number ? 0 : 1);
       const byRank = rank(a) - rank(b);
       if (byRank) return byRank;
@@ -2092,22 +2090,8 @@
   function openTaskCount(id) {
     return S.tasks.filter((t) => (t.agentId || t.agent) === id && Feed.countsAsActiveTask(t) && !(window.TaskRules && TaskRules.isSilentTask(t))).length;
   }
-  function financeDeputies() {
-    const order = ['trading', 'biz'];
-    return order.map((id, index) => {
-      const agent = (S.deputies || []).find((item) => item && item.id === id && item.parentId === 'finance');
-      if (!agent) return null;
-      return { ...agent, number: `7.${index + 1}` };
-    }).filter(Boolean);
-  }
-  function countedStaff() {
-    const roster = rosterAgents();
-    const extra = financeDeputies().filter((agent) => !roster.some((item) => item.id === agent.id));
-    return roster.concat(extra);
-  }
   function treeChildren(a) {
-    if (a.id === 'finance') return financeDeputies();
-    const explicit = S.agents.filter((x) => x.parentId === a.id && x.id !== 'invest' && x.id !== 'analyst');
+    const explicit = S.agents.filter((x) => x.parentId === a.id);
     if (a.id !== CONFIG.mainId) return explicit.sort(cmpNum);
     const seen = new Set(explicit.map((x) => x.id));
     const implicit = S.agents.filter((x) => x.id !== a.id && !x.parentId && !seen.has(x.id));
@@ -2211,7 +2195,7 @@
     document.body.classList.toggle('usage-hot', view.level === 'critical');
   }
   function renderHUD() {
-    const staff = countedStaff();
+    const staff = rosterAgents();
     const active = staff.filter((a) => {
       const mode = window.AgentStatus && AgentStatus.finalStatus ? AgentStatus.finalStatus(a) : activityMode(a);
       return mode === 'working';
