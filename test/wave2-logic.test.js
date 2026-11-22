@@ -370,7 +370,7 @@ function freePort() {
   });
 }
 
-test('перезапуск Postgres нормализует отменённые и не шлёт их outbox', { skip: savedDatabaseUrl ? false : 'DATABASE_URL не задан' }, async () => {
+test('перезапуск Postgres нормализует отменённые и не шлёт их outbox', { skip: savedDatabaseUrl ? false : 'DATABASE_URL не задан', timeout: 90000 }, async () => {
   const saved = savedDatabaseUrl;
   const schema = `w2_${crypto.randomBytes(3).toString('hex')}`;
   const root = path.join(__dirname, '..');
@@ -423,15 +423,23 @@ test('перезапуск Postgres нормализует отменённые 
       } catch (_) { /* ещё стартует */ }
       await new Promise((resolve) => setTimeout(resolve, 80));
     }
-    child.kill();
-    throw new Error(log);
+    child.kill('SIGKILL');
+    throw new Error(log || 'сервер не поднялся');
   }
 
   function stop(child) {
     return new Promise((resolve) => {
       if (!child || child.exitCode != null) return resolve();
-      child.once('exit', () => resolve());
-      child.kill();
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve();
+      }, 3000);
+      if (typeof timer.unref === 'function') timer.unref();
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      child.kill('SIGTERM');
     });
   }
 
