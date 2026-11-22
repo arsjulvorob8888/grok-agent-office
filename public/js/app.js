@@ -90,6 +90,7 @@
     peekId: null,
     roomId: null,
     roomSig: '',
+    journalOpen: new Set(),
   };
   const drafts = new Map();
   const MAX_FILES = 5;
@@ -167,6 +168,14 @@
     return String(a.number).includes('.') ? String(a.number) : `${a.number}.`;
   };
   const titled = (a) => (a && a.number ? `${numLabel(a)} ${plainName(a)}` : plainName(a));
+  // Зам сидит в помещении родителя: в шапке панели район родителя, не свой.
+  function panelDistrict(a) {
+    if (a && a.parentId) {
+      const parent = S.byId.get(a.parentId);
+      if (parent) return parent.district || '';
+    }
+    return (a && a.district) || '';
+  }
   const cmpNum = (a, b) => {
     const pa = String(a.number || '').split('.').map((n) => parseInt(n, 10) || 0);
     const pb = String(b.number || '').split('.').map((n) => parseInt(n, 10) || 0);
@@ -1575,13 +1584,14 @@
     const msgKey = Feed.messagesForAgent(S.messages, S.tasks, a.id).map((m) => [m.id, m.role, m.agentId, m.text, m.timestamp || m.createdAt, JSON.stringify(m.attachments || [])].join('\u0001')).join('\u0002');
     const needKey = Feed.needsForIds(S.needs, awaitAgentIds(a.id)).map((n) => [n.id, n.what, n.where, n.closedAt, n.stale, n.urgency, n.kind, n.checkedAt, n.actionUrl, n.docUrl, n.actionLabel, n.actionHint, n.answerStatus, n.answerDeliveryLabel, (n.participants || []).join(',')].join('\u0001')).join('\u0002');
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum).map((d) => `${d.id}:${d.number}:${d.name}:${d.deliveryRoute || ''}`).join(',');
-    return [a.id, a.deliveryRoute || '', a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), a.district, L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
+    return [a.id, a.deliveryRoute || '', a.name, a.role, a.status, a.activity, a.currentTask, a.doing, a.doingSince, a.now, a.completed, a.vacant, (a.done || []).join('\u0001'), (a.responsibilities || []).join('\u0001'), panelDistrict(a), L.lvl, L.into, L.need, depts, taskKey, msgKey, needKey].join('\u0003');
   }
 
   function renderPanel(opts = {}) {
     const a = S.byId.get(S.selected);
     if (!a) return;
     const tier = tierOf(a);
+    const place = panelDistrict(a);
     const tasks = Feed.ordersForAgent(S.tasks, a.id).filter((t) => !(window.TaskRules && TaskRules.isSilentTask(t)));
     const pin = S.pinnedOrder && tasks.find((t) => t.id === S.pinnedOrder);
     const depts = S.agents.filter((x) => tierOf(x) !== 'main' && !x.vacant).sort(cmpNum);
@@ -1634,7 +1644,7 @@
       <button class="icon-btn sm p-close" id="pClose" aria-label="Закрыть">${ico('x')}</button>
       <div class="p-hero">
         <div class="p-portrait">${portrait(a, '-34 -104 68 76')}</div>
-        <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · Путин' : (a.district || '') + (tier === 'extra' ? ' · союзник' : ''))}</div>
+        <div class="p-title"><div class="kicker">${esc(tier === 'main' ? 'Кремль · Путин' : place + (tier === 'extra' ? ' · союзник' : ''))}</div>
           <h2>${a.number ? `<span class="ord">${esc(numLabel(a))}</span> ` : ''}${esc(plainName(a))}</h2><div class="role">${esc(a.role || '')}</div>${parent ? `<button type="button" class="parent-link" data-parent="${esc(parent.id)}">Помощник · ${esc(titled(parent))}</button>` : ''}</div>
       </div>
       <div class="p-body">
@@ -2072,7 +2082,10 @@
     syncJournalChrome(badge);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
-    const quest = (t) => questHTML(t, true);
+    const quest = (t) => {
+      const html = questHTML(t, true);
+      return S.journalOpen.has(t.id) ? html.replace('class="quest"', 'class="quest open"') : html;
+    };
     const fold = (items, cls, title) => (items && items.length
       ? `<details class="${cls}"><summary>${title} (${items.length})</summary>${items.slice(0, 60).map(quest).join('')}</details>`
       : '');
@@ -2082,10 +2095,17 @@
     list.querySelectorAll('[data-scroll-key]').forEach((el) => {
       if (typeof saved[el.dataset.scrollKey] === 'number') el.scrollTop = saved[el.dataset.scrollKey];
     });
-    list.querySelectorAll('.quest').forEach((q) => (q.onclick = (e) => {
-      if (e.target.closest('a,button,.qr')) return;
-      select(q.dataset.agent);
-    }));
+    list.querySelectorAll('.quest').forEach((q) => {
+      const id = (q.dataset.anchor || '').slice(2);
+      q.setAttribute('aria-expanded', q.classList.contains('open') ? 'true' : 'false');
+      q.onclick = (e) => {
+        if (e.target.closest('a,button,.qr')) return;
+        if (S.journalOpen.has(id)) S.journalOpen.delete(id);
+        else S.journalOpen.add(id);
+        q.classList.toggle('open', S.journalOpen.has(id));
+        q.setAttribute('aria-expanded', S.journalOpen.has(id) ? 'true' : 'false');
+      };
+    });
     list.querySelectorAll('.thumb').forEach((btn) => {
       btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(btn.dataset.full, btn.dataset.name); };
     });

@@ -389,6 +389,25 @@ body.hier-on #journal{display:none}
 .quest .qm{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted);flex-wrap:wrap;min-width:0}
 .quest .atts,.quest .qr,.quest .quest-via{grid-column:2}
 .quest-via{font-size:11px;line-height:1.35;color:var(--muted)}
+/* Журнал на карте: одна строка «кому · время · статус», подробности по клику. */
+#journal .quest{display:flex;flex-direction:column;align-items:stretch;gap:0;min-width:0;max-width:100%;padding:0 8px;overflow:hidden;border-radius:10px}
+#journal .quest:not(.open){height:32px;max-height:40px}
+#journal .quest .qi,
+#journal .quest:not(.open) .qt,
+#journal .quest:not(.open) .quest-via,
+#journal .quest:not(.open) .atts,
+#journal .quest:not(.open) .qr,
+#journal .quest:not(.open) .order-chain,
+#journal .quest:not(.open) .order-hist{display:none}
+#journal .quest .qm{flex-wrap:nowrap;gap:6px;min-width:0;max-width:100%;height:30px;max-height:40px;overflow:hidden}
+#journal .quest .q-who{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#journal .quest .q-when,#journal .quest .badge{flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}
+#journal .quest.open{height:auto;max-height:none;padding-bottom:8px}
+#journal .quest.open .qt,
+#journal .quest.open .quest-via,
+#journal .quest.open .atts,
+#journal .quest.open .qr{display:block;min-width:0;max-width:100%;margin-top:4px;overflow-wrap:anywhere;word-break:break-word}
+#journal .quest.open .qt{-webkit-line-clamp:unset;white-space:normal}
 .j-cancelled,.j-delivered{margin-top:4px;min-width:0}
 .j-cancelled summary,.j-delivered summary{cursor:pointer;padding:8px 4px;font-size:12px;font-weight:700;color:var(--muted);overflow-wrap:anywhere}
 .j-cancelled .quest,.j-delivered .quest{margin-top:6px}
