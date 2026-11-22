@@ -92,7 +92,7 @@ test('state содержит новый ростер без секретов', a
     poker: '3',
     devops: '4',
     dev: '5',
-    temshik: '6',
+    temshik: '7.3',
     finance: '7',
     invest: '7.1',
     analyst: '7.2',
@@ -108,6 +108,10 @@ test('state содержит новый ростер без секретов', a
     assert.equal(agent.number, number, id);
     assert.equal(agent.archived, false, id);
   }
+  const temshik = body.agents.find((a) => a.id === 'temshik');
+  assert.equal(temshik.parentId, 'finance');
+  assert.equal(temshik.name, 'Темщик');
+  assert.equal(temshik.grokAgentId, '6a1deccc-2411-4fd1-8da7-e7ba9fce6df2');
   const advisor = body.agents.find((a) => a.id === 'advisor');
   assert.equal(advisor.name, 'Советник Путина');
   assert.equal(advisor.role, 'Стратегический советник Путина');
@@ -327,7 +331,7 @@ test('помощник Финансов принимает задачу и со�
   });
   assert.equal(child.status, 200);
   assert.equal(child.body.agent.parentId, 'finance');
-  assert.equal(child.body.agent.number, '7.3');
+  assert.equal(child.body.agent.number, '7.4');
   const st = await json('/api/state');
   const created = st.body.agents.find((a) => a.id === 'credit');
   assert.equal(created.tier, 'sub');

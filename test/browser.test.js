@@ -129,6 +129,7 @@ test('на ширине 390 иерархия не прячется под пан
     assert.doesNotMatch(treeText, /Business Adviser/);
     assert.match(treeText, /7\.1\s*Инвестиции/);
     assert.match(treeText, /7\.2\s*Бизнес-аналитик/);
+    assert.match(treeText, /7\.3\s*Темщик/);
     assert.equal(hit.panelOpen, false);
     assert.equal(hit.overlap, false);
     assert.ok(hit.cardH > 30, 'строка иерархии не видна');
@@ -1125,6 +1126,7 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.ok(ui.mapIds.includes('devops') && ui.mapIds.includes('finance') && ui.mapIds.includes('grok'));
     assert.equal(ui.mapIds.includes('advisor'), true);
     assert.equal(ui.mapIds.includes('invest'), false);
+    assert.equal(ui.mapIds.includes('temshik'), false);
     assert.equal(ui.mapIds.includes('analyst'), false);
     assert.doesNotMatch(ui.tagText, /Трейдинг|Business Adviser|Language Coach|Главный агент/);
     const chip = (id) => ui.chips.find((c) => c.id === id).text;
@@ -1133,7 +1135,7 @@ test('на ширине 390 архивные агенты скрыты, исто
     assert.match(chip('poker'), /^3\./);
     assert.match(chip('devops'), /^4\./);
     assert.match(chip('dev'), /^5\./);
-    assert.match(chip('temshik'), /^6\./);
+    assert.equal(chipIds.includes('temshik'), false);
     assert.match(chip('finance'), /^7\./);
     assert.equal(chipIds.includes('invest'), false);
     assert.equal(chipIds.includes('analyst'), false);
@@ -1177,6 +1179,7 @@ test('на ширине 390 архивные агенты скрыты, исто
     const treeText = await page.$eval('#hTree', (el) => el.textContent);
     assert.match(treeText, /7\.1\s*Инвестиции/);
     assert.match(treeText, /7\.2\s*Бизнес-аналитик/);
+    assert.match(treeText, /7\.3\s*Темщик/);
     assert.doesNotMatch(treeText, /Трейдинг/);
     assert.doesNotMatch(treeText, /Business Adviser/);
     assert.match(treeText, /1\.\s*Путин/);
@@ -1728,7 +1731,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await desk.page.waitForFunction(() => {
       const tip = document.querySelector('#tooltip');
       const text = tip ? tip.textContent : '';
-      return tip && tip.classList.contains('show') && /Заместители:\s*2/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && !/Трейдинг/.test(text) && !/Business Adviser/.test(text);
+      return tip && tip.classList.contains('show') && /Заместители:\s*3/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && /Темщик/.test(text) && !/Трейдинг/.test(text) && !/Business Adviser/.test(text);
     }, { timeout: 4000 });
     assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
     await desk.page.mouse.click(point.x, point.y);
@@ -1736,7 +1739,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await desk.page.waitForSelector('#room.open .room-seat[data-id="invest"]');
     await desk.page.waitForSelector('#room.open .room-seat[data-id="analyst"]');
     const seats = await desk.page.$$eval('#room .room-seat', (els) => els.map((el) => el.dataset.id));
-    assert.deepEqual(seats, ['finance', 'invest', 'analyst']);
+    assert.deepEqual(seats, ['finance', 'invest', 'analyst', 'temshik']);
     await desk.page.click('#room .room-go[data-id="invest"]');
     await desk.page.waitForSelector('#panel.open[data-agent="invest"]', { timeout: 8000 });
     assert.equal(await desk.page.$eval('#room', (el) => el.classList.contains('open')), false);
@@ -1771,7 +1774,7 @@ test('помещения, лента, подсказка, бейдж и зазо
     await phone.page.waitForFunction(() => {
       const tip = document.querySelector('#tooltip');
       const text = tip ? tip.textContent : '';
-      return tip && tip.classList.contains('show') && /Заместители:\s*2/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && !/Трейдинг/.test(text) && !/Business Adviser/.test(text);
+      return tip && tip.classList.contains('show') && /Заместители:\s*3/.test(text) && /Инвестиции/.test(text) && /Бизнес-аналитик/.test(text) && /Темщик/.test(text) && !/Трейдинг/.test(text) && !/Business Adviser/.test(text);
     }, { timeout: 4000 });
     assert.equal(await phone.page.$eval('#room', (el) => el.classList.contains('open')), false);
     await phone.page.touchscreen.touchEnd();
@@ -1961,9 +1964,10 @@ test('фокус после панели и помещения возвраща�
       await page.$eval('#roster .chip[data-id="finance"]', (el) => el.scrollIntoView({ inline: 'center', block: 'nearest' }));
       await page.click('#roster .chip[data-id="finance"]');
       await page.waitForFunction(() => {
-        const btn = document.querySelector('#panel.open[data-agent="finance"] #pClose');
-        const panel = document.querySelector('#panel');
-        if (!btn || !panel || panel.inert || panel.getAttribute('aria-hidden') === 'true') return false;
+        const panel = document.querySelector('#panel.open[data-agent="finance"]');
+        const btn = panel && panel.querySelector('#pClose');
+        if (!btn || panel.inert || panel.getAttribute('aria-hidden') === 'true') return false;
+        if (getComputedStyle(panel).transform !== 'none') return false;
         const r = btn.getBoundingClientRect();
         const x = r.left + r.width / 2;
         const y = r.top + r.height / 2;
@@ -1971,8 +1975,27 @@ test('фокус после панели и помещения возвраща�
         const hit = document.elementFromPoint(x, y);
         return !!(hit && (hit === btn || btn.contains(hit)));
       }, { timeout: 4000 });
-      await page.click('#pClose');
-      await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'), { timeout: 4000 });
+      const closeAt = await page.$eval('#panel.open[data-agent="finance"] #pClose', (btn) => {
+        const r = btn.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      await page.mouse.click(closeAt.x, closeAt.y);
+      try {
+        await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('open'), { timeout: 4000 });
+      } catch (err) {
+        const state = await page.evaluate((point) => {
+          const panel = document.querySelector('#panel');
+          const btn = document.querySelector('#pClose');
+          const hit = document.elementFromPoint(point.x, point.y);
+          return {
+            open: !!(panel && panel.classList.contains('open')),
+            transform: panel ? getComputedStyle(panel).transform : '',
+            hit: hit ? `${hit.tagName}.${hit.className}#${hit.id}` : '',
+            btn: !!btn,
+          };
+        }, closeAt);
+        throw new Error(`${viewport.width} панель не закрылась: ${JSON.stringify(state)}; ${err.message}`);
+      }
       const panelBack = await page.evaluate(() => {
         const panel = document.querySelector('#panel');
         const active = document.activeElement;

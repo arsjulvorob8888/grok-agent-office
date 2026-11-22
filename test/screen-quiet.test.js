@@ -31,7 +31,7 @@ function chromePath() {
 }
 
 const NUMBER_ORDER = [
-  'grok', 'army', 'poker', 'devops', 'dev', 'temshik', 'finance',
+  'grok', 'army', 'poker', 'devops', 'dev', 'finance',
   'qa', 'blog', 'advisor', 'social', 'routines', 'health',
 ];
 
@@ -620,5 +620,171 @@ test('алиасы Трейдинга попадают в 7.1, отдельны�
     assert.equal(view.den, view.chips, view.raw);
   } finally {
     await page.close();
+  }
+});
+
+test('Темщик — 7.3 в Финансах, на общей карте здания нет, записи целы', { timeout: 40000 }, async () => {
+  const note = await api('/api/messages', {
+    method: 'POST',
+    headers: { 'x-agent-token': 'tok-quiet' },
+    body: JSON.stringify({ id: 'temshik-kept', agentId: 'temshik', role: 'agent', text: 'Старая тема Темщика на месте' }),
+  });
+  assert.equal(note.status, 201, JSON.stringify(note.body));
+  process.env.AGENT_STATUS_TOKEN = 'status-quiet';
+  const headers = { Authorization: 'Bearer status-quiet' };
+  const byName = await api('/api/agent-status', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ agentId: 'Темщик · Кремль', status: 'working', doing: 'Ищу связку' }),
+  });
+  assert.ok(byName.status >= 200 && byName.status < 300, JSON.stringify(byName.body));
+  assert.equal(byName.body.id, 'temshik');
+  const byId = await api('/api/agent-status', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ agentId: 'temshik', status: 'working', doing: 'Старый id' }),
+  });
+  assert.ok(byId.status >= 200 && byId.status < 300, JSON.stringify(byId.body));
+  assert.equal(byId.body.id, 'temshik');
+  const stateAfter = await api('/api/state');
+  const agent = stateAfter.body.agents.find((item) => item.id === 'temshik');
+  assert.equal(agent.parentId, 'finance');
+  assert.equal(agent.number, '7.3');
+  assert.equal(agent.name, 'Темщик');
+  assert.equal(agent.archived, false);
+  assert.equal(agent.grokAgentId, '6a1deccc-2411-4fd1-8da7-e7ba9fce6df2');
+  assert.equal(agent.activity, 'working');
+  assert.equal(agent.doing, 'Старый id');
+  assert.ok(agent.responsibilities && agent.responsibilities.length >= 1);
+  assert.ok(stateAfter.body.messages.some((item) => item.id === 'temshik-kept' && item.text === 'Старая тема Темщика на месте'));
+  const page = await openPage({ width: 1280, height: 800 });
+  try {
+    await page.waitForSelector('#roster .chip[data-id="finance"]', { timeout: 8000 });
+    await page.evaluate(() => document.querySelector('#overlay .tag[data-id="finance"]').click());
+    await page.waitForFunction(() => {
+      const seat = document.querySelector('#room.open .room-seat[data-id="temshik"]');
+      return seat && /7\.3\s*Темщик/.test(seat.textContent) && /Работает/.test(seat.textContent);
+    }, { timeout: 4000 });
+    const placed = await page.evaluate(() => ({
+      map: !!document.querySelector('#agents .agent[data-id="temshik"]'),
+      tag: !!document.querySelector('#overlay .tag[data-id="temshik"]'),
+      chip: !!document.querySelector('#roster .chip[data-id="temshik"]'),
+      den: Number(document.querySelector('#stActive').textContent.trim().split('/')[1]),
+      chips: document.querySelectorAll('#roster .chip').length,
+    }));
+    assert.equal(placed.map, false);
+    assert.equal(placed.tag, false);
+    assert.equal(placed.chip, false);
+    assert.equal(placed.den, placed.chips);
+  } finally {
+    await page.close();
+  }
+});
+
+test('счётчик шапки один на 1280 и 390 и без замов', { timeout: 40000 }, async () => {
+  for (const [agent, now] of [['army', 'На линии'], ['analyst', 'Считаю модель'], ['temshik', 'Ищу связку']]) {
+    const posted = await api('/api/status', {
+      method: 'POST',
+      headers: { 'x-agent-token': 'tok-quiet' },
+      body: JSON.stringify({ agent, status: 'working', now }),
+    });
+    assert.equal(posted.status, 200, agent);
+  }
+  const seen = [];
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    const page = await openPage(viewport);
+    try {
+      await page.waitForSelector('#roster .chip.act-working', { timeout: 8000 });
+      const info = await page.evaluate(() => {
+        const raw = document.querySelector('#stActive').textContent.trim();
+        const stat = document.querySelector('#stActive').closest('.stat');
+        const chips = [...document.querySelectorAll('#roster .chip')];
+        return {
+          raw,
+          title: stat ? stat.title : '',
+          chips: chips.length,
+          working: chips.filter((chip) => chip.classList.contains('act-working')).length,
+          deputies: ['invest', 'analyst', 'temshik', 'biz', 'trading'].filter((id) => chips.some((chip) => chip.dataset.id === id)),
+        };
+      });
+      seen.push(info);
+    } finally {
+      await page.close();
+    }
+  }
+  assert.equal(seen[0].raw, seen[1].raw, `${seen[0].raw} ≠ ${seen[1].raw}`);
+  const [num, den] = seen[0].raw.split('/').map(Number);
+  assert.equal(den, seen[0].chips, seen[0].raw);
+  assert.equal(num, seen[0].working, seen[0].raw);
+  assert.equal(seen[1].chips, seen[0].chips);
+  assert.equal(seen[1].working, seen[0].working);
+  assert.deepEqual(seen[0].deputies, []);
+  assert.equal(seen[0].title, `Работают ${num} из ${den} агентов`);
+  assert.equal(seen[1].title, seen[0].title);
+});
+
+test('в переписке qa и advisor нет теста и отметок, живой разговор виден', { timeout: 40000 }, async () => {
+  const stamp = '2026-11-17T14:00:00.000Z';
+  for (const agentId of ['qa', 'advisor']) {
+    state.tasks.push({
+      id: `t-noise-${agentId}`,
+      agent: agentId,
+      agentId,
+      text: 'тест',
+      orderStatus: 'cancelled',
+      status: 'отменён',
+      createdAt: stamp,
+    });
+    state.messages.push(
+      {
+        id: `live-${agentId}`,
+        agentId,
+        role: 'system',
+        source: 'live',
+        text: `${agentId} отметился: работает · проверка`,
+        createdAt: stamp,
+      },
+      {
+        id: `test-${agentId}`,
+        agentId,
+        role: 'owner',
+        text: 'тест',
+        taskId: `t-noise-${agentId}`,
+        createdAt: '2026-11-17T14:05:00.000Z',
+      },
+      {
+        id: `owner-${agentId}`,
+        agentId,
+        role: 'owner',
+        text: 'Проверь сборку, пожалуйста',
+        createdAt: '2026-11-22T10:00:00.000Z',
+      },
+      {
+        id: `reply-${agentId}`,
+        agentId,
+        role: 'agent',
+        text: 'Сборка зелёная, можно катить',
+        createdAt: '2026-11-22T10:05:00.000Z',
+      },
+    );
+  }
+  for (const agentId of ['qa', 'advisor']) {
+    const page = await openPage({ width: 1280, height: 800 }, { path: `/?agent=${agentId}` });
+    try {
+      await page.waitForSelector(`#panel.open[data-agent="${agentId}"] .chat-log`, { timeout: 8000 });
+      await page.waitForFunction((id) => {
+        const log = document.querySelector('#panel.open .chat-log');
+        return log && log.textContent.includes('Сборка зелёная');
+      }, { timeout: 4000 }, agentId);
+      const chat = await page.$eval('#panel.open [data-anchor="chat"]', (el) => el.innerText);
+      assert.equal(chat.includes('тест'), false, chat);
+      assert.equal(/отметился/i.test(chat), false, chat);
+      assert.match(chat, /Проверь сборку, пожалуйста/);
+      assert.match(chat, /Сборка зелёная, можно катить/);
+      assert.equal(state.messages.some((item) => item.id === `live-${agentId}`), true);
+      assert.equal(state.messages.some((item) => item.id === `test-${agentId}`), true);
+    } finally {
+      await page.close();
+    }
   }
 });

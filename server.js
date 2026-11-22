@@ -190,6 +190,8 @@ const SEED_AGENTS = [
   {
     id: 'temshik',
     name: 'Темщик',
+    parentId: 'finance',
+    order: 3,
     color: '#d4a017',
     accent: '#fff3c4',
     role: 'Поиск тем и способов заработка',
@@ -457,7 +459,8 @@ function seedAgent(base) {
 }
 
 // Номера видимых направлений и союзников идут по порядку, без архивных.
-// Помощники получают 7.1, 7.2 по порядку среди видимых детей одного родителя.
+// Помощники получают 7.1, 7.2, 7.3 по порядку среди видимых детей одного родителя.
+// Номер направления берётся из order, чтобы перенос Темщика под Финансы не сдвигал остальных.
 function prepareRoster(list) {
   let top = 0;
   const sib = {};
@@ -472,6 +475,7 @@ function prepareRoster(list) {
     } else if (!agent.archived) {
       top += 1;
       agent.order = agent.order || top;
+      agent.number = String(agent.order);
     }
     return agent;
   });
@@ -498,6 +502,7 @@ function agentNumber(agent) {
     const idx = siblings.findIndex((a) => a.id === agent.id);
     return `${parentNum}.${idx >= 0 ? idx + 1 : 1}`;
   }
+  if (agent.order) return String(agent.order);
   const tops = visibleRoster(state.agents)
     .filter((a) => !a.parentId)
     .sort((a, b) => (a.order || 0) - (b.order || 0) || a.id.localeCompare(b.id));

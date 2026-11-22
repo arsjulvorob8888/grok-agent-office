@@ -68,7 +68,8 @@ if (!CHROME || !puppeteer) {
           lastClipped: last.right > box.right + 1,
         };
       });
-      assert.equal(before.count, 13, `в полосе главные здания и советник, сейчас ${before.count}`);
+      assert.equal(before.count, 12, `в полосе главные здания и советник, без замов, сейчас ${before.count}`);
+      assert.equal(before.ids.includes('temshik'), false);
       assert.equal(before.ids.includes('advisor'), true);
       assert.equal(before.ids.includes('invest') || before.ids.includes('analyst'), false);
       assert.ok(before.max > 40, 'полоса не переполнена, листать нечего');
