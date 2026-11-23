@@ -1,7 +1,8 @@
 'use strict';
 
-// Рестарт не красит связь в красный: последний результат лежит в Postgres,
-// без него карточка говорит «Проверяю…», а при старте адреса проверяются заново.
+// Рестарт не красит связь в красный: последний результат лежит в Postgres.
+// Без записи карточка говорит «Проверяю…» и адрес пингуется.
+// Сохранённый ok и зависшая проверка при старте заново не пингуются.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -133,7 +134,7 @@ function call(base, urlPath, opts = {}) {
   }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }));
 }
 
-test('рестарт восстанавливает проверку, пустую не красит, и заново пингует адреса', {
+test('рестарт восстанавливает проверку: ok остаётся, без записи пингует, зависшая становится timeout', {
   skip: savedDatabaseUrl ? false : 'DATABASE_URL не задан',
   timeout: 60000,
 }, async () => {
@@ -190,6 +191,7 @@ test('рестарт восстанавливает проверку, пусту
     assert.equal(ack.status, 200, JSON.stringify(ack.body));
     assert.equal(ack.body.acknowledged, true);
     await save('army', 'army');
+    await save('social', 'social');
     await save('qa', 'qa');
     const beforeStop = await call(first.base, '/api/state');
     const savedDev = beforeStop.body.agents.find((item) => item.id === 'dev');
@@ -205,7 +207,7 @@ test('рестарт восстанавливает проверку, пусту
     assert.equal(blob.includes(KEY), false);
     assert.equal(blob.includes(origin), false);
     assert.ok(stored.rows.some((row) => row.agent_id === 'dev' && row.answered_at));
-    await pool.query(`DELETE FROM ${schema}.link_checks WHERE agent_id = 'army'`);
+    await pool.query(`DELETE FROM ${schema}.link_checks WHERE agent_id IN ('army', 'social')`);
     await pool.query(
       `UPDATE ${schema}.link_checks
        SET sent_at = now() - interval '10 minutes', answered_at = NULL
@@ -244,11 +246,11 @@ test('рестарт восстанавливает проверку, пусту
     assert.equal(feed.directCardSummary(agents.health), WARN);
 
     const started = Date.now();
-    while (Date.now() - started < 5000 && hits.length < 3) {
+    while (Date.now() - started < 5000 && hits.length < 2) {
       await new Promise((resolve) => setTimeout(resolve, 40));
     }
-    const startup = hits.filter((hit) => ['/dev', '/army', '/qa'].includes(hit.url));
-    assert.deepEqual(startup.map((hit) => hit.url).sort(), ['/army', '/dev', '/qa']);
+    const startup = hits.filter((hit) => ['/dev', '/army', '/social', '/qa'].includes(hit.url));
+    assert.deepEqual(startup.map((hit) => hit.url).sort(), ['/army', '/social']);
     for (const hit of startup) {
       assert.equal(hit.body.type, 'ping');
       assert.equal(Object.prototype.hasOwnProperty.call(hit.body, 'ownerText'), false);
@@ -258,9 +260,8 @@ test('рестарт восстанавливает проверку, пусту
     }
     const times = startup.map((hit) => hit.at).sort((a, b) => a - b);
     assert.ok(times[1] - times[0] >= 80, `разнесение ${times[1] - times[0]}`);
-    assert.ok(times[2] - times[1] >= 80, `разнесение ${times[2] - times[1]}`);
     await new Promise((resolve) => setTimeout(resolve, 400));
-    assert.equal(hits.filter((hit) => ['/dev', '/army', '/qa'].includes(hit.url)).length, 3);
+    assert.equal(hits.filter((hit) => ['/dev', '/army', '/social', '/qa'].includes(hit.url)).length, 2);
     assert.equal(hits.some((hit) => hit.url === '/health'), false);
     const tasks = state.body.tasks || [];
     assert.equal(tasks.some((item) => item && String(item.text || '').includes('Проверка связи')), false);
