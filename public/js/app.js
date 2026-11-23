@@ -2711,6 +2711,18 @@
         hideArchivedNeed();
         return;
       }
+      const closed = window.OfficeFeed && typeof OfficeFeed.needClosedLabel === 'function'
+        ? OfficeFeed.needClosedLabel(need)
+        : '';
+      if (closed) {
+        who.textContent = closed;
+        if (form) form.hidden = true;
+        const choice = $('#needYesNo');
+        const textBox = $('#needTextAnswer');
+        if (choice) choice.hidden = true;
+        if (textBox) textBox.hidden = true;
+        return;
+      }
       const agent = S.byId.get(need.fromAgentId);
       if (!agent) {
         who.textContent = '';

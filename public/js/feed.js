@@ -426,6 +426,15 @@
     return !!(need && need.id && !need.closedAt);
   }
 
+  // Та же закрытость, что прячет пункт из «Нужно от вас»: поле closedAt.
+  function needClosedLabel(need) {
+    if (!need || isOpenNeed(need)) return '';
+    const resolved = need.status === 'resolved' || need.answerStatus === 'resolved';
+    const word = resolved ? 'Решена' : 'Закрыта';
+    const when = formatDateTimeMsk(need.closedAt);
+    return when ? `${word} · ${when}` : word;
+  }
+
   function isRecentClosed(need, now) {
     if (!need || !need.closedAt) return false;
     const closed = Date.parse(need.closedAt);
@@ -956,6 +965,7 @@
     isTestNeed,
     testNeeds,
     isOpenNeed,
+    needClosedLabel,
     isRecentClosed,
     needAudience,
     needsForGeneral,
