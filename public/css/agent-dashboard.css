@@ -1,12 +1,15 @@
 /* Полноэкранный дашборд агента. Карта и лента аватарок не меняются. */
 
 .dash-expand{
-  position:absolute;top:48px;right:12px;z-index:3;
+  position:relative;z-index:3;flex:none;align-self:center;margin:0 0 2px 8px;
   min-height:30px;padding:0 10px;border-radius:9px;border:1px solid rgba(245,196,81,.45);
   background:rgba(20,16,8,.72);color:var(--gold);font:800 12px/1 var(--font);cursor:pointer;
 }
 .dash-expand:hover{background:rgba(245,196,81,.16)}
-#panel .p-title{padding-right:148px}
+#panel .p-title{padding-right:40px;min-width:0}
+#panel .p-title .kicker,
+#panel .p-title h2,
+#panel .p-title .role{overflow-wrap:anywhere}
 
 #agentDash{
   position:absolute;inset:0;z-index:16;display:flex;min-width:0;
@@ -129,7 +132,7 @@
   .dash-metric{padding:8px}
   .dash-metric b{font-size:20px}
   .dash-metric span{font-size:11px}
-  #panel .p-title{padding-right:132px}
+  #panel .p-title{padding-right:40px}
 }
 @media (prefers-reduced-motion:reduce){
   #agentDash{transition:none}

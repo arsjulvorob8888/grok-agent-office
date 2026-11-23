@@ -187,10 +187,17 @@
     const runs = panel.pulses;
     const total = panel.total;
     if (count) count.textContent = String(total);
-    if (badge) {
-      badge.textContent = String(total);
-      badge.classList.toggle('zero', total === 0);
-    }
+    if (badge) badge.textContent = String(total);
+    const showCount = (el, n) => {
+      if (!el) return;
+      const value = Math.max(0, Number(n) || 0);
+      el.textContent = String(value);
+      const empty = value === 0;
+      el.hidden = empty;
+      el.classList.toggle('zero', empty);
+    };
+    showCount(count, total);
+    showCount(badge, total);
     const pack = (listRows) => listRows.map((t) => [t.id, t.orderStatus, t.forwardStatus, t.deliveryLabel, t.routeLabel, t.text, t.fromAgentId, t.agentId || t.agent, t.createdAt, ownerReady() ? 1 : 0].join('\u0001')).join('\u0002');
     const sig = pack(rows) + '\u0003' + runs.map((r) => [r.id, r.name, r.agentId, r.startedAt].join('\u0001')).join('\u0002') + '\u0003' + pack(held);
     tick();

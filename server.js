@@ -3679,6 +3679,7 @@ app.get('/api/agents/:id/dashboard', (req, res) => {
     now: Date.now(),
   });
   view.deliveryRoute = delivery.publicRoute(agent.id, state, process.env);
+  view.linkCheck = linkCheck.present(state.linkChecks && state.linkChecks[agent.id], linkCheck.now(), formatAtMsk);
   res.json(view);
 });
 

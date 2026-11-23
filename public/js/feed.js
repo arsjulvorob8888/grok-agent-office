@@ -90,6 +90,31 @@
     return `Куда уйдёт приказ: ${routeLabel(kind)}`;
   }
 
+  // Живая строка карточки. В журнале прошлый маршрут по-прежнему зовётся routeLabel.
+  const AGENT_ADDRESS_PLAIN = 'Адрес, по которому сайт передаёт агенту ваши сообщения';
+
+  function agentAddressPlain() {
+    return AGENT_ADDRESS_PLAIN;
+  }
+
+  function cardRouteLine(agent) {
+    const kind = agent && (agent.deliveryRoute === 'agent' || agent.deliveryRoute === 'putin' || agent.deliveryRoute === 'env' || agent.deliveryRoute === 'none')
+      ? agent.deliveryRoute
+      : 'none';
+    if (kind !== 'agent') return routePhrase(kind);
+    if (directCardTone(agent) === 'ok') return '';
+    return AGENT_ADDRESS_PLAIN;
+  }
+
+  function cardRouteSummary(agents) {
+    const list = (Array.isArray(agents) ? agents : []).filter(Boolean);
+    if (!list.length) return routePhrase('none');
+    const lines = [...new Set(list.map((agent) => cardRouteLine(agent)).filter(Boolean))];
+    if (!lines.length) return '';
+    if (lines.length === 1) return lines[0];
+    return lines.join('. ');
+  }
+
   function sentRoutePhrase(kind) {
     if (kind !== 'agent' && kind !== 'putin' && kind !== 'env') return '';
     return `Куда ушёл приказ: ${routeLabel(kind)}`;
@@ -399,6 +424,15 @@
 
   function isOpenNeed(need) {
     return !!(need && need.id && !need.closedAt);
+  }
+
+  // Та же закрытость, что прячет пункт из «Нужно от вас»: поле closedAt.
+  function needClosedLabel(need) {
+    if (!need || isOpenNeed(need)) return '';
+    const resolved = need.status === 'resolved' || need.answerStatus === 'resolved';
+    const word = resolved ? 'Решена' : 'Закрыта';
+    const when = formatDateTimeMsk(need.closedAt);
+    return when ? `${word} · ${when}` : word;
   }
 
   function isRecentClosed(need, now) {
@@ -884,6 +918,9 @@
     taskDeliveryLabel,
     routeLabel,
     routePhrase,
+    agentAddressPlain,
+    cardRouteLine,
+    cardRouteSummary,
     sentRoutePhrase,
     routeSummary,
     directLinkLine,
@@ -928,6 +965,7 @@
     isTestNeed,
     testNeeds,
     isOpenNeed,
+    needClosedLabel,
     isRecentClosed,
     needAudience,
     needsForGeneral,

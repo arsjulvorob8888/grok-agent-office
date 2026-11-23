@@ -60,7 +60,7 @@
 
 #btnProcesses{position:relative;width:40px;height:40px;min-width:40px;min-height:40px}
 .proc-count{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--ok);color:#05210f;font:800 10px/16px var(--display);text-align:center;box-shadow:0 0 0 2px #121620}
-.proc-count.zero{background:#64748b;color:#fff}
+.proc-count.zero{display:none}
 #btnProcesses.on{border-color:rgba(34,197,94,.7);background:rgba(34,197,94,.16)}
 
 #processes{display:none;position:absolute;left:12px;top:calc(var(--hud-h) + 24px);width:min(400px,calc(100% - 24px));max-height:calc(100% - var(--hud-h) - 150px);z-index:6;flex-direction:column;overflow:hidden}

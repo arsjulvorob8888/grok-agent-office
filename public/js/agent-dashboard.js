@@ -406,8 +406,8 @@
       return;
     }
     if (input) input.value = '';
-    const phrase = window.OfficeFeed && typeof OfficeFeed.routePhrase === 'function'
-      ? OfficeFeed.routePhrase(body.deliveryRoute)
+    const phrase = window.OfficeFeed && typeof OfficeFeed.cardRouteLine === 'function'
+      ? OfficeFeed.cardRouteLine({ id: agentId, deliveryRoute: body.deliveryRoute, linkCheck: data && data.linkCheck })
       : '';
     note = phrase ? `Приказ сохранён. ${phrase}` : 'Приказ сохранён.';
     if (body.deliveryRoute) data = Object.assign({}, data, { deliveryRoute: body.deliveryRoute });
@@ -488,7 +488,10 @@
     const kind = data && (data.deliveryRoute === 'agent' || data.deliveryRoute === 'putin' || data.deliveryRoute === 'env' || data.deliveryRoute === 'none')
       ? data.deliveryRoute
       : 'none';
-    const phrase = window.OfficeFeed && typeof OfficeFeed.routePhrase === 'function' ? OfficeFeed.routePhrase(kind) : '';
+    const phrase = window.OfficeFeed && typeof OfficeFeed.cardRouteLine === 'function'
+      ? OfficeFeed.cardRouteLine({ id: agentId, deliveryRoute: kind, linkCheck: data && data.linkCheck })
+      : '';
+    if (!phrase) return '';
     return `<p class="task-route" data-route="${esc(kind)}">${esc(phrase)}</p>`;
   }
 

@@ -250,7 +250,8 @@ if (!CHROME || !puppeteer) {
       await page.select('#taskTarget', 'army');
       await page.waitForFunction(() => document.querySelector('#taskRoute').dataset.route === 'agent');
       const line = await page.$eval('#taskRoute', (el) => el.textContent.trim());
-      assert.equal(line, 'Куда уйдёт приказ: Свой вебхук агента');
+      assert.equal(line, 'Адрес, по которому сайт передаёт агенту ваши сообщения');
+      assert.equal(/вебхук/i.test(line), false);
       const visible = await page.evaluate(() => document.body.innerText);
       assert.equal(visible.includes(ARMY_URL), false);
       assert.equal(visible.includes(ARMY_KEY), false);

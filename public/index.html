@@ -53,8 +53,8 @@
       <div class="stat" title="Работают 0 из 0 агентов" aria-label="Работают 0 из 0 агентов"><span class="stat-label">В работе</span><b id="stActive">0/0</b></div>
     </div>
     <div class="hud-actions">
-      <button class="icon-btn" id="btnProcesses" title="Процессы сейчас" aria-label="Процессы сейчас" aria-expanded="false" aria-controls="processes"><svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="17" r="2.2"/><path d="M8.2 8.4c2 3.2 5.2 4.2 7.6 7"/><path d="M13.6 14.2l2.4 2.6 2.4-1.6"/></svg><span class="proc-count zero" id="procBadge">0</span></button>
-      <button class="icon-btn" id="btnNeeds" title="Нужно от вас" aria-label="Нужно от вас" aria-expanded="false" aria-controls="needsPop"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13 6 9z"/><path d="M10 18a2 2 0 0 0 4 0"/></svg><span class="needs-count" id="needsBadge">0</span></button>
+      <button class="icon-btn" id="btnProcesses" title="Процессы сейчас" aria-label="Процессы сейчас" aria-expanded="false" aria-controls="processes"><svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="17" r="2.2"/><path d="M8.2 8.4c2 3.2 5.2 4.2 7.6 7"/><path d="M13.6 14.2l2.4 2.6 2.4-1.6"/></svg><span class="proc-count zero" id="procBadge" hidden>0</span></button>
+      <button class="icon-btn" id="btnNeeds" title="Нужно от вас" aria-label="Нужно от вас" aria-expanded="false" aria-controls="needsPop"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13 6 9z"/><path d="M10 18a2 2 0 0 0 4 0"/></svg><span class="needs-count zero" id="needsBadge" hidden>0</span></button>
       <button class="icon-btn" id="btnHier" title="Иерархия" aria-label="Иерархия" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M12 7.2V12H6.2V15.6M12 12h5.8v3.6"/></svg></button>
       <button class="icon-btn" id="btnJournal" title="Журнал заданий" aria-label="Журнал заданий"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z M8 4v13 M11 9h5 M11 13h5"/></svg></button>
       <button class="icon-btn" id="btnHome" title="Вся карта" aria-label="Показать всю карту"><svg viewBox="0 0 24 24"><path d="M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5"/></svg></button>
@@ -67,6 +67,7 @@
         <details id="serviceFold">
           <summary>Служебное</summary>
           <p class="service-note">Личные ключи агентов. Сейчас не нужны: агенты работают по общему ключу.</p>
+          <p id="serviceRouteNote" class="service-note" hidden></p>
           <div id="serviceTokens"></div>
           <div id="serviceDelivery"></div>
         </details>
@@ -89,18 +90,18 @@
   </header>
 
   <aside id="hier" class="card glass" aria-label="Иерархия агентов">
-    <div class="card-head"><h3>Иерархия</h3><span class="pill" id="hCount">0</span><button class="icon-btn sm" id="hClose" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="card-head"><h3>Иерархия</h3><span class="pill zero" id="hCount" hidden>0</span><button class="icon-btn sm" id="hClose" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <p class="hier-note">Путин, направления и помощники. Нажми строку — карта подъедет к агенту.</p>
     <div class="org-tree" id="hTree"></div>
   </aside>
 
   <aside id="processes" class="card glass" aria-label="Процессы сейчас" aria-hidden="true">
-    <div class="card-head"><h3>Процессы сейчас</h3><span class="pill" id="procCount">0</span><button class="icon-btn" id="procClose" type="button" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="card-head"><h3>Процессы сейчас</h3><span class="pill zero" id="procCount" hidden>0</span><button class="icon-btn" id="procClose" type="button" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <div class="proc-list" id="procList"></div>
   </aside>
 
   <aside id="needsPop" class="card glass" aria-label="Нужно от вас" aria-hidden="true">
-    <div class="card-head"><h3>Нужно от вас</h3><span class="pill" id="needsCount">0</span><button class="icon-btn sm" id="needsClose" type="button" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="card-head"><h3>Нужно от вас</h3><span class="pill zero" id="needsCount" hidden>0</span><button class="icon-btn sm" id="needsClose" type="button" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <div class="needs-list" id="needsList"></div>
     <div class="needs-actions">
       <button class="btn ghost" id="needsLater" type="button">Напомнить позже</button>
@@ -109,13 +110,13 @@
   </aside>
 
   <aside id="journal" class="card glass">
-    <div class="card-head"><h3>Журнал заданий</h3><span class="pill" id="jCount">0</span><button class="icon-btn sm" id="jClose" aria-label="Свернуть"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>
+    <div class="card-head"><h3>Журнал заданий</h3><span class="pill zero" id="jCount" hidden>0</span><button class="icon-btn sm" id="jClose" aria-label="Свернуть"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>
     <div class="quest-list" id="jList"></div>
   </aside>
 
   <div id="agentBar">
     <button type="button" id="agentBarToggle" class="agent-bar-toggle" aria-expanded="true" aria-controls="roster" aria-label="Свернуть панель агентов"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
-    <button type="button" id="agentBarPeek" class="agent-bar-peek" hidden aria-label="Развернуть панель агентов"><span class="agent-bar-await">ждёт вас <b id="agentBarAwait">0</b></span><span id="agentBarDots" class="agent-bar-dots" aria-hidden="true"></span></button>
+    <button type="button" id="agentBarPeek" class="agent-bar-peek" hidden aria-label="Развернуть панель агентов"><span class="agent-bar-await zero">ждёт вас <b id="agentBarAwait" hidden>0</b></span><span id="agentBarDots" class="agent-bar-dots" aria-hidden="true"></span></button>
     <nav id="roster" aria-label="Агенты"></nav>
   </div>
 

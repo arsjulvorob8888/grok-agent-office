@@ -969,7 +969,7 @@
     const dots = $('#agentBarDots');
     if (countEl && window.OfficeFeed) {
       const n = Feed.needsForGeneral(S.needs || []).length;
-      countEl.textContent = String(n);
+      showCount(countEl, n);
       const wrap = countEl.closest('.agent-bar-await');
       if (wrap) wrap.classList.toggle('zero', n === 0);
     }
@@ -1825,17 +1825,37 @@
       if (window.DirectLink && typeof DirectLink.openFor === 'function') DirectLink.openFor(id);
     });
   }
+  function showCount(el, n) {
+    if (!el) return;
+    const count = Math.max(0, Number(n) || 0);
+    el.textContent = String(count);
+    const empty = count === 0;
+    el.hidden = empty;
+    el.classList.toggle('zero', empty);
+  }
+  function syncServiceRouteNote() {
+    const note = $('#serviceRouteNote');
+    if (!note || !window.OfficeFeed || typeof OfficeFeed.agentAddressPlain !== 'function') return;
+    const ready = S.agents.some((agent) => agent
+      && agent.deliveryRoute === 'agent'
+      && typeof OfficeFeed.directCardTone === 'function'
+      && OfficeFeed.directCardTone(agent) === 'ok');
+    note.hidden = !ready;
+    note.textContent = ready ? OfficeFeed.agentAddressPlain() : '';
+  }
   function paintTaskRoute() {
-    const agent = S.byId.get(S.selected);
     const el = $('#taskRoute');
-    if (!el || !window.OfficeFeed || typeof OfficeFeed.routeSummary !== 'function') return;
+    if (!el || !window.OfficeFeed || typeof OfficeFeed.cardRouteSummary !== 'function') return;
     const sel = $('#taskTarget');
     let ids;
     if (sel && sel.value === '__all') ids = S.agents.filter((x) => tierOf(x) === 'dept' && !x.vacant).map((x) => x.id);
     else if (sel) ids = [sel.value];
     else ids = [S.selected];
+    const agents = ids.map((id) => S.byId.get(id)).filter(Boolean);
     const kinds = ids.map(routeKindOf);
-    el.textContent = OfficeFeed.routeSummary(kinds);
+    const line = OfficeFeed.cardRouteSummary(agents);
+    el.hidden = !line;
+    el.textContent = line;
     el.dataset.route = new Set(kinds).size === 1 ? kinds[0] : 'mixed';
   }
   async function submitTask() {
@@ -1913,8 +1933,9 @@
       await loadState();
       const formMsg = $('#formMsg');
       if (formMsg) {
-        const phrase = window.OfficeFeed && typeof OfficeFeed.routeSummary === 'function'
-          ? OfficeFeed.routeSummary(sentRoutes)
+        const phraseAgents = targets.map((id) => S.byId.get(id)).filter(Boolean);
+        const phrase = window.OfficeFeed && typeof OfficeFeed.cardRouteSummary === 'function'
+          ? OfficeFeed.cardRouteSummary(phraseAgents)
           : '';
         formMsg.className = lastErr ? 'msg err' : 'msg ok';
         formMsg.textContent = lastErr || (phrase ? `Приказ сохранён. ${phrase}` : 'Приказ сохранён.');
@@ -2119,7 +2140,7 @@
     const view = Feed.visibleJournal(Feed.ordersForGeneral(S.tasks), Date.now());
     const sig = view.active.concat(view.delivered || [], view.cancelled).map((t) => [t.id, t.status, t.orderStatus, t.deliveryLabel, t.outboxStatus, t.sentRoute, t.forwardStatus, t.progress, t.note, t.fromAgentId, t.parentOrderId, (t.history || []).length, t.result, (t.attachments || []).length, t.answeredAt || '', t.routeLabel || ''].join(':')).join('|');
     const badge = view.total;
-    $('#jCount').textContent = String(badge);
+    showCount($('#jCount'), badge);
     syncJournalChrome(badge);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
@@ -2195,8 +2216,7 @@
     tree.innerHTML = root ? orgNode(root) : '<div class="empty"><b>Агентов нет</b></div>';
     tree.scrollTop = top;
     const count = S.agents.filter((a) => !a.vacant).length;
-    const pill = $('#hCount');
-    if (pill) pill.textContent = String(count);
+    showCount($('#hCount'), count);
     tree.querySelectorAll('.org-twist:not(.leaf)').forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
@@ -2449,11 +2469,10 @@
     const list = Feed.needsForGeneral(S.needs || []);
     const badge = $('#needsBadge');
     const pill = $('#needsCount');
-    if (badge) {
-      badge.textContent = String(list.length);
-      badge.classList.toggle('zero', list.length === 0);
-    }
+    if (badge) badge.textContent = String(list.length);
     if (pill) pill.textContent = String(list.length);
+    showCount(badge, list.length);
+    showCount(pill, list.length);
     const btn = $('#btnNeeds');
     if (btn) btn.setAttribute('aria-label', `Нужно от вас: ${list.length}`);
     const box = $('#needsList');
@@ -2577,7 +2596,7 @@
       }
     }
     S.taskStatus = next;
-    updateAgents(); renderJournal(); renderHierarchy(); renderHUD();
+    updateAgents(); renderJournal(); renderHierarchy(); renderHUD(); syncServiceRouteNote();
     if (S.selected) {
       const sig = panelContentSig(S.selected);
       if (sig !== S.panelSig) {
@@ -2690,6 +2709,18 @@
       if (!need || !who) return;
       if (archivedAuthor()) {
         hideArchivedNeed();
+        return;
+      }
+      const closed = window.OfficeFeed && typeof OfficeFeed.needClosedLabel === 'function'
+        ? OfficeFeed.needClosedLabel(need)
+        : '';
+      if (closed) {
+        who.textContent = closed;
+        if (form) form.hidden = true;
+        const choice = $('#needYesNo');
+        const textBox = $('#needTextAnswer');
+        if (choice) choice.hidden = true;
+        if (textBox) textBox.hidden = true;
         return;
       }
       const agent = S.byId.get(need.fromAgentId);
