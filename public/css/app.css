@@ -270,7 +270,7 @@ body.usage-hot{--hud-h:188px}
 .icon-btn.on{border-color:rgba(245,196,81,.6);background:rgba(245,196,81,.12)}
 #btnNeeds{position:relative}
 .needs-count{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--red);color:#fff;font:800 10px/16px var(--display);text-align:center;box-shadow:0 0 0 2px #121620}
-.needs-count.zero{background:#64748b}
+.needs-count.zero,.proc-count.zero,.pill.zero{display:none}
 #btnNeeds.on{border-color:rgba(224,40,63,.7);background:rgba(200,16,46,.18)}
 .icon-btn.sm{width:30px;height:30px;border-radius:9px}
 .icon-btn.sm svg{width:16px;height:16px}
@@ -433,7 +433,7 @@ body.hier-on #journal{display:none}
 #agentBar.collapsed .agent-bar-peek:not([hidden]){display:flex}
 .agent-bar-await{font:800 12px/1 var(--display);white-space:nowrap}
 .agent-bar-await b{display:inline-grid;place-items:center;min-width:18px;height:18px;margin-left:4px;padding:0 5px;border-radius:999px;background:linear-gradient(180deg,#ff7a45,#c8102e);color:#fff}
-.agent-bar-await.zero b{background:#64748b}
+.agent-bar-await.zero b{display:none}
 .agent-bar-dots{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
 .agent-bar-dot{width:7px;height:7px;border-radius:50%;background:#64748b;flex:none}
 .agent-bar-dot.working{background:var(--ok)}
